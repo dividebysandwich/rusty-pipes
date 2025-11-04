@@ -39,11 +39,15 @@ struct Voice {
     
     // The loader thread is held so it can be detached
     loader_handle: Option<thread::JoinHandle<()>>,
+
+    fade_level: f32, // 1.0 = full volume, 0.0 = silent
+    is_fading_out: bool, // Is the attack sample fading out?
+    is_fading_in: bool, // Is the release sample fading in?
 }
 
 impl Voice {
     // --- Refactored Voice::new to be non-blocking ---
-    fn new(path: &Path, sample_rate: u32, pitch_cents: f32, gain_db: f32) -> Result<Self> {
+    fn new(path: &Path, sample_rate: u32, pitch_cents: f32, gain_db: f32, start_fading_in: bool) -> Result<Self> {
         
         let amplitude_ratio: AmplitudeRatio<f64> = DecibelRatio(gain_db as f64).into();
         let gain = amplitude_ratio.amplitude_value() as f32;
@@ -227,6 +231,9 @@ impl Voice {
             is_finished,
             is_cancelled,
             loader_handle: Some(loader_handle),
+            fade_level: if start_fading_in { 0.0 } else { 1.0 }, 
+            is_fading_out: false,
+            is_fading_in: start_fading_in,
         })
     }
 }
@@ -286,12 +293,13 @@ fn spawn_audio_processing_thread<P>(
                                     if let Some(rank) = organ.ranks.get(rank_id) {
                                         if let Some(pipe) = rank.pipes.get(&note) {
                                             let total_gain = rank.gain_db + pipe.gain_db;
-                                            // --- This is now non-blocking ---
+                                            // Play attack sample
                                             match Voice::new(
                                                 &pipe.attack_sample_path,
                                                 sample_rate,
                                                 pipe.pitch_tuning_cents,
                                                 total_gain,
+                                                false,
                                             ) {
                                                 Ok(voice) => {
                                                     let voice_id = voice_counter;
@@ -352,49 +360,43 @@ fn spawn_audio_processing_thread<P>(
             let mut max_abs_sample = 0.0f32;
 
             // --- mixing loop ---
+            // 10ms fade-out
+            let fade_frames = (sample_rate as f32 * 0.10) as usize; 
+            let fade_increment = if fade_frames > 0 { 1.0 / fade_frames as f32 } else { 1.0 };
+
             voices.retain(|_voice_id, voice| {
-                let cancelled = voice.is_cancelled.load(Ordering::Relaxed);
-                let is_finished = voice.is_finished.load(Ordering::Relaxed);
+                let is_loader_finished = voice.is_finished.load(Ordering::Relaxed);
+                let mut is_buffer_empty = voice.consumer.is_empty();
 
                 let frames_to_read = buffer_size_frames;
                 let samples_to_read = frames_to_read * CHANNEL_COUNT;
-
-                // Pop interleaved audio from the voice's internal buffer
+                
                 let samples_read = voice.consumer.pop_slice(&mut voice_read_buffer[..samples_to_read]);
                 let frames_read = samples_read / CHANNEL_COUNT;
 
-                // Handle cancelled voices: discard or fade them out
-                if cancelled {
-                    let sample_rate = sample_rate; // captured from outer scope
-                    let fade_len = ((sample_rate as f32 * 0.01) as usize) * CHANNEL_COUNT; // 10ms fade
-
-                    // Fade-out the portion we already popped
-                    let fade_len = fade_len.min(samples_read);
-                    for i in 0..fade_len {
-                        let gain = 1.0 - (i as f32 / fade_len as f32);
-                        voice_read_buffer[i] *= gain;
-                    }
-
-                    // Mix the faded tail once to avoid clicks
-                    for frame in 0..(samples_read / CHANNEL_COUNT) {
-                        mix_buffer_stereo[0][frame] += voice_read_buffer[frame * CHANNEL_COUNT] * voice.gain;
-                        mix_buffer_stereo[1][frame] += voice_read_buffer[frame * CHANNEL_COUNT + 1] * voice.gain;
-                    }
-
-                    // Drain any remaining samples
-                    while voice.consumer.pop_slice(&mut tmp_drain_buffer) > 0 {
-                        // Keep popping until the buffer is empty
-                    }
-
-                    // Remove once loader is finished and buffer is empty
-                    return !(is_finished && voice.consumer.is_empty());
-                }
-
-
-                // Mix it
+                // --- Mix all samples, applying crossfade logic ---
                 for i in 0..frames_read {
-                    let l_sample = voice_read_buffer[i * CHANNEL_COUNT] * voice.gain;
-                    let r_sample = voice_read_buffer[i * CHANNEL_COUNT + 1] * voice.gain;
+                    
+                    // --- FADE LOGIC ---
+                    if voice.is_fading_in {
+                        voice.fade_level += fade_increment;
+                        if voice.fade_level >= 1.0 {
+                            voice.fade_level = 1.0;
+                            voice.is_fading_in = false;
+                        }
+                    } else if voice.is_fading_out {
+                        voice.fade_level -= fade_increment; // Use same value
+                        if voice.fade_level <= 0.0 {
+                            voice.fade_level = 0.0;
+                        }
+                    }
+                    // --- END FADE LOGIC ---
+
+                    // Final gain is the voice's gain * its fade level
+                    let current_gain = voice.gain * voice.fade_level;
+
+                    let l_sample = voice_read_buffer[i * CHANNEL_COUNT] * current_gain;
+                    let r_sample = voice_read_buffer[i * CHANNEL_COUNT + 1] * current_gain;
                     
                     mix_buffer_stereo[0][i] += l_sample;
                     mix_buffer_stereo[1][i] += r_sample;
@@ -403,12 +405,30 @@ fn spawn_audio_processing_thread<P>(
                         max_abs_sample = l_sample.abs();
                     }
                 }
+
+                // --- Decide whether to keep the voice ---
+                let is_faded_out = voice.is_fading_out && voice.fade_level == 0.0;
+
+                if is_faded_out && !is_buffer_empty {
+                    // This voice is silent, but its buffer still has data.
+                    // We must drain it completely so 'is_buffer_empty'
+                    // becomes true and it can be collected.
+                    while voice.consumer.pop_slice(&mut tmp_drain_buffer) > 0 {
+                        // Draining...
+                    }
+                    is_buffer_empty = true; // Update status after drain
+                }
                 
-                // If the loader thread is finished AND the buffer is empty,
-                // this voice can be removed.
-                let is_loader_finished = voice.is_finished.load(Ordering::Relaxed);
-                let is_buffer_empty = voice.consumer.is_empty();
-                !(is_loader_finished && is_buffer_empty)
+                let is_done_playing = is_loader_finished && is_buffer_empty;
+
+                if is_done_playing && (is_faded_out || !voice.is_fading_out) {
+                    // Remove if:
+                    // 1. It's finished loading AND its buffer is empty
+                    // 2. AND (it's faded out OR it was never supposed to fade out)
+                    return false; // Remove the voice
+                }
+                
+                return true; // Keep the voice
             });
 
 
@@ -474,6 +494,7 @@ fn handle_note_off(
             if let Some(voice) = voices.get_mut(&stopped_note.voice_id) {
                 log::debug!("[AudioThread] ...stopping attack voice ID {}", stopped_note.voice_id);
                  voice.is_cancelled.store(true, Ordering::SeqCst);
+                 voice.is_fading_out = true;
             }
             // The `retain` loop will drop it once its buffer is empty.
             
@@ -491,11 +512,13 @@ fn handle_note_off(
 
                     if let Some(release) = release_sample {
                         let total_gain = rank.gain_db + pipe.gain_db;
+                        // Play release sample
                         match Voice::new(
                             &release.path,
                             sample_rate,
                             pipe.pitch_tuning_cents,
                             total_gain,
+                            true,
                         ) {
                             Ok(voice) => {
                                 log::debug!("[AudioThread] -> Created RELEASE Voice for {:?} (Duration: {}ms, Gain: {:.2}dB)",
