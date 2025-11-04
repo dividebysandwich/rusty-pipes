@@ -68,10 +68,18 @@ impl Voice {
         
         // --- Spawn the Loader Thread ---
         let loader_handle = thread::spawn(move || {
+            let path_buf_clone = path_buf.clone();
+            let path_str = path_buf_clone.file_name().unwrap_or_default().to_string_lossy();
+            let path_str_clone = path_str.clone();
+            log::debug!("[LoaderThread] START: {:?}", path_str);
             
             // --- Use catch_unwind to handle ALL panics ---
             let panic_result = std::panic::catch_unwind(move || {
-                
+
+                let mut loader_loop_counter = 0u64;
+                let mut log_throttle = 0u64;
+                let mut cancelled_log_sent = false;
+
                 // This inner closure contains all the fallible logic
                 let result: Result<()> = (|| {
                     // Open the file
@@ -107,12 +115,21 @@ impl Voice {
                     // --- The Loader Loop ---
                     'loader_loop: loop {
                         if is_cancelled_clone.load(Ordering::Relaxed) {
+                            if !cancelled_log_sent {
+                                log::debug!("[LoaderThread] CANCELLED: {:?} (in loader_loop)", path_str);
+                                cancelled_log_sent = true;
+                            }
                             break 'loader_loop;
                         }
-                        
+
+                        log_throttle += 1;
+                        if log_throttle % 100 == 0 { // Log every 100 iterations
+                            log::debug!("[LoaderThread] ALIVE: {:?} (Loop {})", path_str, loader_loop_counter);
+                        }
+
                         let input_frames_needed = resampler.input_frames_next();
                         
-                        for buf in input_buffer.iter_mut() { buf.clear(); }
+                        //for buf in input_buffer.iter_mut() { buf.clear(); }
                         
                         let mut frames_read = 0;
                         if input_frames_needed > 0 && !source_is_finished {
@@ -142,7 +159,7 @@ impl Voice {
                         let in_buf_slices: Vec<&[f32]> = input_buffer.iter().map(|v| v.as_slice()).collect();
                         let mut out_buf_slices: Vec<&mut [f32]> = output_buffer.iter_mut().map(|v| v.as_mut_slice()).collect();
 
-                        let (frames_consumed, frames_produced) = if source_is_finished {
+                        let (_frames_consumed, frames_produced) = if source_is_finished {
                             if frames_read > 0 {
                                 resampler.process_partial_into_buffer(Some(&in_buf_slices), &mut out_buf_slices, None)?
                             } else {
@@ -151,6 +168,8 @@ impl Voice {
                         } else if frames_read > 0 { 
                             resampler.process_into_buffer(&in_buf_slices, &mut out_buf_slices, None)?
                         } else {
+                            // No frames read. Either we need 0, or we're at EOF.
+                            // Call process_partial_into_buffer to flush output.
                             let empty_input: [Vec<f32>; CHANNEL_COUNT] = [vec![], vec![]];
                             let empty_slices: Vec<&[f32]> = empty_input.iter().map(|v| v.as_slice()).collect();
                             resampler.process_partial_into_buffer(Some(&empty_slices), &mut out_buf_slices, None)?
@@ -165,25 +184,46 @@ impl Voice {
                             let needed = frames_produced * CHANNEL_COUNT;
                             let mut offset = 0usize;
                             while offset < needed {
+                                if is_cancelled_clone.load(Ordering::Relaxed) {
+                                    if !cancelled_log_sent {
+                                        log::debug!("[LoaderThread] CANCELLED: {:?} (in push_loop)", path_str);
+                                        cancelled_log_sent = true;
+                                    }
+                                    break 'loader_loop; 
+                                }
                                 let pushed = producer.push_slice(&interleaved_output[offset..needed]);
                                 offset += pushed;
                                 if offset < needed {
-                                    if is_cancelled_clone.load(Ordering::Relaxed) {
-                                        break; // break inner while
-                                    }
                                     thread::sleep(Duration::from_millis(1));
                                 }
                             }
-
-                            if is_cancelled_clone.load(Ordering::Relaxed) {
-                                break 'loader_loop;
-                            }
                         }
+
+                        if source_is_finished && frames_produced == 0 && resampler.output_frames_next() == 0 {
+                            // File is done, nothing was produced, and resampler has no more frames.
+                            // We are 100% finished.
+                            log::debug!("[LoaderThread] FINISHED_SOURCE_AND_RESAMPLER: {:?}", path_str);
+                            break 'loader_loop;
+                        }
+                        
+                        if input_frames_needed == 0 && frames_produced == 0 {
+                            // Resampler input is full, and output is full.
+                            // We *must* sleep to wait for the mixer.
+                            thread::sleep(Duration::from_millis(1));
+                        }
+                        
+                        // --- Clear input buffers for next loop ---
+                        for buf in input_buffer.iter_mut() { buf.clear(); }
+
                     } // --- End of 'loader_loop ---
 
                     // --- Flush the resampler ---
                     'flush_loop: loop {
                         if is_cancelled_clone.load(Ordering::Relaxed) {
+                            if !cancelled_log_sent {
+                                log::debug!("[LoaderThread] CANCELLED: {:?} (in flush_loop)", path_str);
+                                cancelled_log_sent = true;
+                            }
                             break 'flush_loop;
                         }
                         let mut out_buf_slices: Vec<&mut [f32]> = output_buffer.iter_mut().map(|v| v.as_mut_slice()).collect();
@@ -199,6 +239,14 @@ impl Voice {
                             let needed = frames_produced * CHANNEL_COUNT;
                             let mut offset = 0usize;
                             while offset < needed {
+                                if is_cancelled_clone.load(Ordering::Relaxed) {
+                                    if !cancelled_log_sent {
+                                        log::debug!("[LoaderThread] CANCELLED: {:?} (in flush_loop)", path_str);
+                                        cancelled_log_sent = true;
+                                    }
+                                    break 'flush_loop;
+                                }
+
                                 let pushed = producer.push_slice(&interleaved_output[offset..needed]);
                                 offset += pushed;
                                 if offset < needed {
@@ -217,6 +265,8 @@ impl Voice {
                         }
                     }
                     
+                    log::debug!("[LoaderThread] EXITED_FLUSH_LOOP: {:?}", path_str);
+
                     Ok(()) // Success
                 })(); // End of fallible closure
                 
@@ -228,9 +278,11 @@ impl Voice {
 
             // Log any panics
             if panic_result.is_err() {
-                log::error!("[LoaderThread] PANICKED. This is a bug. Path: {:?}", path_buf_clone.file_name().unwrap_or_default());
+                log::error!("[LoaderThread] PANICKED. This is a bug. Path: {:?}", path_str_clone);
             }
             
+            log::debug!("[LoaderThread] SETTING_FINISHED: {:?}", path_str_clone);
+
             // This line is *outside* the unwind block and will
             // execute *even if* the code inside it panicked.
             is_finished_clone.store(true, Ordering::SeqCst);
@@ -424,14 +476,18 @@ fn spawn_audio_processing_thread<P>(
                 let is_faded_out = voice.is_fading_out && voice.fade_level == 0.0;
 
                 if is_faded_out && !is_buffer_empty {
-                    while voice.consumer.pop_slice(&mut tmp_drain_buffer) > 0 { /* Draining... */ }
-                    is_buffer_empty = true; // Update status
+                    let _ = voice.consumer.pop_slice(&mut tmp_drain_buffer);
+                    is_buffer_empty = voice.consumer.is_empty();
                 }
                 
                 let is_done_playing = is_loader_finished && is_buffer_empty;
 
-                if is_done_playing && (is_faded_out || !voice.is_fading_out) {
-                    // Mark for removal instead of returning false
+                // We must remove a voice if:
+                // 1. It's a "normal" voice (like a release) and it has finished playing.
+                //    (is_done_playing && !voice.is_fading_out)
+                // OR
+                // 2. It's a "fading" voice (an attack) and it has finished fading out.
+                if (is_done_playing && !voice.is_fading_out) || (is_faded_out && is_buffer_empty) {
                     voices_to_remove.push(*voice_id);
                 }
             } // --- End of voice processing loop ---
@@ -444,6 +500,9 @@ fn spawn_audio_processing_thread<P>(
                         // We now own the voice.
                         // Take the handle and send it to the reaper.
                         if let Some(handle) = voice.loader_handle.take() {
+                            
+                            log::debug!("[AudioThread] Sending handle for {:?} to reaper", voice.debug_path.file_name().unwrap_or_default());
+
                             if let Err(e) = reaper_tx.send(handle) {
                                 // This should only happen if the reaper died.
                                 // Fall back to forgetting the handle to avoid blocking.
