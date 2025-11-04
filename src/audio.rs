@@ -47,180 +47,192 @@ struct Voice {
 }
 
 impl Voice {
-    // --- Refactored Voice::new to be non-blocking ---
     fn new(path: &Path, sample_rate: u32, pitch_cents: f32, gain_db: f32, start_fading_in: bool) -> Result<Self> {
         
         let amplitude_ratio: AmplitudeRatio<f64> = DecibelRatio(gain_db as f64).into();
         let gain = amplitude_ratio.amplitude_value() as f32;
 
-        // --- 1. Create the Ring Buffer ---
+        // --- Create the Ring Buffer ---
         let ring_buf = HeapRb::<f32>::new(VOICE_BUFFER_FRAMES * CHANNEL_COUNT);
         let (mut producer, consumer) = ring_buf.split(); // consumer is HeapCons<f32>
 
-        // --- 2. Create communication atomics ---
+        // --- Create communication atomics ---
         let is_finished = Arc::new(AtomicBool::new(false));
         let is_cancelled = Arc::new(AtomicBool::new(false));
         
         // Clone variables to move into the loader thread
         let path_buf = path.to_path_buf();
+        let path_buf_clone = path_buf.clone();
         let is_finished_clone = Arc::clone(&is_finished);
         let is_cancelled_clone = Arc::clone(&is_cancelled);
         
-        // --- 3. Spawn the Loader Thread ---
-        // All blocking work now happens inside this thread.
+        // --- Spawn the Loader Thread ---
         let loader_handle = thread::spawn(move || {
-
-            // We wrap the fallible logic in a function
-            let result: Result<()> = (|| {
-                // 3a. Open the file
-                let file = File::open(&path_buf)
-                    .map_err(|e| anyhow!("[LoaderThread] Failed to open {:?}: {}", path_buf, e))?;
-                let reader = BufReader::new(file);
-                let mut decoder = Decoder::new_wav(reader)
-                    .map_err(|e| anyhow!("[LoaderThread] Failed to decode {:?}: {}", path_buf, e))?;
-
-                // 3b. Create the resampler
-                let input_sample_rate = decoder.sample_rate();
-                let input_channels = decoder.channels() as usize;
-                let is_mono = input_channels == 1;
-
-                let pitch_factor = 2.0f64.powf(pitch_cents as f64 / 1200.0);
-                let effective_input_rate = input_sample_rate as f64 / pitch_factor;
-                let resample_ratio = sample_rate as f64 / effective_input_rate;
+            
+            // --- Use catch_unwind to handle ALL panics ---
+            let panic_result = std::panic::catch_unwind(move || {
                 
-                let mut resampler = FastFixedIn::<f32>::new(
-                    resample_ratio, 1.01, PolynomialDegree::Septic, RESAMPLER_CHUNK_SIZE, CHANNEL_COUNT,
-                ).map_err(|e| anyhow!("[LoaderThread] Failed to create resampler for {:?}: {}", path_buf, e))?;
+                // This inner closure contains all the fallible logic
+                let result: Result<()> = (|| {
+                    // Open the file
+                    let file = File::open(&path_buf.clone())
+                        .map_err(|e| anyhow!("[LoaderThread] Failed to open {:?}: {}", path_buf.clone(), e))?;
+                    let reader = BufReader::new(file);
+                    let mut decoder = Decoder::new_wav(reader)
+                        .map_err(|e| anyhow!("[LoaderThread] Failed to decode {:?}: {}", path_buf.clone(), e))?;
 
-                // 3c. Create buffers (local to this thread)
-                let max_input_frames = resampler.input_frames_max();
-                let mut input_buffer = vec![vec![0.0f32; max_input_frames]; CHANNEL_COUNT];
-                let max_output_frames = resampler.output_frames_max();
-                let mut output_buffer = vec![vec![0.0f32; max_output_frames]; CHANNEL_COUNT];
-                let mut interleaved_output = vec![0.0f32; max_output_frames * CHANNEL_COUNT];
-                
-                let mut source = decoder.filter_map(|s| s.to_f32());
-                let mut source_is_finished = false;
-                
-                // --- 3d. The (Corrected) Loader Loop ---
-                'loader_loop: loop {
-                    // Check if NoteOff was called
-                    if is_cancelled_clone.load(Ordering::Relaxed) {
-                        break 'loader_loop;
-                    }
-                    
-                    let input_frames_needed = resampler.input_frames_next();
-                    
-                    // Clear input buffers
-                    for buf in input_buffer.iter_mut() { buf.clear(); }
-                    
-                    let mut frames_read = 0;
-                    if input_frames_needed > 0 && !source_is_finished {
-                        for _ in 0..input_frames_needed {
-                            if let Some(sample_l) = source.next() {
-                                input_buffer[0].push(sample_l);
-                                if is_mono {
-                                    input_buffer[1].push(sample_l);
-                                } else {
-                                    if let Some(sample_r) = source.next() {
-                                        input_buffer[1].push(sample_r);
-                                    } else {
-                                        input_buffer[1].push(sample_l); // Fallback
-                                        source_is_finished = true;
-                                        frames_read += 1;
-                                        break;
-                                    }
-                                }
-                            } else {
-                                source_is_finished = true;
-                                break;
-                            }
-                            frames_read += 1;
-                        }
-                    }
-                    
-                    let in_buf_slices: Vec<&[f32]> = input_buffer.iter().map(|v| v.as_slice()).collect();
-                    let mut out_buf_slices: Vec<&mut [f32]> = output_buffer.iter_mut().map(|v| v.as_mut_slice()).collect();
+                    // Create the resampler
+                    let input_sample_rate = decoder.sample_rate();
+                    let input_channels = decoder.channels() as usize;
+                    let is_mono = input_channels == 1;
 
-                    let (frames_consumed, frames_produced) = if source_is_finished {
-                        if frames_read > 0 {
-                             resampler.process_partial_into_buffer(Some(&in_buf_slices), &mut out_buf_slices, None)?
-                        } else {
+                    let pitch_factor = 2.0f64.powf(pitch_cents as f64 / 1200.0);
+                    let effective_input_rate = input_sample_rate as f64 / pitch_factor;
+                    let resample_ratio = sample_rate as f64 / effective_input_rate;
+                    
+                    let mut resampler = FastFixedIn::<f32>::new(
+                        resample_ratio, 1.01, PolynomialDegree::Septic, RESAMPLER_CHUNK_SIZE, CHANNEL_COUNT,
+                    ).map_err(|e| anyhow!("[LoaderThread] Failed to create resampler for {:?}: {}", path_buf.clone(), e))?;
+
+                    // Create buffers (local to this thread)
+                    let max_input_frames = resampler.input_frames_max();
+                    let mut input_buffer = vec![vec![0.0f32; max_input_frames]; CHANNEL_COUNT];
+                    let max_output_frames = resampler.output_frames_max();
+                    let mut output_buffer = vec![vec![0.0f32; max_output_frames]; CHANNEL_COUNT];
+                    let mut interleaved_output = vec![0.0f32; max_output_frames * CHANNEL_COUNT];
+                    
+                    let mut source = decoder.filter_map(|s| s.to_f32());
+                    let mut source_is_finished = false;
+                    
+                    // --- The Loader Loop ---
+                    'loader_loop: loop {
+                        if is_cancelled_clone.load(Ordering::Relaxed) {
                             break 'loader_loop;
                         }
-                    } else if frames_read > 0 { 
-                        resampler.process_into_buffer(&in_buf_slices, &mut out_buf_slices, None)?
-                    } else {
-                        let empty_input: [Vec<f32>; CHANNEL_COUNT] = [vec![], vec![]];
-                        let empty_slices: Vec<&[f32]> = empty_input.iter().map(|v| v.as_slice()).collect();
-                        resampler.process_partial_into_buffer(Some(&empty_slices), &mut out_buf_slices, None)?
-                    };
-
-                    if frames_produced > 0 {
-                        // Interleave the output
-                        for i in 0..frames_produced {
-                            interleaved_output[i * CHANNEL_COUNT] = output_buffer[0][i];
-                            interleaved_output[i * CHANNEL_COUNT + 1] = output_buffer[1][i];
+                        
+                        let input_frames_needed = resampler.input_frames_next();
+                        
+                        for buf in input_buffer.iter_mut() { buf.clear(); }
+                        
+                        let mut frames_read = 0;
+                        if input_frames_needed > 0 && !source_is_finished {
+                            for _ in 0..input_frames_needed {
+                                if let Some(sample_l) = source.next() {
+                                    input_buffer[0].push(sample_l);
+                                    if is_mono {
+                                        input_buffer[1].push(sample_l);
+                                    } else {
+                                        if let Some(sample_r) = source.next() {
+                                            input_buffer[1].push(sample_r);
+                                        } else {
+                                            input_buffer[1].push(sample_l); // Fallback
+                                            source_is_finished = true;
+                                            frames_read += 1;
+                                            break;
+                                        }
+                                    }
+                                } else {
+                                    source_is_finished = true;
+                                    break;
+                                }
+                                frames_read += 1;
+                            }
                         }
                         
-                        // Push to the ring buffer (this will block if the buffer is full)
-                        let needed = frames_produced * CHANNEL_COUNT;
-                        let mut offset = 0usize;
-                        while offset < needed {
-                            let pushed = producer.push_slice(&interleaved_output[offset..needed]);
-                            offset += pushed;
-                            if offset < needed {
-                                if is_cancelled_clone.load(Ordering::Relaxed) {
-                                    break;
+                        let in_buf_slices: Vec<&[f32]> = input_buffer.iter().map(|v| v.as_slice()).collect();
+                        let mut out_buf_slices: Vec<&mut [f32]> = output_buffer.iter_mut().map(|v| v.as_mut_slice()).collect();
+
+                        let (frames_consumed, frames_produced) = if source_is_finished {
+                            if frames_read > 0 {
+                                resampler.process_partial_into_buffer(Some(&in_buf_slices), &mut out_buf_slices, None)?
+                            } else {
+                                break 'loader_loop;
+                            }
+                        } else if frames_read > 0 { 
+                            resampler.process_into_buffer(&in_buf_slices, &mut out_buf_slices, None)?
+                        } else {
+                            let empty_input: [Vec<f32>; CHANNEL_COUNT] = [vec![], vec![]];
+                            let empty_slices: Vec<&[f32]> = empty_input.iter().map(|v| v.as_slice()).collect();
+                            resampler.process_partial_into_buffer(Some(&empty_slices), &mut out_buf_slices, None)?
+                        };
+
+                        if frames_produced > 0 {
+                            for i in 0..frames_produced {
+                                interleaved_output[i * CHANNEL_COUNT] = output_buffer[0][i];
+                                interleaved_output[i * CHANNEL_COUNT + 1] = output_buffer[1][i];
+                            }
+                            
+                            let needed = frames_produced * CHANNEL_COUNT;
+                            let mut offset = 0usize;
+                            while offset < needed {
+                                let pushed = producer.push_slice(&interleaved_output[offset..needed]);
+                                offset += pushed;
+                                if offset < needed {
+                                    if is_cancelled_clone.load(Ordering::Relaxed) {
+                                        break; // break inner while
+                                    }
+                                    thread::sleep(Duration::from_millis(1));
                                 }
-                                thread::sleep(Duration::from_millis(1));
+                            }
+
+                            if is_cancelled_clone.load(Ordering::Relaxed) {
+                                break 'loader_loop;
                             }
                         }
-                    }
-                } // --- End of 'loader_loop ---
+                    } // --- End of 'loader_loop ---
 
-                // --- 3e. Flush the resampler ---
-                'flush_loop: loop {
-                    if is_cancelled_clone.load(Ordering::Relaxed) {
-                        break 'flush_loop;
+                    // --- Flush the resampler ---
+                    'flush_loop: loop {
+                        if is_cancelled_clone.load(Ordering::Relaxed) {
+                            break 'flush_loop;
+                        }
+                        let mut out_buf_slices: Vec<&mut [f32]> = output_buffer.iter_mut().map(|v| v.as_mut_slice()).collect();
+                        
+                        let (frames_consumed, frames_produced) = resampler.process_partial_into_buffer(None::<&[&[f32]]>, &mut out_buf_slices, None)?;
+
+                        if frames_produced > 0 {
+                            // ... (interleave and push logic)
+                            for i in 0..frames_produced {
+                                interleaved_output[i * CHANNEL_COUNT] = output_buffer[0][i];
+                                interleaved_output[i * CHANNEL_COUNT + 1] = output_buffer[1][i];
+                            }
+                            let needed = frames_produced * CHANNEL_COUNT;
+                            let mut offset = 0usize;
+                            while offset < needed {
+                                let pushed = producer.push_slice(&interleaved_output[offset..needed]);
+                                offset += pushed;
+                                if offset < needed {
+                                    if is_cancelled_clone.load(Ordering::Relaxed) {
+                                        break; // break inner while
+                                    }
+                                    thread::sleep(Duration::from_millis(1));
+                                }
+                            }
+
+                            if is_cancelled_clone.load(Ordering::Relaxed) {
+                                break 'flush_loop;
+                            }
+                        } else {
+                            break 'flush_loop;
+                        }
                     }
-                    let mut out_buf_slices: Vec<&mut [f32]> = output_buffer.iter_mut().map(|v| v.as_mut_slice()).collect();
                     
-                    let (frames_consumed, frames_produced) = resampler.process_partial_into_buffer(None::<&[&[f32]]>, &mut out_buf_slices, None)?;
-
-                    if frames_produced > 0 {
-                        // Interleave and push
-                        for i in 0..frames_produced {
-                            interleaved_output[i * CHANNEL_COUNT] = output_buffer[0][i];
-                            interleaved_output[i * CHANNEL_COUNT + 1] = output_buffer[1][i];
-                        }
-
-                        let needed = frames_produced * CHANNEL_COUNT;
-                        let mut offset = 0usize;
-                        while offset < needed {
-                            let pushed = producer.push_slice(&interleaved_output[offset..needed]);
-                            offset += pushed;
-                            if offset < needed {
-                                if is_cancelled_clone.load(Ordering::Relaxed) {
-                                    break;
-                                }
-                                thread::sleep(Duration::from_millis(1));
-                            }
-                        }
-                    } else {
-                        break 'flush_loop;
-                    }
-                }
+                    Ok(()) // Success
+                })(); // End of fallible closure
                 
-                Ok(()) // Success
-            })(); // Immediately invoke the closure
-            
-            // --- 4. Handle result and ALWAYS set finished ---
-            if let Err(e) = result {
-                log::error!("{}", e);
+                // Log any Result::Err
+                if let Err(e) = result {
+                    log::error!("{}", e);
+                }
+            }); // --- End of catch_unwind ---
+
+            // Log any panics
+            if panic_result.is_err() {
+                log::error!("[LoaderThread] PANICKED. This is a bug. Path: {:?}", path_buf_clone.file_name().unwrap_or_default());
             }
             
-            // Signal to the main thread that we are done, no matter what.
+            // This line is *outside* the unwind block and will
+            // execute *even if* the code inside it panicked.
             is_finished_clone.store(true, Ordering::SeqCst);
         });
 
@@ -424,7 +436,7 @@ fn spawn_audio_processing_thread<P>(
                 }
             } // --- End of voice processing loop ---
 
-            // --- 4. Perform deferred removal ---
+            // --- Perform deferred removal ---
             if !voices_to_remove.is_empty() {
                 for voice_id in voices_to_remove.iter() {
                     // Remove the voice from the active map, gaining ownership
@@ -451,7 +463,7 @@ fn spawn_audio_processing_thread<P>(
             //     log::debug!("[AudioThread] Loop complete. Active voices: {}. Max sample: {:.4}", voices.len(), max_abs_sample);
             // }
 
-            // --- 3. Interleave and push to ring buffer ---
+            // --- Interleave and push to ring buffer ---
             for i in 0..buffer_size_frames {
                 interleaved_buffer[i * CHANNEL_COUNT] = mix_buffer_stereo[0][i];
                 interleaved_buffer[i * CHANNEL_COUNT + 1] = mix_buffer_stereo[1][i];
@@ -485,6 +497,9 @@ fn spawn_audio_processing_thread<P>(
                     producer.capacity()
                 );
             }
+
+            thread::sleep(Duration::from_millis((BUFFER_SIZE_MS / 3) as u64));
+
         }
     });
 }
