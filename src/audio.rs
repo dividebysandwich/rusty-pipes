@@ -608,7 +608,22 @@ fn spawn_audio_processing_thread<P>(
                                 }
                             }
                             if !new_notes.is_empty() {
-                                active_notes.insert(note, new_notes);
+                                // insert() returns the old Vec if one existed
+                                let old_notes = active_notes.insert(note, new_notes);
+
+                                // If there were old notes, we MUST kill them
+                                if let Some(notes_to_stop) = old_notes {
+                                    log::warn!("[AudioThread] NoteOn re-trigger on note {}. Fading old voices.", note);
+                                    for stopped_note in notes_to_stop {
+                                        // This is the same logic from handle_note_off
+                                        if let Some(voice) = voices.get_mut(&stopped_note.voice_id) {
+                                            voice.is_cancelled.store(true, Ordering::SeqCst);
+                                            voice.is_fading_out = true;
+                                            // We do NOT add a release sample here, as this is a
+                                            // re-trigger, not a release. The new voice takes over.
+                                        }
+                                    }
+                                }
                             }
                         } else {
                             handle_note_off(
