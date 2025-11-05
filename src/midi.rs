@@ -80,11 +80,13 @@ pub fn setup_midi_input(
                         audio_tx.send(AppMessage::NoteOn(note, velocity)).unwrap_or_else(|e| {
                             let _ = tui_tx.send(TuiMessage::Error(format!("Failed to send NoteOn: {}", e)));
                         });
+                        let _ = tui_tx.send(TuiMessage::TuiNoteOn(note));
                     } else {
                         // Note On with velocity 0 is a Note Off
                          audio_tx.send(AppMessage::NoteOff(note)).unwrap_or_else(|e| {
                             let _ = tui_tx.send(TuiMessage::Error(format!("Failed to send NoteOff: {}", e)));
                         });
+                        let _ = tui_tx.send(TuiMessage::TuiNoteOff(note));
                     }
                 },
                 0x80..=0x8F => { // Note Off (channel 1-16)
@@ -92,6 +94,7 @@ pub fn setup_midi_input(
                     audio_tx.send(AppMessage::NoteOff(note)).unwrap_or_else(|e| {
                         let _ = tui_tx.send(TuiMessage::Error(format!("Failed to send NoteOff: {}", e)));
                     });
+                    let _ = tui_tx.send(TuiMessage::TuiNoteOff(note));
                 },
                 _ => {} // Ignore other messages
             }
@@ -197,7 +200,7 @@ pub fn play_midi_file(
                             let vel = vel.as_int();
                             let log_msg = format!("0x9{} 0x{:02X} 0x{:02X} (Note On from file)", channel.as_int(), key, vel);
                             let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-
+                            let _ = tui_tx.send(TuiMessage::TuiNoteOn(key));
                             if vel > 0 {
                                 audio_tx.send(AppMessage::NoteOn(key, vel))
                             } else {
@@ -211,7 +214,7 @@ pub fn play_midi_file(
                             let key = key.as_int();
                             let log_msg = format!("0x8{} 0x{:02X} 0x00 (Note Off from file)", channel.as_int(), key);
                             let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-
+                            let _ = tui_tx.send(TuiMessage::TuiNoteOff(key));
                             audio_tx.send(AppMessage::NoteOff(key)).unwrap_or_else(|e| {
                                 let _ = tui_tx.send(TuiMessage::Error(format!("File player failed to send NoteOff: {}", e)));
                             });
@@ -225,6 +228,7 @@ pub fn play_midi_file(
                                 audio_tx.send(AppMessage::AllNotesOff).unwrap_or_else(|e| {
                                     let _ = tui_tx.send(TuiMessage::Error(format!("File player failed to send AllNotesOff: {}", e)));
                                 });
+                                let _ = tui_tx.send(TuiMessage::TuiAllNotesOff);
                             }
                             // TODO: Handle Sustain command (CC #64)
                         },

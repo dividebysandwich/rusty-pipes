@@ -22,6 +22,10 @@ pub enum TuiMessage {
     MidiLog(String),
     /// An error message to display.
     Error(String),
+    /// Messages for Piano Roll
+    TuiNoteOn(u8),
+    TuiNoteOff(u8),
+    TuiAllNotesOff,
 }
 
 /// Holds information about a currently playing note.

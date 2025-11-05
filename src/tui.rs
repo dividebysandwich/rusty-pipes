@@ -6,7 +6,8 @@ use crossterm::{
 };
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    symbols::Marker,
+    widgets::{Block, Borders, canvas::{Canvas, Rectangle}, List, ListItem, ListState, Paragraph},
 };
 use std::{
     io::{stdout, Stdout},
@@ -26,6 +27,7 @@ struct TuiState {
     list_state: ListState,
     active_stops: BTreeSet<usize>,
     midi_log: VecDeque<String>,
+    current_active_notes: BTreeSet<u8>,
     error_msg: Option<String>,
     items_per_column: usize,
     stops_count: usize,
@@ -42,6 +44,7 @@ impl TuiState {
             list_state,
             active_stops: BTreeSet::new(),
             midi_log: VecDeque::with_capacity(MIDI_LOG_CAPACITY),
+            current_active_notes: BTreeSet::new(),
             error_msg: None,
             items_per_column,
             stops_count,
@@ -149,6 +152,15 @@ pub fn run_tui_loop(
             match msg {
                 TuiMessage::MidiLog(log) => app_state.add_midi_log(log),
                 TuiMessage::Error(err) => app_state.error_msg = Some(err),
+                TuiMessage::TuiNoteOn(note) => {
+                    app_state.current_active_notes.insert(note);
+                }
+                TuiMessage::TuiNoteOff(note) => {
+                    app_state.current_active_notes.remove(&note);
+                }
+                TuiMessage::TuiAllNotesOff => {
+                    app_state.current_active_notes.clear();
+                }
             }
         }
 
@@ -285,7 +297,16 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
         }
     }
 
-    // --- MIDI Log ---
+    let bottom_area = main_layout[1];
+    let bottom_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(50), // MIDI Log
+            Constraint::Percentage(50), // Piano Roll
+        ])
+        .split(bottom_area);
+
+    // --- MIDI Log (in bottom_chunks[0]) ---
     let log_items: Vec<ListItem> = state.midi_log.iter()
         .map(|msg| ListItem::new(Line::from(msg.clone())))
         .collect();
@@ -294,8 +315,53 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
         .block(Block::default().borders(Borders::ALL).title("MIDI Log"))
         .style(Style::default().fg(Color::Cyan));
     
-    
-    frame.render_widget(log_widget, main_layout[1]);
+    frame.render_widget(log_widget, bottom_chunks[0]); // <-- Use bottom_chunks[0]
+
+    // --- Piano Roll (in bottom_chunks[1]) ---
+    const PIANO_LOW_NOTE: u8 = 21;  // A0
+    const PIANO_HIGH_NOTE: u8 = 108; // C8 (88 keys)
+    // Black key MIDI note numbers (mod 12)
+    const BLACK_KEY_MODS: [u8; 5] = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
+
+    let piano_roll = Canvas::default()
+        .block(Block::default().borders(Borders::ALL).title("Piano Roll"))
+        .marker(Marker::Block) 
+        .x_bounds([
+            PIANO_LOW_NOTE as f64 - 1.0, 
+            PIANO_HIGH_NOTE as f64 + 1.0
+        ]) // 88 keys + padding
+        .y_bounds([0.0, 1.0]) // Only 1 unit high
+        .paint(|ctx| {
+            // Draw the keyboard background
+            for note in PIANO_LOW_NOTE..=PIANO_HIGH_NOTE {
+                let is_black_key = BLACK_KEY_MODS.contains(&(note % 12));
+                // Draw black keys as black, white keys as dark gray
+                let color = if is_black_key { Color::Black } else { Color::DarkGray };
+                ctx.draw(&Rectangle {
+                    x: note as f64 - 0.5, // Center the block on the note's integer coordinate
+                    y: 0.0,
+                    width: 1.0,
+                    height: 1.0,
+                    color,
+                });
+            }
+            
+            // Draw active notes on top
+            for &note in &state.current_active_notes {
+                if note >= PIANO_LOW_NOTE && note <= PIANO_HIGH_NOTE {
+                    // Draw the active note over top with a bright color
+                    ctx.draw(&Rectangle {
+                        x: note as f64 - 0.5, // Center the block
+                        y: 0.0,
+                        width: 1.0,
+                        height: 1.0,
+                        color: Color::Green,
+                    });
+                }
+            }
+        });
+
+    frame.render_widget(piano_roll, bottom_chunks[1]);
 }
 
 /// Helper to set up the terminal for TUI mode.
