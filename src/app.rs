@@ -23,8 +23,8 @@ pub enum TuiMessage {
     /// An error message to display.
     Error(String),
     /// Messages for Piano Roll
-    TuiNoteOn(u8),
-    TuiNoteOff(u8),
+    TuiNoteOn(u8, Instant),
+    TuiNoteOff(u8, Instant),
     TuiAllNotesOff,
 }
 

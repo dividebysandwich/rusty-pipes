@@ -12,8 +12,8 @@ use ratatui::{
 use std::{
     io::{stdout, Stdout},
     sync::{mpsc::{Sender, Receiver}, Arc},
-    time::Duration,
-    collections::{BTreeSet, VecDeque},
+    time::{Duration, Instant},
+    collections::{BTreeSet, HashMap, VecDeque},
 };
 
 use crate::{app::{AppMessage, TuiMessage}, organ::Organ};
@@ -21,16 +21,42 @@ use crate::{app::{AppMessage, TuiMessage}, organ::Organ};
 const MIDI_LOG_CAPACITY: usize = 10; // Max log lines
 const NUM_COLUMNS: usize = 3; // Number of columns for the stop list
 
+#[derive(Debug, Clone, PartialEq)]
+struct PlayedNote {
+    note: u8,
+    start_time: Instant,
+    end_time: Option<Instant>, // None if still playing
+}
+
+// Map MIDI note number to its display Y-position
+fn midi_note_to_y(note: u8) -> f64 {
+    // We want C1 (MIDI 36) at the bottom, C8 (MIDI 108) at the top.
+    // Let's use 0.0 for the lowest note and scale up.
+    // MIDI note range (approx 0-127). Standard piano is 21-108.
+    const DISPLAY_MIN_MIDI_NOTE: f64 = 21.0; // A0
+    const DISPLAY_MAX_MIDI_NOTE: f64 = 108.0; // C8
+
+    // Scale note to be between 0.0 and 1.0 (or similar) of the drawing area
+    // In a vertical piano roll, lower notes are typically at the bottom.
+    // Canvas y-coordinates typically increase downwards, so we invert.
+    (note as f64 - DISPLAY_MIN_MIDI_NOTE) / (DISPLAY_MAX_MIDI_NOTE - DISPLAY_MIN_MIDI_NOTE)
+}
+
 /// Holds the state for the TUI.
 struct TuiState {
     organ: Arc<Organ>,
     list_state: ListState,
     active_stops: BTreeSet<usize>,
     midi_log: VecDeque<String>,
-    current_active_notes: BTreeSet<u8>,
     error_msg: Option<String>,
     items_per_column: usize,
     stops_count: usize,
+    // Currently active notes, mapping midi note -> PlayedNote instance
+    currently_playing_notes: HashMap<u8, PlayedNote>, 
+    // Notes that have finished playing, but are still within the display window
+    finished_notes_display: VecDeque<PlayedNote>,
+    // Time parameters for the scrolling window
+    piano_roll_display_duration: Duration, // How much time (ms) to show on screen
 }
 
 impl TuiState {
@@ -44,10 +70,12 @@ impl TuiState {
             list_state,
             active_stops: BTreeSet::new(),
             midi_log: VecDeque::with_capacity(MIDI_LOG_CAPACITY),
-            current_active_notes: BTreeSet::new(),
             error_msg: None,
             items_per_column,
             stops_count,
+            currently_playing_notes: HashMap::new(),
+            finished_notes_display: VecDeque::new(),
+            piano_roll_display_duration: Duration::from_secs(1), // Show 1 second of history
         }
     }
 
@@ -132,6 +160,53 @@ impl TuiState {
         }
         self.midi_log.push_back(msg);
     }
+
+    fn handle_tui_note_on(&mut self, note: u8, start_time: Instant) {
+        let played_note = PlayedNote {
+            note,
+            start_time,
+            end_time: None,
+        };
+        self.currently_playing_notes.insert(note, played_note);
+    }
+
+    fn handle_tui_note_off(&mut self, note: u8, end_time: Instant) {
+        if let Some(mut played_note) = self.currently_playing_notes.remove(&note) {
+            played_note.end_time = Some(end_time);
+            self.finished_notes_display.push_back(played_note);
+        }
+    }
+
+    fn handle_tui_all_notes_off(&mut self) {
+        let now = Instant::now();
+        for (_, mut played_note) in self.currently_playing_notes.drain() {
+            played_note.end_time = Some(now);
+            self.finished_notes_display.push_back(played_note);
+        }
+    }
+
+    fn update_piano_roll_state(&mut self) {
+        let now = Instant::now();
+
+        // Remove notes that are entirely off-screen
+        let oldest_time_to_display = now.checked_sub(self.piano_roll_display_duration)
+            .unwrap_or(Instant::now()); // Safely get the boundary
+
+        while let Some(front_note) = self.finished_notes_display.front() {
+            // A note is off-screen if its end_time is older than the oldest_time_to_display
+            // OR if its start_time is older and it has no end_time (very long hanging note)
+            let is_off_screen = front_note.end_time.map_or(
+                front_note.start_time < oldest_time_to_display, // Still playing, but started too long ago
+                |et| et < oldest_time_to_display, // Finished, and ended too long ago
+            );
+
+            if is_off_screen {
+                self.finished_notes_display.pop_front();
+            } else {
+                break; // Stop when we find a note that's still on screen
+            }
+        }
+    }
 }
 
 /// Runs the main TUI loop, blocking the main thread.
@@ -144,6 +219,9 @@ pub fn run_tui_loop(
     let mut app_state = TuiState::new(organ);
 
     loop {
+        // Update piano roll state before drawing
+        app_state.update_piano_roll_state();
+
         // Draw UI
         terminal.draw(|f| ui(f, &mut app_state))?;
 
@@ -152,15 +230,9 @@ pub fn run_tui_loop(
             match msg {
                 TuiMessage::MidiLog(log) => app_state.add_midi_log(log),
                 TuiMessage::Error(err) => app_state.error_msg = Some(err),
-                TuiMessage::TuiNoteOn(note) => {
-                    app_state.current_active_notes.insert(note);
-                }
-                TuiMessage::TuiNoteOff(note) => {
-                    app_state.current_active_notes.remove(&note);
-                }
-                TuiMessage::TuiAllNotesOff => {
-                    app_state.current_active_notes.clear();
-                }
+                TuiMessage::TuiNoteOn(note, start_time) => app_state.handle_tui_note_on(note, start_time),
+                TuiMessage::TuiNoteOff(note, end_time) => app_state.handle_tui_note_off(note, end_time),
+                TuiMessage::TuiAllNotesOff => app_state.handle_tui_all_notes_off(),
             }
         }
 
@@ -297,12 +369,13 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
         }
     }
 
+// --- Bottom Area (MIDI Log + Piano Roll) ---
     let bottom_area = main_layout[1];
     let bottom_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(50), // MIDI Log
-            Constraint::Percentage(50), // Piano Roll
+            Constraint::Percentage(20), // MIDI Log
+            Constraint::Percentage(80), // Piano Roll
         ])
         .split(bottom_area);
 
@@ -315,52 +388,95 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
         .block(Block::default().borders(Borders::ALL).title("MIDI Log"))
         .style(Style::default().fg(Color::Cyan));
     
-    frame.render_widget(log_widget, bottom_chunks[0]); // <-- Use bottom_chunks[0]
+    frame.render_widget(log_widget, bottom_chunks[0]);
 
     // --- Piano Roll (in bottom_chunks[1]) ---
     const PIANO_LOW_NOTE: u8 = 21;  // A0
-    const PIANO_HIGH_NOTE: u8 = 108; // C8 (88 keys)
-    // Black key MIDI note numbers (mod 12)
+    const PIANO_HIGH_NOTE: u8 = 108; // C8
     const BLACK_KEY_MODS: [u8; 5] = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
+
+    // Adjust y-bounds to be based on time
+    // x_bounds will be MIDI notes
+    // The current time will be the "bottom" of the display
+    let now = Instant::now();
+    let display_start_time = now.checked_sub(state.piano_roll_display_duration)
+        .unwrap_or(Instant::now());
 
     let piano_roll = Canvas::default()
         .block(Block::default().borders(Borders::ALL).title("Piano Roll"))
-        .marker(Marker::Block) 
+        .marker(Marker::Block)
         .x_bounds([
-            PIANO_LOW_NOTE as f64 - 1.0, 
-            PIANO_HIGH_NOTE as f64 + 1.0
-        ]) // 88 keys + padding
-        .y_bounds([0.0, 1.0]) // Only 1 unit high
+            PIANO_LOW_NOTE as f64 - 0.5, // -0.5 to make rectangles centered
+            PIANO_HIGH_NOTE as f64 + 0.5,
+        ])
+        // Y-bounds: 0.0 at the oldest time (top), 1.0 at current time (bottom)
+        .y_bounds([
+            0.0, 
+            state.piano_roll_display_duration.as_secs_f64()
+        ])
         .paint(|ctx| {
-            // Draw the keyboard background
+            let area_height_coords = state.piano_roll_display_duration.as_secs_f64();
+
+            // Draw the static keyboard background on the X-axis
             for note in PIANO_LOW_NOTE..=PIANO_HIGH_NOTE {
                 let is_black_key = BLACK_KEY_MODS.contains(&(note % 12));
-                // Draw black keys as black, white keys as dark gray
-                let color = if is_black_key { Color::Black } else { Color::DarkGray };
+                let color = if is_black_key { Color::Rgb(50, 50, 50) } else { Color::Rgb(100, 100, 100) }; // Darker gray for white keys
+                
+                // Draw a full-height line for the key
                 ctx.draw(&Rectangle {
-                    x: note as f64 - 0.5, // Center the block on the note's integer coordinate
-                    y: 0.0,
+                    x: note as f64 - 0.5,
+                    y: 0.0, // Start from the bottom of the canvas's y-bounds
                     width: 1.0,
-                    height: 1.0,
+                    height: area_height_coords, // Extend to the top of the canvas's y-bounds
                     color,
                 });
             }
-            
-            // Draw active notes on top
-            for &note in &state.current_active_notes {
-                if note >= PIANO_LOW_NOTE && note <= PIANO_HIGH_NOTE {
-                    // Draw the active note over top with a bright color
-                    ctx.draw(&Rectangle {
-                        x: note as f64 - 0.5, // Center the block
-                        y: 0.0,
-                        width: 1.0,
-                        height: 1.0,
-                        color: Color::Green,
-                    });
-                }
+
+            // Function to map a time Instant to a Y-coordinate in the canvas
+            let map_time_to_y = |time: Instant| -> f64 {
+                let time_elapsed_from_start = time.duration_since(display_start_time).as_secs_f64();
+                time_elapsed_from_start // This maps directly to our y-bounds
+            };
+
+            // Draw finished notes
+            for played_note in &state.finished_notes_display {
+                let note_y = played_note.note as f64;
+                let start_y = map_time_to_y(played_note.start_time);
+                let end_y = played_note.end_time.map_or_else(
+                    || map_time_to_y(now), // If still playing, project to current time
+                    |et| map_time_to_y(et),
+                );
+                
+                // Ensure valid height
+                let height = (end_y - start_y).max(0.01); // Minimum height for visibility
+
+                ctx.draw(&Rectangle {
+                    x: note_y - 0.5,
+                    y: start_y,
+                    width: 1.0,
+                    height: height,
+                    color: Color::Magenta, // Finished notes color
+                });
+            }
+
+            // Draw currently playing notes
+            for (_, played_note) in &state.currently_playing_notes {
+                let note_y = played_note.note as f64;
+                let start_y = map_time_to_y(played_note.start_time);
+                // For currently playing, the end is 'now'
+                let end_y = map_time_to_y(now); 
+                
+                let height = (end_y - start_y).max(0.01); // Minimum height for visibility
+
+                ctx.draw(&Rectangle {
+                    x: note_y - 0.5,
+                    y: start_y,
+                    width: 1.0,
+                    height: height,
+                    color: Color::Green, // Active notes color
+                });
             }
         });
-
     frame.render_widget(piano_roll, bottom_chunks[1]);
 }
 

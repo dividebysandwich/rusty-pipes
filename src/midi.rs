@@ -7,6 +7,7 @@ use std::fs;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 use midly::{Smf, TrackEventKind, MidiMessage as MidlyMidiMessage, MetaMessage};
+use std::time::Instant;
 
 use crate::app::{AppMessage, TuiMessage};
 
@@ -24,7 +25,7 @@ fn format_midi_message(message: &[u8]) -> String {
     match message.get(0) {
         Some(0x90..=0x9F) => s.push_str(" (Note On)"),
         Some(0x80..=0x8F) => s.push_str(" (Note Off)"),
-        Some(0xB0..=0xBF) => s.push_str(" (Control Change)"),
+        Some(0xB0..=0xBF) => s.push_str(" (CC)"),
         Some(0xE0..=0xEF) => s.push_str(" (Pitch Bend)"),
         _ => s.push_str(" (Other)"),
     }
@@ -67,6 +68,7 @@ pub fn setup_midi_input(
         let log_msg = format_midi_message(message);
         // We don't want to panic if the TUI is gone, so we ignore the error
         let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
+        let now = Instant::now();
         
         // 2. Parse and send to Audio thread
         if message.len() >= 3 {
@@ -74,19 +76,18 @@ pub fn setup_midi_input(
                 0x90..=0x9F => { // Note On (channel 1-16)
                     let note = message[1];
                     let velocity = message[2];
-                    
                     if velocity > 0 {
                         // This is a real Note On
                         audio_tx.send(AppMessage::NoteOn(note, velocity)).unwrap_or_else(|e| {
                             let _ = tui_tx.send(TuiMessage::Error(format!("Failed to send NoteOn: {}", e)));
                         });
-                        let _ = tui_tx.send(TuiMessage::TuiNoteOn(note));
+                        let _ = tui_tx.send(TuiMessage::TuiNoteOn(note, now));
                     } else {
                         // Note On with velocity 0 is a Note Off
                          audio_tx.send(AppMessage::NoteOff(note)).unwrap_or_else(|e| {
                             let _ = tui_tx.send(TuiMessage::Error(format!("Failed to send NoteOff: {}", e)));
                         });
-                        let _ = tui_tx.send(TuiMessage::TuiNoteOff(note));
+                        let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, now));
                     }
                 },
                 0x80..=0x8F => { // Note Off (channel 1-16)
@@ -94,7 +95,7 @@ pub fn setup_midi_input(
                     audio_tx.send(AppMessage::NoteOff(note)).unwrap_or_else(|e| {
                         let _ = tui_tx.send(TuiMessage::Error(format!("Failed to send NoteOff: {}", e)));
                     });
-                    let _ = tui_tx.send(TuiMessage::TuiNoteOff(note));
+                    let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, now));
                 },
                 _ => {} // Ignore other messages
             }
@@ -190,6 +191,7 @@ pub fn play_midi_file(
                 let wait_micros = (ticks_to_wait as f64 * micros_per_tick) as u64;
                 thread::sleep(Duration::from_micros(wait_micros));
             }
+            let now = Instant::now();
 
             // Process the MIDI event
             match event.kind {
@@ -198,13 +200,16 @@ pub fn play_midi_file(
                         MidlyMidiMessage::NoteOn { key, vel } => {
                             let key = key.as_int();
                             let vel = vel.as_int();
-                            let log_msg = format!("0x9{} 0x{:02X} 0x{:02X} (Note On from file)", channel.as_int(), key, vel);
-                            let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                            let _ = tui_tx.send(TuiMessage::TuiNoteOn(key));
                             if vel > 0 {
+                                let log_msg = format!("0x9{} 0x{:02X} 0x{:02X} (Note On)", channel.as_int(), key, vel);
+                                let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
+                                let _ = tui_tx.send(TuiMessage::TuiNoteOn(key, now));
                                 audio_tx.send(AppMessage::NoteOn(key, vel))
                             } else {
                                 // Velocity 0 is a Note Off
+                                let log_msg = format!("0x8{} 0x{:02X} 0x00 (Note Off)", channel.as_int(), key);
+                                let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
+                                let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, now));
                                 audio_tx.send(AppMessage::NoteOff(key))
                             }.unwrap_or_else(|e| {
                                 let _ = tui_tx.send(TuiMessage::Error(format!("File player failed to send message: {}", e)));
@@ -212,9 +217,9 @@ pub fn play_midi_file(
                         },
                         MidlyMidiMessage::NoteOff { key, vel: _ } => {
                             let key = key.as_int();
-                            let log_msg = format!("0x8{} 0x{:02X} 0x00 (Note Off from file)", channel.as_int(), key);
+                            let log_msg = format!("0x8{} 0x{:02X} 0x00 (Note Off)", channel.as_int(), key);
                             let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                            let _ = tui_tx.send(TuiMessage::TuiNoteOff(key));
+                            let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, now));
                             audio_tx.send(AppMessage::NoteOff(key)).unwrap_or_else(|e| {
                                 let _ = tui_tx.send(TuiMessage::Error(format!("File player failed to send NoteOff: {}", e)));
                             });
@@ -222,7 +227,7 @@ pub fn play_midi_file(
                         MidlyMidiMessage::Controller { controller, value: _ } => {
                             // CC #123 is "All Notes Off"
                             if controller.as_int() == 123 {
-                                let log_msg = format!("0xB{} 0x7B 0x00 (All Notes Off from file)", channel.as_int());
+                                let log_msg = format!("0xB{} 0x7B 0x00 (All Off)", channel.as_int());
                                 let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
                                 
                                 audio_tx.send(AppMessage::AllNotesOff).unwrap_or_else(|e| {
@@ -237,13 +242,13 @@ pub fn play_midi_file(
                 },
                 TrackEventKind::Meta(MetaMessage::Tempo(micros)) => {
                     micros_per_quarter = micros.as_int() as f64;
-                    let _ = tui_tx.send(TuiMessage::MidiLog(format!("Tempo set to {} μs/quarter", micros.as_int())));
+                    let _ = tui_tx.send(TuiMessage::MidiLog(format!("Tempo {} μs/q", micros.as_int())));
                 },
                 _ => {} // Ignore Sysex or other meta events
             }
         }
         
-        let _ = tui_tx.send(TuiMessage::MidiLog("MIDI file playback finished.".into()));
+        let _ = tui_tx.send(TuiMessage::MidiLog("Playback finished.".into()));
     });
 
     Ok(handle)
