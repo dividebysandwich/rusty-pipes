@@ -7,7 +7,7 @@ use ringbuf::{HeapCons, HeapRb};
 use rubato::{Resampler, FastFixedIn, PolynomialDegree, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Seek, SeekFrom, Read, Cursor};
 use std::sync::{mpsc, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -18,6 +18,7 @@ use rodio::Decoder;
 use num_traits::cast::ToPrimitive;
 use std::path::{Path, PathBuf};
 use std::mem;
+use byteorder::{ReadBytesExt as OtherReadBytesExt, LittleEndian}; 
 
 use crate::app::{ActiveNote, AppMessage};
 use crate::organ::Organ;
@@ -27,6 +28,58 @@ const CHANNEL_COUNT: usize = 2; // Stereo
 const RESAMPLER_CHUNK_SIZE: usize = 512;
 /// 2 seconds of stereo, resampled audio.
 const VOICE_BUFFER_FRAMES: usize = 14400; 
+
+/// Parses a 'smpl' chunk's data. Returns (loop_start, loop_end) in samples.
+fn parse_smpl_chunk(data: &[u8]) -> Option<(u32, u32)> {
+    // A 'smpl' chunk has a 36-byte header, followed by an array of loops.
+    // Each loop entry is 24 bytes.
+    if data.len() < 36 {
+        log::warn!("[parse_smpl_chunk] 'smpl' data is too short for header: {} bytes", data.len());
+        return None;
+    }
+    let mut cursor = Cursor::new(data);
+    
+    // Seek to num_sample_loops (offset 28)
+    if cursor.seek(SeekFrom::Start(28)).is_err() {
+        return None; // Should not happen
+    }
+    let num_sample_loops = match cursor.read_u32::<LittleEndian>() {
+        Ok(n) => n,
+        Err(e) => {
+            log::warn!("[parse_smpl_chunk] Failed to read num_sample_loops: {}", e);
+            return None;
+        }
+    };
+
+    if num_sample_loops == 0 {
+        log::trace!("[parse_smpl_chunk] File has 'smpl' chunk but 0 loops.");
+        return None;
+    }
+
+    // Seek to start of first loop entry (offset 36)
+    if cursor.seek(SeekFrom::Start(36)).is_err() {
+        return None;
+    }
+    
+    if data.len() < 36 + 24 {
+        log::warn!("[parse_smpl_chunk] 'smpl' data is too short for one loop entry: {} bytes", data.len());
+        return None;
+    }
+
+    // We only care about the first loop.
+    let _cue_point_id = cursor.read_u32::<LittleEndian>().ok()?;
+    let _loop_type = cursor.read_u32::<LittleEndian>().ok()?; // 0 = forward, 1 = alternating, 2 = backward
+    let loop_start = cursor.read_u32::<LittleEndian>().ok()?;
+    let loop_end = cursor.read_u32::<LittleEndian>().ok()?; // This is the *sample after* the loop
+    let _fraction = cursor.read_u32::<LittleEndian>().ok()?;
+    let _play_count = cursor.read_u32::<LittleEndian>().ok()?; // 0 = infinite
+    
+    log::debug!("[parse_smpl_chunk] Found loop: {} -> {}", loop_start, loop_end);
+
+    // The 'end' sample is exclusive, so `loop_end - 1` is the last sample.
+    // We'll use a check `current_frame >= loop_end`
+    Some((loop_start, loop_end))
+}
 
 /// Represents one playing sample, either attack or release.
 struct Voice {
@@ -47,7 +100,7 @@ struct Voice {
 }
 
 impl Voice {
-    fn new(path: &Path, sample_rate: u32, pitch_cents: f32, gain_db: f32, start_fading_in: bool) -> Result<Self> {
+    fn new(path: &Path, sample_rate: u32, pitch_cents: f32, gain_db: f32, start_fading_in: bool, is_attack_sample: bool) -> Result<Self> {
         
         let amplitude_ratio: AmplitudeRatio<f64> = DecibelRatio(gain_db as f64).into();
         let gain = amplitude_ratio.amplitude_value() as f32;
@@ -59,6 +112,7 @@ impl Voice {
         // --- Create communication atomics ---
         let is_finished = Arc::new(AtomicBool::new(false));
         let is_cancelled = Arc::new(AtomicBool::new(false));
+        let is_attack_sample_clone = is_attack_sample;
         
         // Clone variables to move into the loader thread
         let path_buf = path.to_path_buf();
@@ -85,7 +139,66 @@ impl Voice {
                     // Open the file
                     let file = File::open(&path_buf.clone())
                         .map_err(|e| anyhow!("[LoaderThread] Failed to open {:?}: {}", path_buf.clone(), e))?;
-                    let reader = BufReader::new(file);
+                    let mut reader = BufReader::new(file);
+
+                    // --- 1. Manually parse for 'smpl' chunk if it's an attack sample ---
+                    let mut loop_info: Option<(u32, u32)> = None;
+
+                    if is_attack_sample_clone {
+                        log::trace!("[LoaderThread] Scanning for 'smpl' chunk in {:?}", path_str);
+                        // This block will read headers, find 'smpl', then rewind.
+                        // We wrap it in a Result to easily handle IO errors.
+                        let parse_result: Result<()> = (|| {
+                            let mut riff_header = [0; 4];
+                            reader.read_exact(&mut riff_header)?;
+                            if &riff_header != b"RIFF" {
+                                return Err(anyhow!("Not a RIFF file"));
+                            }
+                            let _file_size = reader.read_u32::<LittleEndian>()?;
+                            let mut wave_header = [0; 4];
+                            reader.read_exact(&mut wave_header)?;
+                            if &wave_header != b"WAVE" {
+                                return Err(anyhow!("Not a WAVE file"));
+                            }
+
+                            'chunk_loop: while let Ok(chunk_id) = reader.read_u32::<LittleEndian>().map(|id| id.to_le_bytes()) {
+                                let chunk_size = reader.read_u32::<LittleEndian>()?;
+                                let chunk_data_start_pos = reader.stream_position()?;
+                                let next_chunk_aligned_pos =
+                                    chunk_data_start_pos + (chunk_size as u64 + (chunk_size % 2) as u64);
+
+                                match &chunk_id {
+                                    b"smpl" => {
+                                        log::trace!("[LoaderThread] Found 'smpl' chunk in {:?}", path_str);
+                                        let mut chunk_data = vec![0; chunk_size as usize];
+                                        reader.read_exact(&mut chunk_data)?;
+                                        loop_info = parse_smpl_chunk(&chunk_data);
+                                    }
+                                    b"data" => {
+                                        // Found data, we can stop. 'smpl' chunk (if it exists)
+                                        // almost always comes before 'data'.
+                                        break 'chunk_loop;
+                                    }
+                                    _ => {
+                                        // Other chunk, skip it
+                                    }
+                                }
+                                // Seek to the *start* of the next chunk
+                                reader.seek(SeekFrom::Start(next_chunk_aligned_pos))?;
+                            }
+                            Ok(())
+                        })(); // End of header parse closure
+                        
+                        if let Err(e) = parse_result {
+                            log::warn!("[LoaderThread] Header parse failed for {:?}: {}. Proceeding without loop.", path_str, e);
+                            loop_info = None;
+                        }
+                        
+                        // --- REWIND the reader for rodio::Decoder ---
+                        reader.seek(SeekFrom::Start(0))
+                            .map_err(|e| anyhow!("[LoaderThread] Failed to rewind reader for {:?}: {}", path_buf.clone(), e))?;
+                    }
+
                     let mut decoder = Decoder::new_wav(reader)
                         .map_err(|e| anyhow!("[LoaderThread] Failed to decode {:?}: {}", path_buf.clone(), e))?;
 
@@ -109,9 +222,49 @@ impl Voice {
                     let mut output_buffer = vec![vec![0.0f32; max_output_frames]; CHANNEL_COUNT];
                     let mut interleaved_output = vec![0.0f32; max_output_frames * CHANNEL_COUNT];
                     
-                    let mut source = decoder.filter_map(|s| s.to_f32());
+                    let mut source: Option<Box<dyn Iterator<Item = f32>>> =
+                        Some(Box::new(decoder.filter_map(|s| s.to_f32())));
                     let mut source_is_finished = false;
+
+                    // Variables for looping attack samples
+                    let mut samples_in_memory: Vec<f32> = Vec::new(); 
+                    let mut current_frame_index: usize = 0;
+                    let mut loop_start_frame: usize = 0;
+                    let mut loop_end_frame: usize = 0;
                     
+                    let mut is_looping_sample = is_attack_sample_clone && loop_info.is_some();
+                    let mut use_memory_reader = false;
+                    
+                    if is_looping_sample {
+                        log::debug!("[LoaderThread] Reading {:?} into memory for looping.", path_str);
+                        // --- Read ALL samples into memory ---
+                        samples_in_memory = source.take().unwrap().collect();
+                        use_memory_reader = true;
+                        source_is_finished = true; // The 'source' iterator is now consumed
+                        
+                        let (start, end) = loop_info.unwrap();
+                        loop_start_frame = start as usize;
+                        let total_frames = samples_in_memory.len() / input_channels;
+                        
+                        // 'end' is exclusive. 0 often means 'end of file'.
+                        loop_end_frame = if end == 0 { total_frames } else { end as usize };
+
+                        // Sanity check loop points
+                        if loop_start_frame >= loop_end_frame || loop_end_frame > total_frames {
+                            log::warn!(
+                                "[LoaderThread] Invalid loop points for {:?}: start {}, end {}, total {}. Disabling loop.",
+                                path_str, loop_start_frame, loop_end_frame, total_frames
+                            );
+                            is_looping_sample = false; // It's now a one-shot, but still from memory
+                            current_frame_index = 0; // Reset index to play from start
+                        } else {
+                            log::debug!(
+                                "[LoaderThread] Loop active for {:?}: {} -> {} ({} frames)",
+                                path_str, loop_start_frame, loop_end_frame, total_frames
+                            );
+                        }
+                    }
+
                     // --- The Loader Loop ---
                     'loader_loop: loop {
                         loader_loop_counter += 1;
@@ -133,28 +286,69 @@ impl Voice {
                         let input_frames_needed = resampler.input_frames_next();
                         let mut frames_read = 0;
 
-                        // If we are not EOF, read data
-                        if input_frames_needed > 0 && !source_is_finished {
+                        if use_memory_reader {
+                            // --- A & B. READING FROM MEMORY (Looping OR One-Shot) ---
                             for _ in 0..input_frames_needed {
-                                if let Some(sample_l) = source.next() {
-                                    input_buffer[0].push(sample_l);
-                                    if is_mono {
-                                        input_buffer[1].push(sample_l);
-                                    } else {
-                                        if let Some(sample_r) = source.next() {
-                                            input_buffer[1].push(sample_r);
-                                        } else {
-                                            input_buffer[1].push(sample_l); // Fallback
-                                            source_is_finished = true;
-                                            frames_read += 1;
-                                            break;
-                                        }
+                                if is_looping_sample {
+                                    // Check for loop point
+                                    if current_frame_index >= loop_end_frame {
+                                        current_frame_index = loop_start_frame;
                                     }
                                 } else {
-                                    source_is_finished = true;
-                                    break;
+                                    // One-shot from memory
+                                    if current_frame_index >= (samples_in_memory.len() / input_channels) {
+                                        source_is_finished = true; // True EOF
+                                        break; // Stop adding frames
+                                    }
                                 }
-                                frames_read += 1;
+                                
+                                let sample_l_idx = current_frame_index * input_channels;
+                                let sample_l = samples_in_memory.get(sample_l_idx).cloned().unwrap_or(0.0);
+                                let sample_r = if is_mono {
+                                    sample_l
+                                } else {
+                                    samples_in_memory.get(sample_l_idx + 1).cloned().unwrap_or(0.0)
+                                };
+                                
+                                input_buffer[0].push(sample_l);
+                                input_buffer[1].push(sample_r);
+                                current_frame_index += 1;
+                                frames_read += 1; // Increment frames *read*
+                            }
+                        } else {
+                            // --- C. ORIGINAL ONE-SHOT LOGIC (streaming from Decoder) ---
+                            // This branch is only entered if `use_memory_reader` is false,
+                            // meaning `source.take()` was never called, so `source` is `Some`.
+                            if input_frames_needed > 0 && !source_is_finished {
+                                // The borrow checker is happy because `if let Some`
+                                // proves `source` is still valid.
+                                if let Some(ref mut s_iter) = source {
+                                    for _ in 0..input_frames_needed {
+                                        if let Some(sample_l) = s_iter.next() {
+                                            input_buffer[0].push(sample_l);
+                                            if is_mono {
+                                                input_buffer[1].push(sample_l);
+                                            } else {
+                                                if let Some(sample_r) = s_iter.next() {
+                                                    input_buffer[1].push(sample_r);
+                                                } else {
+                                                    input_buffer[1].push(sample_l); // Fallback
+                                                    source_is_finished = true;
+                                                    frames_read += 1;
+                                                    break;
+                                                }
+                                            }
+                                        } else {
+                                            source_is_finished = true;
+                                            break;
+                                        }
+                                        frames_read += 1;
+                                    }
+                                } else {
+                                    // This should not happen if use_memory_reader is false,
+                                    // but it's good to be safe.
+                                    source_is_finished = true;
+                                }
                             }
                         }
                         
@@ -204,17 +398,28 @@ impl Voice {
                         }
 
                         // Decide to sleep or exit
-                        if source_is_finished && frames_produced == 0 && resampler.output_frames_next() == 0 {
-                            // File is done, nothing was produced, and resampler has no more frames.
-                            // We are 100% finished.
-                            log::trace!("[LoaderThread] FINISHED_SOURCE_AND_RESAMPLER: {:?}", path_str);
-                            break 'loader_loop;
-                        }
-                        
-                        if input_frames_needed == 0 && frames_produced == 0 {
-                            // Resampler input is full, and output is full.
-                            // We *must* sleep to wait for the mixer.
-                            thread::sleep(Duration::from_millis(1));
+                        if is_looping_sample {
+                            // For a looping sample, we NEVER exit the loop unless cancelled.
+                            // We just sleep if the resampler or ringbuf is full.
+                            if input_frames_needed == 0 && frames_produced == 0 {
+                                // Resampler input is full, and output is full.
+                                // We *must* sleep to wait for the mixer.
+                                thread::sleep(Duration::from_millis(1));
+                            }
+                        } else {
+                            // --- exit logic for one-shot samples ---
+                            if source_is_finished && frames_produced == 0 && resampler.output_frames_next() == 0 {
+                                // File is done, nothing was produced, and resampler has no more frames.
+                                // We are 100% finished.
+                                log::trace!("[LoaderThread] FINISHED_SOURCE_AND_RESAMPLER: {:?}", path_str);
+                                break 'loader_loop;
+                            }
+                            
+                            if input_frames_needed == 0 && frames_produced == 0 {
+                                // Resampler input is full, and output is full.
+                                // We *must* sleep to wait for the mixer.
+                                thread::sleep(Duration::from_millis(1));
+                            }
                         }
                         
                         // --- Clear input buffers for next loop ---
@@ -380,6 +585,7 @@ fn spawn_audio_processing_thread<P>(
                                                 pipe.pitch_tuning_cents,
                                                 total_gain,
                                                 false,
+                                                true,
                                             ) {
                                                 Ok(voice) => {
                                                     let voice_id = voice_counter;
@@ -611,6 +817,7 @@ fn handle_note_off(
                             pipe.pitch_tuning_cents,
                             total_gain,
                             true,
+                            false,
                         ) {
                             Ok(voice) => {
                                 log::debug!("[AudioThread] -> Created RELEASE Voice for {:?} (Duration: {}ms, Gain: {:.2}dB)",
