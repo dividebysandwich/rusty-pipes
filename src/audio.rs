@@ -24,10 +24,12 @@ use byteorder::{ReadBytesExt as OtherReadBytesExt, LittleEndian};
 use crate::app::{ActiveNote, AppMessage};
 use crate::organ::Organ;
 
-const BUFFER_SIZE_MS: u32 = 5; 
+const BUFFER_SIZE_MS: u32 = 10; 
 const CHANNEL_COUNT: usize = 2; // Stereo
 const RESAMPLER_CHUNK_SIZE: usize = 512;
 const VOICE_BUFFER_FRAMES: usize = 14400; 
+const GAIN_FACTOR: f32 = 0.6; // Prevent clipping when multiple voices mix
+const CROSSFADE_TIME: f32 = 0.20; // How long to crossfade from attack to release samples, in seconds
 
 /// Parses a 'smpl' chunk's data. Returns (loop_start, loop_end) in samples.
 fn parse_smpl_chunk(data: &[u8]) -> Option<(u32, u32)> {
@@ -286,7 +288,7 @@ impl Voice {
                         let mut frames_read = 0;
 
                         if use_memory_reader {
-                            // --- A & B. READING FROM MEMORY (Looping OR One-Shot) ---
+                            // --- READING FROM MEMORY (Looping OR One-Shot) ---
                             for _ in 0..input_frames_needed {
                                 if is_looping_sample {
                                     // Check for loop point
@@ -569,6 +571,13 @@ fn spawn_audio_processing_thread<P>(
             while let Ok(msg) = rx.try_recv() {
                 match msg {
                     AppMessage::NoteOn(note, _vel) => {
+                        // Check if note is already active
+                        if let Some(notes) = active_notes.get_mut(&note) {
+                            if !notes.is_empty() {
+                                log::warn!("[AudioThread] NoteOn received for already active note {}. Ignoring.", note);
+                                continue; // Ignore this NoteOn
+                            }
+                        }
                         if _vel > 0 {
                             let mut new_notes = Vec::new();
                             for stop_index in &active_stops {
@@ -611,19 +620,19 @@ fn spawn_audio_processing_thread<P>(
                                 // insert() returns the old Vec if one existed
                                 let old_notes = active_notes.insert(note, new_notes);
 
-                                // If there were old notes, we MUST kill them
-                                if let Some(notes_to_stop) = old_notes {
-                                    log::warn!("[AudioThread] NoteOn re-trigger on note {}. Fading old voices.", note);
-                                    for stopped_note in notes_to_stop {
-                                        // This is the same logic from handle_note_off
-                                        if let Some(voice) = voices.get_mut(&stopped_note.voice_id) {
-                                            voice.is_cancelled.store(true, Ordering::SeqCst);
-                                            voice.is_fading_out = true;
-                                            // We do NOT add a release sample here, as this is a
-                                            // re-trigger, not a release. The new voice takes over.
-                                        }
-                                    }
-                                }
+                                // // If there were old notes, we MUST kill them
+                                // if let Some(notes_to_stop) = old_notes {
+                                //     log::warn!("[AudioThread] NoteOn re-trigger on note {}. Fading old voices.", note);
+                                //     for stopped_note in notes_to_stop {
+                                //         // This is the same logic from handle_note_off
+                                //         if let Some(voice) = voices.get_mut(&stopped_note.voice_id) {
+                                //             voice.is_cancelled.store(true, Ordering::SeqCst);
+                                //             voice.is_fading_out = true;
+                                //             // We do NOT add a release sample here, as this is a
+                                //             // re-trigger, not a release. The new voice takes over.
+                                //         }
+                                //     }
+                                // }
                             }
                         } else {
                             handle_note_off(
@@ -752,8 +761,8 @@ fn spawn_audio_processing_thread<P>(
             let mut max_abs_sample = 0.0f32;
 
             // --- mixing loop ---
-            // 10ms fade-out
-            let fade_frames = (sample_rate as f32 * 0.10) as usize; 
+            // 20ms fade-out
+            let fade_frames = (sample_rate as f32 * CROSSFADE_TIME) as usize; 
             let fade_increment = if fade_frames > 0 { 1.0 / fade_frames as f32 } else { 1.0 };
 
             // --- process voices ---
@@ -782,8 +791,8 @@ fn spawn_audio_processing_thread<P>(
                         }
                     }
                     let current_gain = voice.gain * voice.fade_level;
-                    let l_sample = voice_read_buffer[i * CHANNEL_COUNT] * current_gain;
-                    let r_sample = voice_read_buffer[i * CHANNEL_COUNT + 1] * current_gain;
+                    let l_sample = voice_read_buffer[i * CHANNEL_COUNT] * current_gain * GAIN_FACTOR;
+                    let r_sample = voice_read_buffer[i * CHANNEL_COUNT + 1] * current_gain * GAIN_FACTOR;
                     mix_buffer_stereo[0][i] += l_sample;
                     mix_buffer_stereo[1][i] += r_sample;
                     if l_sample.abs() > max_abs_sample {
