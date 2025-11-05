@@ -4,7 +4,7 @@ use cpal::{SampleFormat, SampleRate, Stream, StreamConfig};
 use decibel::{AmplitudeRatio, DecibelRatio};
 use ringbuf::traits::{Observer, Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
-use rubato::{Resampler, FastFixedIn, PolynomialDegree, SincFixedIn, SincInterpolationParameters, SincInterpolationType, WindowFunction};
+use rubato::{Resampler, FastFixedIn, PolynomialDegree};
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::io::{BufReader, Seek, SeekFrom, Read, Cursor};
@@ -16,7 +16,7 @@ use std::time::{Instant, Duration};
 use rodio::source::Source;
 use rodio::Decoder;
 use num_traits::cast::ToPrimitive;
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 use std::mem;
 use byteorder::{ReadBytesExt as OtherReadBytesExt, LittleEndian}; 
 
@@ -26,7 +26,6 @@ use crate::organ::Organ;
 const BUFFER_SIZE_MS: u32 = 5; 
 const CHANNEL_COUNT: usize = 2; // Stereo
 const RESAMPLER_CHUNK_SIZE: usize = 512;
-/// 2 seconds of stereo, resampled audio.
 const VOICE_BUFFER_FRAMES: usize = 14400; 
 
 /// Parses a 'smpl' chunk's data. Returns (loop_start, loop_end) in samples.
@@ -116,7 +115,6 @@ impl Voice {
         
         // Clone variables to move into the loader thread
         let path_buf = path.to_path_buf();
-        let path_buf_clone = path_buf.clone();
         let is_finished_clone = Arc::clone(&is_finished);
         let is_cancelled_clone = Arc::clone(&is_cancelled);
         
@@ -199,7 +197,7 @@ impl Voice {
                             .map_err(|e| anyhow!("[LoaderThread] Failed to rewind reader for {:?}: {}", path_buf.clone(), e))?;
                     }
 
-                    let mut decoder = Decoder::new_wav(reader)
+                    let decoder = Decoder::new_wav(reader)
                         .map_err(|e| anyhow!("[LoaderThread] Failed to decode {:?}: {}", path_buf.clone(), e))?;
 
                     // Create the resampler
@@ -316,7 +314,7 @@ impl Voice {
                                 frames_read += 1; // Increment frames *read*
                             }
                         } else {
-                            // --- C. ORIGINAL ONE-SHOT LOGIC (streaming from Decoder) ---
+                            // --- ONE-SHOT LOGIC (streaming from Decoder) ---
                             // This branch is only entered if `use_memory_reader` is false,
                             // meaning `source.take()` was never called, so `source` is `Some`.
                             if input_frames_needed > 0 && !source_is_finished {
@@ -448,7 +446,7 @@ impl Voice {
                         }
 
                         let mut out_buf_slices: Vec<&mut [f32]> = output_buffer.iter_mut().map(|v| v.as_mut_slice()).collect();
-                        let (frames_consumed, frames_produced) = resampler.process_partial_into_buffer(None::<&[&[f32]]>, &mut out_buf_slices, None)?;
+                        let (_frames_consumed, frames_produced) = resampler.process_partial_into_buffer(None::<&[&[f32]]>, &mut out_buf_slices, None)?;
 
                         if frames_produced > 0 {
                             // ... (interleave and push logic)
