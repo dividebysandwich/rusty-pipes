@@ -67,7 +67,7 @@ fn main() -> Result<()> {
     let _midi_file_thread: Option<JoinHandle<()>>;
 
     if let Some(path) = midi_file_path {
-        // --- 5a. Play from MIDI file ---
+        // --- Play from MIDI file ---
         if !path.exists() {
             return Err(anyhow::anyhow!("MIDI file not found: {}", path.display()));
         }
@@ -79,7 +79,7 @@ fn main() -> Result<()> {
         )?);
         _midi_connection = None;
     } else {
-        // --- 5b. Use live MIDI input ---
+        // --- Use live MIDI input ---
         println!("Initializing MIDI...");
         _midi_connection = Some(midi::setup_midi_input(audio_tx.clone(), tui_tx.clone())?);
         _midi_file_thread = None;

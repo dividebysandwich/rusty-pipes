@@ -28,7 +28,7 @@ const BUFFER_SIZE_MS: u32 = 10;
 const CHANNEL_COUNT: usize = 2; // Stereo
 const RESAMPLER_CHUNK_SIZE: usize = 512;
 const VOICE_BUFFER_FRAMES: usize = 14400; 
-const GAIN_FACTOR: f32 = 0.6; // Prevent clipping when multiple voices mix
+const GAIN_FACTOR: f32 = 0.5; // Prevent clipping when multiple voices mix
 const CROSSFADE_TIME: f32 = 0.20; // How long to crossfade from attack to release samples, in seconds
 
 /// Parses a 'smpl' chunk's data. Returns (loop_start, loop_end) in samples.
@@ -142,7 +142,7 @@ impl Voice {
                         .map_err(|e| anyhow!("[LoaderThread] Failed to open {:?}: {}", path_buf.clone(), e))?;
                     let mut reader = BufReader::new(file);
 
-                    // --- 1. Manually parse for 'smpl' chunk if it's an attack sample ---
+                    // --- Manually parse for 'smpl' chunk if it's an attack sample ---
                     let mut loop_info: Option<(u32, u32)> = None;
 
                     if is_attack_sample_clone {
@@ -195,7 +195,7 @@ impl Voice {
                             loop_info = None;
                         }
                         
-                        // --- REWIND the reader for rodio::Decoder ---
+                        // --- rewind the reader for rodio::Decoder ---
                         reader.seek(SeekFrom::Start(0))
                             .map_err(|e| anyhow!("[LoaderThread] Failed to rewind reader for {:?}: {}", path_buf.clone(), e))?;
                     }
@@ -761,7 +761,6 @@ fn spawn_audio_processing_thread<P>(
             let mut max_abs_sample = 0.0f32;
 
             // --- mixing loop ---
-            // 20ms fade-out
             let fade_frames = (sample_rate as f32 * CROSSFADE_TIME) as usize; 
             let fade_increment = if fade_frames > 0 { 1.0 / fade_frames as f32 } else { 1.0 };
 

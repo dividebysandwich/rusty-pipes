@@ -448,7 +448,6 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
                 let start_y = map_time_to_y(played_note.start_time);
                 let end_y = map_time_to_y(now); 
                 
-                // --- V V V Draw a vertical Line instead of Rectangle V V V ---
                 ctx.draw(&CanvasLine {
                     x1: note_x,
                     y1: start_y,
