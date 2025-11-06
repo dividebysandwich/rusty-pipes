@@ -433,9 +433,6 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
                     |et| map_time_to_y(et),
                 );
                 
-                // Ensure valid height
-                let height = (end_y - start_y).max(0.01); // Minimum height for visibility
-
                 ctx.draw(&CanvasLine {
                     x1: note_x,
                     y1: start_y,
