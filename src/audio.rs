@@ -99,6 +99,8 @@ struct Voice {
     fade_level: f32, // 1.0 = full volume, 0.0 = silent
     is_fading_out: bool, // Is the attack sample fading out?
     is_fading_in: bool, // Is the release sample fading in?
+    is_awaiting_release_sample: bool, // Don't start the crossfade until release sample is loaded
+    release_voice_id: Option<u64>,
 }
 
 impl Voice {
@@ -513,6 +515,8 @@ impl Voice {
             fade_level: if start_fading_in { 0.0 } else { 1.0 }, 
             is_fading_out: false,
             is_fading_in: start_fading_in,
+            is_awaiting_release_sample: false,
+            release_voice_id: None,
         })
     }
 }
@@ -758,6 +762,42 @@ fn spawn_audio_processing_thread<P>(
                 ch_buf.fill(0.0);
             }
 
+            // --- Crossfade management logic ---
+            // Find voices that are ready to start crossfading.
+            let mut crossfades_to_start: Vec<(u64, u64)> = Vec::with_capacity(16);
+            for (attack_id, attack_voice) in voices.iter() { // Note: .iter()
+                if attack_voice.is_awaiting_release_sample {
+                    if let Some(release_id) = attack_voice.release_voice_id {
+                        if let Some(release_voice) = voices.get(&release_id) {
+                            // The release voice is "ready" if its consumer has any data
+                            if !release_voice.consumer.is_empty() {
+                                log::trace!("[AudioThread] Release voice {} is ready. Starting crossfade.", release_id);
+                                crossfades_to_start.push((*attack_id, release_id));
+                            }
+                        } else {
+                            // Release voice has disappeared? (e.g., finished instantly)
+                            // Start fade-out anyway.
+                            log::warn!("[AudioThread] Release voice {} not found for attack voice {}. Fading out attack.", release_id, *attack_id);
+                            crossfades_to_start.push((*attack_id, u64::MAX)); // use u64::MAX to indicate no release
+                        }
+                    }
+                }
+            }
+            // Apply the state changes for ready crossfades.
+            for (attack_id, release_id) in crossfades_to_start {
+                if let Some(attack_voice) = voices.get_mut(&attack_id) {
+                    attack_voice.is_fading_out = true;
+                    attack_voice.is_awaiting_release_sample = false; // Done waiting
+                    attack_voice.release_voice_id = None;
+                }
+            
+                if release_id != u64::MAX {
+                    if let Some(release_voice) = voices.get_mut(&release_id) {
+                        release_voice.is_fading_in = true;
+                    }
+                }
+            }
+
             let mut max_abs_sample = 0.0f32;
 
             // --- mixing loop ---
@@ -901,12 +941,7 @@ fn handle_note_off(
             .unwrap_or(0);
 
         for stopped_note in notes_to_stop {
-            // Tell the voice to cancel, but don't drop it yet ---
-            if let Some(voice) = voices.get_mut(&stopped_note.voice_id) {
-                log::debug!("[AudioThread] ...stopping attack voice ID {}", stopped_note.voice_id);
-                 voice.is_cancelled.store(true, Ordering::SeqCst);
-                 voice.is_fading_out = true;
-            }
+            // We will modify the attack voice *after* creating the release voice.
             // The `retain` loop will drop it once its buffer is empty.
             
             if let Some(rank) = organ.ranks.get(&stopped_note.rank_id) {
@@ -929,15 +964,33 @@ fn handle_note_off(
                             sample_rate,
                             pipe.pitch_tuning_cents,
                             total_gain,
-                            true,
+                            false,
                             false,
                         ) {
-                            Ok(voice) => {
+                            Ok(mut voice) => {
                                 log::debug!("[AudioThread] -> Created RELEASE Voice for {:?} (Duration: {}ms, Gain: {:.2}dB)",
-                                  release.path.file_name().unwrap_or_default(), press_duration, total_gain);
+                                    release.path.file_name().unwrap_or_default(), press_duration, total_gain);
+                                
+                                voice.fade_level = 0.0; // Start silent
+
                                 let release_voice_id = *voice_counter;
                                 *voice_counter += 1;
                                 voices.insert(release_voice_id, voice);
+
+                                // Now link the attack voice to this new release voice
+                                if let Some(attack_voice) = voices.get_mut(&stopped_note.voice_id) {
+                                    log::debug!("[AudioThread] ...linking attack voice {} to release voice {}", stopped_note.voice_id, release_voice_id);
+                                    attack_voice.is_cancelled.store(true, Ordering::SeqCst);
+                                    attack_voice.is_awaiting_release_sample = true;
+                                    attack_voice.release_voice_id = Some(release_voice_id);
+                                } else {
+                                    // Attack voice is already gone, just fade in the release voice
+                                    // This should never happen since attack voices should be looping
+                                    log::warn!("[AudioThread] ...attack voice {} already gone. Fading in release {} immediately.", stopped_note.voice_id, release_voice_id);
+                                    if let Some(rv) = voices.get_mut(&release_voice_id) {
+                                        rv.is_fading_in = true;
+                                    }
+                                }
                             }
                             Err(e) => {
                                 log::error!("[AudioThread] Error creating release sample: {}", e)
@@ -945,6 +998,12 @@ fn handle_note_off(
                         }
                     } else {
                         log::warn!("[AudioThread] ...but no release sample found for pipe on note {}.", note);
+                        // No release sample, so just fade out the attack voice
+                        if let Some(voice) = voices.get_mut(&stopped_note.voice_id) {
+                            log::debug!("[AudioThread] ...no release, fading out attack voice ID {}", stopped_note.voice_id);
+                            voice.is_cancelled.store(true, Ordering::SeqCst);
+                            voice.is_fading_out = true;
+                        }
                     }
                 }
             }
