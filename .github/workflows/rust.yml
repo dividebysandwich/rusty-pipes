@@ -83,6 +83,17 @@ jobs:
           # Add foreign architectures for cross-compiling
           sudo dpkg --add-architecture arm64
           sudo dpkg --add-architecture armhf
+
+          sudo perl -i -p0e 's/Types: deb/Types: deb\nArchitectures: amd64/g' /etc/apt/sources.list.d/ubuntu.sources
+          
+          # 2. Add the 'ubuntu-ports' repository which contains arm64/armhf packages
+          UBUNTU_CODENAME=$(lsb_release -cs) # Gets "noble"
+          cat <<EOF | sudo tee /etc/apt/sources.list.d/ubuntu-ports.list
+          deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME} main restricted universe multiverse
+          deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-updates main restricted universe multiverse
+          deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-security main restricted universe multiverse
+          deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-backports main restricted universe multiverse
+          EOF
           
           # Update package lists
           sudo apt-get update
@@ -109,6 +120,23 @@ jobs:
       - name: Install cross
         if: contains(matrix.TARGET, 'musl')
         run: cargo install cross
+        
+      - name: Create Cross.toml
+        if: contains(matrix.TARGET, 'musl')
+        run: |
+          cat <<EOF > Cross.toml
+          [target.x86_64-unknown-linux-musl]
+          dependencies = { apk = ["alsa-lib-dev"] }
+
+          [target.aarch64-unknown-linux-musl]
+          dependencies = { apk = ["alsa-lib-dev"] }
+
+          [target.armv7-unknown-linux-musleabihf]
+          dependencies = { apk = ["alsa-lib-dev"] }
+
+          [target.arm-unknown-linux-musleabihf]
+          dependencies = { apk = ["alsa-lib-dev"] }
+          EOF
 
       - name: Install rust target
         run: rustup target add $TARGET
