@@ -126,31 +126,38 @@ jobs:
         run: |
           cat <<EOF > Cross.toml
           [target.x86_64-unknown-linux-musl]
-          image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:main"
+          image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:0.2.5"
           pre-build = ["apk add --no-cache alsa-lib-dev"]
 
           [target.aarch64-unknown-linux-musl]
-          image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
+          image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:0.2.5"
           pre-build = ["apk add --no-cache alsa-lib-dev"]
 
           [target.armv7-unknown-linux-musleabihf]
-          image = "ghcr.io/cross-rs/armv7-unknown-linux-musleabihf:main"
+          image = "ghcr.io/cross-rs/armv7-unknown-linux-musleabihf:0.2.5"
           pre-build = ["apk add --no-cache alsa-lib-dev"]
 
           [target.arm-unknown-linux-musleabihf]
-          image = "ghcr.io/cross-rs/arm-unknown-linux-musleabihf:main"
+          image = "ghcr.io/cross-rs/arm-unknown-linux-musleabihf:0.2.5"
           pre-build = ["apk add --no-cache alsa-lib-dev"]
           EOF
 
       - name: Install rust target
         run: rustup target add $TARGET
         
-      # Use 'cross' for MUSL and 'cargo' for everything else
       - name: Run build
         run: |
           if [[ $TARGET == *musl* ]]; then
             cross build --release --verbose --target $TARGET
           else
+            # [FIX] Set the pkg-config path for GNU cross-compilation
+            if [[ $TARGET == 'aarch64-unknown-linux-gnu' ]]; then
+              export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig"
+            elif [[ $TARGET == *arm*-linux-gnueabihf' ]]; then
+              # This covers both 'armv7' and 'arm' targets
+              export PKG_CONFIG_PATH="/usr/lib/arm-linux-gnueabihf/pkgconfig"
+            fi
+            
             cargo build --release --verbose --target $TARGET
           fi
 
