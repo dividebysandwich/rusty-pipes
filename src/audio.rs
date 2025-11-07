@@ -4,7 +4,6 @@ use cpal::{SampleFormat, SampleRate, Stream, StreamConfig};
 use decibel::{AmplitudeRatio, DecibelRatio};
 use ringbuf::traits::{Observer, Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
-use rubato::{Resampler, FastFixedIn, PolynomialDegree};
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
 use std::io::BufReader;
@@ -13,7 +12,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
-use num_traits::cast::ToPrimitive;
 use std::path::{Path};
 use std::mem;
 
@@ -21,9 +19,9 @@ use crate::app::{ActiveNote, AppMessage};
 use crate::organ::Organ;
 use crate::wav::{parse_wav_metadata, WavSampleReader};
 
+const AUDIO_SAMPLE_RATE: u32 = 48000;
 const BUFFER_SIZE_MS: u32 = 10; 
 const CHANNEL_COUNT: usize = 2; // Stereo
-const RESAMPLER_CHUNK_SIZE: usize = 512;
 const VOICE_BUFFER_FRAMES: usize = 14400; 
 const GAIN_FACTOR: f32 = 0.5; // Prevent clipping when multiple voices mix
 const CROSSFADE_TIME: f32 = 0.20; // How long to crossfade from attack to release samples, in seconds
@@ -53,7 +51,7 @@ struct Voice {
 }
 
 impl Voice {
-    fn new(path: &Path, sample_rate: u32, pitch_cents: f32, gain_db: f32, start_fading_in: bool, is_attack_sample: bool, note_on_time: Instant) -> Result<Self> {
+    fn new(path: &Path, sample_rate: u32, gain_db: f32, start_fading_in: bool, is_attack_sample: bool, note_on_time: Instant) -> Result<Self> {
         
         let amplitude_ratio: AmplitudeRatio<f64> = DecibelRatio(gain_db as f64).into();
         let gain = amplitude_ratio.amplitude_value() as f32;
@@ -97,7 +95,15 @@ impl Voice {
                     let (fmt, loop_info_from_file, data_start, data_size) = 
                         parse_wav_metadata(&mut reader)
                         .map_err(|e| anyhow!("[LoaderThread] Failed to parse WAV metadata for {:?}: {}", path_buf.clone(), e))?;
-                    
+
+                    // --- Verify sample rate ---
+                    if fmt.sample_rate != sample_rate {
+                        return Err(anyhow!(
+                            "[LoaderThread] File {:?} has wrong sample rate: {} (expected {}). Please re-process samples.",
+                            path_buf, fmt.sample_rate, sample_rate
+                        ));
+                    }
+
                     // --- Check if we should *use* the loop info ---
                     let loop_info: Option<(u32, u32)> = if is_attack_sample_clone {
                         if loop_info_from_file.is_some() {
@@ -114,29 +120,14 @@ impl Voice {
                     let decoder = WavSampleReader::new(reader, fmt, data_start, data_size)
                         .map_err(|e| anyhow!("[LoaderThread] Failed to create sample reader for {:?}: {}", path_buf.clone(), e))?;
 
-                    // Create the resampler
-                    let input_sample_rate = decoder.sample_rate();
                     let input_channels = decoder.channels() as usize;
                     let is_mono = input_channels == 1;
 
-                    let pitch_factor = 2.0f64.powf(pitch_cents as f64 / 1200.0);
-                    let effective_input_rate = input_sample_rate as f64 / pitch_factor;
-                    let resample_ratio = sample_rate as f64 / effective_input_rate;
-                    
-                    let mut resampler = FastFixedIn::<f32>::new(
-                        resample_ratio, 1.01, PolynomialDegree::Septic, RESAMPLER_CHUNK_SIZE, CHANNEL_COUNT,
-                    ).map_err(|e| anyhow!("[LoaderThread] Failed to create resampler for {:?}: {}", path_buf.clone(), e))?;
-
-                    // Create buffers (local to this thread)
-                    let max_input_frames = resampler.input_frames_max();
-                    let mut input_buffer = vec![vec![0.0f32; max_input_frames]; CHANNEL_COUNT];
-                    let max_output_frames = resampler.output_frames_max();
-                    let mut output_buffer = vec![vec![0.0f32; max_output_frames]; CHANNEL_COUNT];
-                    let mut interleaved_output = vec![0.0f32; max_output_frames * CHANNEL_COUNT];
-                    
                     let mut source: Option<Box<dyn Iterator<Item = f32>>> =
-                        Some(Box::new(decoder.filter_map(|s| s.to_f32())));
+                        Some(Box::new(decoder));
                     let mut source_is_finished = false;
+
+                    let mut interleaved_buffer = vec![0.0f32; 1024 * CHANNEL_COUNT];
 
                     // Variables for looping attack samples
                     let mut samples_in_memory: Vec<f32> = Vec::new(); 
@@ -194,13 +185,12 @@ impl Voice {
                             log::trace!("[LoaderThread] ALIVE: {:?} (Loop {})", path_str, loader_loop_counter);
                         }
 
-                        // Get frames needed by resampler
-                        let input_frames_needed = resampler.input_frames_next();
+                        let frames_to_read = 1024;
                         let mut frames_read = 0;
 
                         if use_memory_reader {
                             // --- READING FROM MEMORY (Looping OR One-Shot) ---
-                            for _ in 0..input_frames_needed {
+                            for i in 0..frames_to_read {
                                 if is_looping_sample {
                                     // Check for loop point
                                     if current_frame_index >= loop_end_frame {
@@ -222,175 +212,72 @@ impl Voice {
                                     samples_in_memory.get(sample_l_idx + 1).cloned().unwrap_or(0.0)
                                 };
                                 
-                                input_buffer[0].push(sample_l);
-                                input_buffer[1].push(sample_r);
+                                interleaved_buffer[i * CHANNEL_COUNT] = sample_l;
+                                interleaved_buffer[i * CHANNEL_COUNT + 1] = sample_r;
                                 current_frame_index += 1;
                                 frames_read += 1; // Increment frames *read*
                             }
                         } else {
-                            // --- ONE-SHOT LOGIC (streaming from Decoder) ---
+                            // --- ONE-SHOT LOGIC (streaming from File) ---
                             // This branch is only entered if `use_memory_reader` is false,
                             // meaning `source.take()` was never called, so `source` is `Some`.
-                            if input_frames_needed > 0 && !source_is_finished {
-                                // The borrow checker is happy because `if let Some`
-                                // proves `source` is still valid.
-                                if let Some(ref mut s_iter) = source {
-                                    for _ in 0..input_frames_needed {
-                                        if let Some(sample_l) = s_iter.next() {
-                                            input_buffer[0].push(sample_l);
-                                            if is_mono {
-                                                input_buffer[1].push(sample_l);
-                                            } else {
-                                                if let Some(sample_r) = s_iter.next() {
-                                                    input_buffer[1].push(sample_r);
-                                                } else {
-                                                    input_buffer[1].push(sample_l); // Fallback
-                                                    source_is_finished = true;
-                                                    frames_read += 1;
-                                                    break;
-                                                }
-                                            }
+                            if let Some(ref mut s_iter) = source {
+                                for i in 0..frames_to_read {
+                                    if let Some(sample_l) = s_iter.next() {
+                                        let sample_r = if is_mono {
+                                            sample_l
+                                        } else if let Some(r) = s_iter.next() {
+                                            r
                                         } else {
                                             source_is_finished = true;
-                                            break;
-                                        }
+                                            sample_l // fallback
+                                        };
+
+                                        interleaved_buffer[i * CHANNEL_COUNT] = sample_l;
+                                        interleaved_buffer[i * CHANNEL_COUNT + 1] = sample_r;
                                         frames_read += 1;
+
+                                        if source_is_finished { break; }
+                                    } else {
+                                        source_is_finished = true;
+                                        break; // End of source
                                     }
-                                } else {
-                                    // This should not happen if use_memory_reader is false,
-                                    // but it's good to be safe.
-                                    source_is_finished = true;
                                 }
+                            } else {
+                                source_is_finished = true;
                             }
                         }
                         
-                        // Process the data
-                        let in_buf_slices: Vec<&[f32]> = input_buffer.iter().map(|v| v.as_slice()).collect();
-                        let mut out_buf_slices: Vec<&mut [f32]> = output_buffer.iter_mut().map(|v| v.as_mut_slice()).collect();
-
-                        let (_frames_consumed, frames_produced) = if source_is_finished {
-                            if frames_read > 0 {
-                                resampler.process_partial_into_buffer(Some(&in_buf_slices), &mut out_buf_slices, None)?
-                            } else {
-                                break 'loader_loop;
-                            }
-                        } else if frames_read > 0 { 
-                            resampler.process_into_buffer(&in_buf_slices, &mut out_buf_slices, None)?
-                        } else {
-                            // No frames read. Either we need 0, or we're at EOF.
-                            // Call process_partial_into_buffer to flush output.
-                            let empty_input: [Vec<f32>; CHANNEL_COUNT] = [vec![], vec![]];
-                            let empty_slices: Vec<&[f32]> = empty_input.iter().map(|v| v.as_slice()).collect();
-                            resampler.process_partial_into_buffer(Some(&empty_slices), &mut out_buf_slices, None)?
-                        };
-
-                        // Push to buffer
-                        if frames_produced > 0 {
-                            for i in 0..frames_produced {
-                                interleaved_output[i * CHANNEL_COUNT] = output_buffer[0][i];
-                                interleaved_output[i * CHANNEL_COUNT + 1] = output_buffer[1][i];
-                            }
-                            
-                            let needed = frames_produced * CHANNEL_COUNT;
-                            let mut offset = 0usize;
-                            while offset < needed {
+                        // Push whatever we read
+                        if frames_read > 0 {
+                            let samples_to_push = frames_read * CHANNEL_COUNT;
+                            let mut offset = 0;
+                            while offset < samples_to_push {
                                 if is_cancelled_clone.load(Ordering::Relaxed) {
-                                    if !cancelled_log_sent {
-                                        log::trace!("[LoaderThread] CANCELLED: {:?} (in push_loop)", path_str);
-                                        cancelled_log_sent = true;
-                                    }
-                                    break 'loader_loop; 
+                                    break 'loader_loop;
                                 }
-                                let pushed = producer.push_slice(&interleaved_output[offset..needed]);
+                                let pushed = producer.push_slice(&interleaved_buffer[offset..samples_to_push]);
                                 offset += pushed;
-                                if offset < needed {
-                                    thread::sleep(Duration::from_millis(1));
+                                if offset < samples_to_push {
+                                    thread::sleep(Duration::from_millis(1)); // Ringbuf is full
                                 }
                             }
                         }
 
                         // Decide to sleep or exit
-                        if is_looping_sample {
-                            // For a looping sample, we NEVER exit the loop unless cancelled.
-                            // We just sleep if the resampler or ringbuf is full.
-                            if input_frames_needed == 0 && frames_produced == 0 {
-                                // Resampler input is full, and output is full.
-                                // We *must* sleep to wait for the mixer.
-                                thread::sleep(Duration::from_millis(1));
-                            }
-                        } else {
-                            // --- exit logic for one-shot samples ---
-                            if source_is_finished && frames_produced == 0 && resampler.output_frames_next() == 0 {
-                                // File is done, nothing was produced, and resampler has no more frames.
-                                // We are 100% finished.
-                                log::trace!("[LoaderThread] FINISHED_SOURCE_AND_RESAMPLER: {:?}", path_str);
-                                break 'loader_loop;
-                            }
-                            
-                            if input_frames_needed == 0 && frames_produced == 0 {
-                                // Resampler input is full, and output is full.
-                                // We *must* sleep to wait for the mixer.
-                                thread::sleep(Duration::from_millis(1));
-                            }
+                        if source_is_finished && !is_looping_sample {
+                            log::trace!("[LoaderThread] FINISHED (one-shot): {:?}", path_str);
+                            break 'loader_loop;
+                        }
+
+                        if is_looping_sample && frames_read == 0 {
+                            // This shouldn't happen, but as a fallback
+                            thread::sleep(Duration::from_millis(1));
                         }
                         
-                        // --- Clear input buffers for next loop ---
-                        for buf in input_buffer.iter_mut() { buf.clear(); }
-
                     } // --- End of 'loader_loop ---
 
                     log::trace!("[LoaderThread] EXITED_MAIN_LOOP: {:?}", path_str);
-
-                    let mut flush_loop_counter = 0u64;
-
-                    // --- Flush the resampler ---
-                    'flush_loop: loop {
-                        flush_loop_counter += 1;
-                        if flush_loop_counter > 100 { // 100 loops is *more* than enough
-                            log::trace!("[LoaderThread] Flush loop stuck, forcing exit: {:?}", path_str);
-                            break 'flush_loop;
-                        }
-
-                        if is_cancelled_clone.load(Ordering::Relaxed) {
-                            if !cancelled_log_sent {
-                                log::trace!("[LoaderThread] CANCELLED: {:?} (in flush_loop)", path_str);
-                                cancelled_log_sent = true;
-                            }
-                            break 'flush_loop;
-                        }
-
-                        let mut out_buf_slices: Vec<&mut [f32]> = output_buffer.iter_mut().map(|v| v.as_mut_slice()).collect();
-                        let (_frames_consumed, frames_produced) = resampler.process_partial_into_buffer(None::<&[&[f32]]>, &mut out_buf_slices, None)?;
-
-                        if frames_produced > 0 {
-                            // ... (interleave and push logic)
-                            for i in 0..frames_produced {
-                                interleaved_output[i * CHANNEL_COUNT] = output_buffer[0][i];
-                                interleaved_output[i * CHANNEL_COUNT + 1] = output_buffer[1][i];
-                            }
-                            let needed = frames_produced * CHANNEL_COUNT;
-                            let mut offset = 0usize;
-                            while offset < needed {
-                                if is_cancelled_clone.load(Ordering::Relaxed) {
-                                    if !cancelled_log_sent {
-                                        log::trace!("[LoaderThread] CANCELLED: {:?} (in flush_loop)", path_str);
-                                        cancelled_log_sent = true;
-                                    }
-                                    break 'flush_loop;
-                                }
-
-                                let pushed = producer.push_slice(&interleaved_output[offset..needed]);
-                                offset += pushed;
-                                if offset < needed {
-                                    thread::sleep(Duration::from_millis(1));
-                                }
-                            }
-                        } else {
-                            break 'flush_loop;
-                        }
-                    }
-                    
-                    log::trace!("[LoaderThread] EXITED_FLUSH_LOOP: {:?}", path_str);
 
                     Ok(()) // Success
                 })(); // End of fallible closure
@@ -476,7 +363,6 @@ fn trigger_note_release(
                 match Voice::new(
                     &release.path,
                     sample_rate,
-                    pipe.pitch_tuning_cents,
                     total_gain,
                     false,
                     false,
@@ -584,7 +470,6 @@ fn spawn_audio_processing_thread<P>(
                                             match Voice::new(
                                                 &pipe.attack_sample_path,
                                                 sample_rate,
-                                                pipe.pitch_tuning_cents,
                                                 total_gain,
                                                 false,
                                                 true,
@@ -936,7 +821,7 @@ pub fn start_audio_playback(rx: mpsc::Receiver<AppMessage>, organ: Arc<Organ>) -
     let config = supported_configs
         .find(|c| c.channels() == 2 && c.sample_format() == SampleFormat::F32)
         .ok_or_else(|| anyhow!("No supported F32 stereo config found"))?
-        .with_sample_rate(SampleRate(48000));
+        .with_sample_rate(SampleRate(AUDIO_SAMPLE_RATE));
 
     let sample_format = config.sample_format();
     let stream_config: StreamConfig = config.into();

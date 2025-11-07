@@ -37,6 +37,7 @@ pub struct Rank {
 }
 
 /// Represents a single pipe with its attack and release samples.
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct Pipe {
     pub attack_sample_path: PathBuf,
@@ -154,17 +155,6 @@ impl Organ {
                         // Handle path separators and create relative path
                         let attack_path_str = attack_path_str.replace('\\', "/");
                         let mut attack_sample_path_relative = PathBuf::from(&attack_path_str);
-                        
-                        // Run converter
-                        if convert_to_16_bit {
-                            attack_sample_path_relative = wav_converter::convert_to_16bit_if_needed(
-                                &attack_sample_path_relative,
-                                &organ.base_path
-                            )?;
-                        }
-
-                        // Join with base path for the final absolute-like path
-                        let attack_sample_path = organ.base_path.join(attack_sample_path_relative);
 
                         let pipe_gain_db: f32 = get_prop(
                             &format!("{}Gain", pipe_key_prefix_upper), 
@@ -177,7 +167,20 @@ impl Organ {
                             &format!("{}pitchtuning", pipe_key_prefix_lower), 
                             "0.0"
                         ).parse().unwrap_or(0.0);
-                        
+
+                        // Only process if needed (16-bit conversion OR pitch shift)
+                            if convert_to_16_bit || pitch_tuning_cents != 0.0 {
+                                attack_sample_path_relative = wav_converter::process_sample_file(
+                                    &attack_sample_path_relative,
+                                    &organ.base_path,
+                                    pitch_tuning_cents,
+                                    convert_to_16_bit
+                                )?;
+                            }
+
+                        // Join with base path for the final absolute-like path
+                        let attack_sample_path = organ.base_path.join(attack_sample_path_relative);
+
                         let release_count: usize = get_prop(
                             &format!("{}ReleaseCount", pipe_key_prefix_upper), 
                             &format!("{}releasecount", pipe_key_prefix_lower), 
@@ -195,10 +198,12 @@ impl Organ {
                                 let mut rel_path_relative = PathBuf::from(&rel_path_str);
 
                                 // Run converter
-                                if convert_to_16_bit {
-                                    rel_path_relative = wav_converter::convert_to_16bit_if_needed(
+                                if convert_to_16_bit || pitch_tuning_cents != 0.0 {
+                                    rel_path_relative = wav_converter::process_sample_file(
                                         &rel_path_relative,
-                                        &organ.base_path
+                                        &organ.base_path,
+                                        pitch_tuning_cents, // Use the pipe's pitch
+                                        convert_to_16_bit
                                     )?;
                                 }
 
@@ -218,7 +223,7 @@ impl Organ {
                         pipes.insert(midi_note, Pipe {
                             attack_sample_path,
                             gain_db: pipe_gain_db,
-                            pitch_tuning_cents,
+                            pitch_tuning_cents: 0.0, // Pitch tuning is pre-applied during conversion
                             releases,
                         });
                     }

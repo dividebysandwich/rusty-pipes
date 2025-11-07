@@ -9,10 +9,10 @@ const I32_MAX_F: f32 = 2147483648.0; // 2^31
 /// Holds format information from the 'fmt ' chunk.
 #[derive(Debug, Clone, Copy)]
 pub struct WavFmt {
-    audio_format: u16,   // 1 = PCM, 3 = IEEE Float
-    num_channels: u16,
-    sample_rate: u32,
-    bits_per_sample: u16,
+    pub audio_format: u16,   // 1 = PCM, 3 = IEEE Float
+    pub num_channels: u16,
+    pub sample_rate: u32,
+    pub bits_per_sample: u16,
 }
 
 impl WavFmt {
@@ -132,6 +132,7 @@ impl<R: Read + Seek> WavSampleReader<R> {
         })
     }
 
+    #[allow(dead_code)]
     pub fn sample_rate(&self) -> u32 {
         self.fmt.sample_rate
     }
