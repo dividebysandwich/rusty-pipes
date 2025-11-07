@@ -13,10 +13,13 @@ mod audio;
 mod midi;
 mod organ;
 mod tui;
+mod wav;
 mod wav_converter;
 
 use app::{AppMessage, TuiMessage};
 use organ::Organ;
+
+static CONVERT_TO_16_BIT: bool = false;
 
 fn main() -> Result<()> {
     WriteLogger::init(
@@ -42,7 +45,7 @@ fn main() -> Result<()> {
     // This is the immutable definition of the instrument.
     // We wrap it in an Arc to share it safely and cheaply with all threads.
     println!("Loading organ definition...");
-    let organ = Arc::new(Organ::load(&organ_path)?);
+    let organ = Arc::new(Organ::load(&organ_path, CONVERT_TO_16_BIT)?);
     println!("Successfully loaded organ: {}", organ.name);
     println!("Found {} stops.", organ.stops.len());
 

@@ -55,7 +55,7 @@ pub struct ReleaseSample {
 
 impl Organ {
     /// Loads and parses a .organ file.
-    pub fn load(path: &Path) -> Result<Self> {
+    pub fn load(path: &Path, convert_to_16_bit: bool) -> Result<Self> {
         println!("Loading organ from: {:?}", path);
         let base_path = path.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
         
@@ -156,11 +156,13 @@ impl Organ {
                         let mut attack_sample_path_relative = PathBuf::from(&attack_path_str);
                         
                         // Run converter
-                        attack_sample_path_relative = wav_converter::convert_to_16bit_if_needed(
-                            &attack_sample_path_relative, 
-                            &organ.base_path
-                        )?;
-                        
+                        if convert_to_16_bit {
+                            attack_sample_path_relative = wav_converter::convert_to_16bit_if_needed(
+                                &attack_sample_path_relative,
+                                &organ.base_path
+                            )?;
+                        }
+
                         // Join with base path for the final absolute-like path
                         let attack_sample_path = organ.base_path.join(attack_sample_path_relative);
 
@@ -193,10 +195,12 @@ impl Organ {
                                 let mut rel_path_relative = PathBuf::from(&rel_path_str);
 
                                 // Run converter
-                                rel_path_relative = wav_converter::convert_to_16bit_if_needed(
-                                    &rel_path_relative,
-                                    &organ.base_path
-                                )?;
+                                if convert_to_16_bit {
+                                    rel_path_relative = wav_converter::convert_to_16bit_if_needed(
+                                        &rel_path_relative,
+                                        &organ.base_path
+                                    )?;
+                                }
 
                                 let rel_path = organ.base_path.join(rel_path_relative);
                                 

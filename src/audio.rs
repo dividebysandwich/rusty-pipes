@@ -7,21 +7,19 @@ use ringbuf::{HeapCons, HeapRb};
 use rubato::{Resampler, FastFixedIn, PolynomialDegree};
 use std::collections::{BTreeSet, HashMap};
 use std::fs::File;
-use std::io::{BufReader, Seek, SeekFrom, Read, Cursor};
+use std::io::BufReader;
 use std::sync::{mpsc, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
-use rodio::source::Source;
-use rodio::Decoder;
 use num_traits::cast::ToPrimitive;
 use std::path::{Path};
 use std::mem;
-use byteorder::{ReadBytesExt as OtherReadBytesExt, LittleEndian}; 
 
 use crate::app::{ActiveNote, AppMessage};
 use crate::organ::Organ;
+use crate::wav::{parse_wav_metadata, WavSampleReader};
 
 const BUFFER_SIZE_MS: u32 = 10; 
 const CHANNEL_COUNT: usize = 2; // Stereo
@@ -29,58 +27,6 @@ const RESAMPLER_CHUNK_SIZE: usize = 512;
 const VOICE_BUFFER_FRAMES: usize = 14400; 
 const GAIN_FACTOR: f32 = 0.5; // Prevent clipping when multiple voices mix
 const CROSSFADE_TIME: f32 = 0.20; // How long to crossfade from attack to release samples, in seconds
-
-/// Parses a 'smpl' chunk's data. Returns (loop_start, loop_end) in samples.
-fn parse_smpl_chunk(data: &[u8]) -> Option<(u32, u32)> {
-    // A 'smpl' chunk has a 36-byte header, followed by an array of loops.
-    // Each loop entry is 24 bytes.
-    if data.len() < 36 {
-        log::warn!("[parse_smpl_chunk] 'smpl' data is too short for header: {} bytes", data.len());
-        return None;
-    }
-    let mut cursor = Cursor::new(data);
-    
-    // Seek to num_sample_loops (offset 28)
-    if cursor.seek(SeekFrom::Start(28)).is_err() {
-        return None; // Should not happen
-    }
-    let num_sample_loops = match cursor.read_u32::<LittleEndian>() {
-        Ok(n) => n,
-        Err(e) => {
-            log::warn!("[parse_smpl_chunk] Failed to read num_sample_loops: {}", e);
-            return None;
-        }
-    };
-
-    if num_sample_loops == 0 {
-        log::trace!("[parse_smpl_chunk] File has 'smpl' chunk but 0 loops.");
-        return None;
-    }
-
-    // Seek to start of first loop entry (offset 36)
-    if cursor.seek(SeekFrom::Start(36)).is_err() {
-        return None;
-    }
-    
-    if data.len() < 36 + 24 {
-        log::warn!("[parse_smpl_chunk] 'smpl' data is too short for one loop entry: {} bytes", data.len());
-        return None;
-    }
-
-    // We only care about the first loop.
-    let _cue_point_id = cursor.read_u32::<LittleEndian>().ok()?;
-    let _loop_type = cursor.read_u32::<LittleEndian>().ok()?; // 0 = forward, 1 = alternating, 2 = backward
-    let loop_start = cursor.read_u32::<LittleEndian>().ok()?;
-    let loop_end = cursor.read_u32::<LittleEndian>().ok()?; // This is the *sample after* the loop
-    let _fraction = cursor.read_u32::<LittleEndian>().ok()?;
-    let _play_count = cursor.read_u32::<LittleEndian>().ok()?; // 0 = infinite
-    
-    log::debug!("[parse_smpl_chunk] Found loop: {} -> {}", loop_start, loop_end);
-
-    // The 'end' sample is exclusive, so `loop_end - 1` is the last sample.
-    // We'll use a check `current_frame >= loop_end`
-    Some((loop_start, loop_end))
-}
 
 /// Represents one playing sample, either attack or release.
 struct Voice {
@@ -147,66 +93,26 @@ impl Voice {
                         .map_err(|e| anyhow!("[LoaderThread] Failed to open {:?}: {}", path_buf.clone(), e))?;
                     let mut reader = BufReader::new(file);
 
-                    // --- Manually parse for 'smpl' chunk if it's an attack sample ---
-                    let mut loop_info: Option<(u32, u32)> = None;
-
-                    if is_attack_sample_clone {
-                        log::trace!("[LoaderThread] Scanning for 'smpl' chunk in {:?}", path_str);
-                        // This block will read headers, find 'smpl', then rewind.
-                        // We wrap it in a Result to easily handle IO errors.
-                        let parse_result: Result<()> = (|| {
-                            let mut riff_header = [0; 4];
-                            reader.read_exact(&mut riff_header)?;
-                            if &riff_header != b"RIFF" {
-                                return Err(anyhow!("Not a RIFF file"));
-                            }
-                            let _file_size = reader.read_u32::<LittleEndian>()?;
-                            let mut wave_header = [0; 4];
-                            reader.read_exact(&mut wave_header)?;
-                            if &wave_header != b"WAVE" {
-                                return Err(anyhow!("Not a WAVE file"));
-                            }
-
-                            'chunk_loop: while let Ok(chunk_id) = reader.read_u32::<LittleEndian>().map(|id| id.to_le_bytes()) {
-                                let chunk_size = reader.read_u32::<LittleEndian>()?;
-                                let chunk_data_start_pos = reader.stream_position()?;
-                                let next_chunk_aligned_pos =
-                                    chunk_data_start_pos + (chunk_size as u64 + (chunk_size % 2) as u64);
-
-                                match &chunk_id {
-                                    b"smpl" => {
-                                        log::trace!("[LoaderThread] Found 'smpl' chunk in {:?}", path_str);
-                                        let mut chunk_data = vec![0; chunk_size as usize];
-                                        reader.read_exact(&mut chunk_data)?;
-                                        loop_info = parse_smpl_chunk(&chunk_data);
-                                    }
-                                    b"data" => {
-                                        // Found data, we can stop. 'smpl' chunk (if it exists)
-                                        // almost always comes before 'data'.
-                                        break 'chunk_loop;
-                                    }
-                                    _ => {
-                                        // Other chunk, skip it
-                                    }
-                                }
-                                // Seek to the *start* of the next chunk
-                                reader.seek(SeekFrom::Start(next_chunk_aligned_pos))?;
-                            }
-                            Ok(())
-                        })(); // End of header parse closure
-                        
-                        if let Err(e) = parse_result {
-                            log::warn!("[LoaderThread] Header parse failed for {:?}: {}. Proceeding without loop.", path_str, e);
-                            loop_info = None;
+                    // --- Parse WAV metadata in one pass ---
+                    let (fmt, loop_info_from_file, data_start, data_size) = 
+                        parse_wav_metadata(&mut reader)
+                        .map_err(|e| anyhow!("[LoaderThread] Failed to parse WAV metadata for {:?}: {}", path_buf.clone(), e))?;
+                    
+                    // --- Check if we should *use* the loop info ---
+                    let loop_info: Option<(u32, u32)> = if is_attack_sample_clone {
+                        if loop_info_from_file.is_some() {
+                            log::trace!("[LoaderThread] 'smpl' chunk found in {:?}", path_str);
+                        } else {
+                            log::trace!("[LoaderThread] 'smpl' chunk NOT found in {:?}", path_str);
                         }
-                        
-                        // --- rewind the reader for rodio::Decoder ---
-                        reader.seek(SeekFrom::Start(0))
-                            .map_err(|e| anyhow!("[LoaderThread] Failed to rewind reader for {:?}: {}", path_buf.clone(), e))?;
-                    }
+                        loop_info_from_file
+                    } else {
+                        None // Not an attack sample, so don't loop
+                    };
 
-                    let decoder = Decoder::new_wav(reader)
-                        .map_err(|e| anyhow!("[LoaderThread] Failed to decode {:?}: {}", path_buf.clone(), e))?;
+                    // --- Create the custom sample reader ---
+                    let decoder = WavSampleReader::new(reader, fmt, data_start, data_size)
+                        .map_err(|e| anyhow!("[LoaderThread] Failed to create sample reader for {:?}: {}", path_buf.clone(), e))?;
 
                     // Create the resampler
                     let input_sample_rate = decoder.sample_rate();
