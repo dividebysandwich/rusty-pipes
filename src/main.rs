@@ -20,7 +20,7 @@ use organ::Organ;
 
 fn main() -> Result<()> {
     WriteLogger::init(
-        LevelFilter::Debug,
+        LevelFilter::Info,
         Config::default(),
         File::create("rusty-pipes.log")?
     )?;
