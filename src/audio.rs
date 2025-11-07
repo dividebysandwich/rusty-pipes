@@ -100,10 +100,14 @@ struct Voice {
     is_fading_in: bool, // Is the release sample fading in?
     is_awaiting_release_sample: bool, // Don't start the crossfade until release sample is loaded
     release_voice_id: Option<u64>,
+    // Latency measurement
+    note_on_time: Instant,
+    has_reported_latency: bool,
+    is_attack_sample: bool,
 }
 
 impl Voice {
-    fn new(path: &Path, sample_rate: u32, pitch_cents: f32, gain_db: f32, start_fading_in: bool, is_attack_sample: bool) -> Result<Self> {
+    fn new(path: &Path, sample_rate: u32, pitch_cents: f32, gain_db: f32, start_fading_in: bool, is_attack_sample: bool, note_on_time: Instant) -> Result<Self> {
         
         let amplitude_ratio: AmplitudeRatio<f64> = DecibelRatio(gain_db as f64).into();
         let gain = amplitude_ratio.amplitude_value() as f32;
@@ -516,6 +520,9 @@ impl Voice {
             is_fading_in: start_fading_in,
             is_awaiting_release_sample: false,
             release_voice_id: None,
+            note_on_time,
+            has_reported_latency: false,
+            is_attack_sample,
         })
     }
 }
@@ -567,6 +574,7 @@ fn trigger_note_release(
                     total_gain,
                     false,
                     false,
+                    Instant::now()
                 ) {
                     Ok(mut voice) => {
                         log::debug!("[AudioThread] -> Created RELEASE Voice for {:?} (Duration: {}ms, Gain: {:.2}dB)",
@@ -659,6 +667,7 @@ fn spawn_audio_processing_thread<P>(
                         }
                         if _vel > 0 {
                             let mut new_notes = Vec::new();
+                            let note_on_time = Instant::now();
                             for stop_index in &active_stops {
                                 let stop = &organ.stops[*stop_index];
                                 for rank_id in &stop.rank_ids {
@@ -673,6 +682,7 @@ fn spawn_audio_processing_thread<P>(
                                                 total_gain,
                                                 false,
                                                 true,
+                                                note_on_time,
                                             ) {
                                                 Ok(voice) => {
                                                     let voice_id = voice_counter;
@@ -842,6 +852,18 @@ fn spawn_audio_processing_thread<P>(
                 
                 let samples_read = voice.consumer.pop_slice(&mut voice_read_buffer[..samples_to_read]);
                 let frames_read = samples_read / CHANNEL_COUNT;
+
+                // --- Latency Measurement Logic ---
+                if frames_read > 0 && voice.is_attack_sample && !voice.has_reported_latency {
+                    let latency = voice.note_on_time.elapsed();
+                    log::debug!(
+                        "[AudioThread] Latency for attack voice {} ({:?}): {:.2}ms",
+                        voice_id,
+                        voice.debug_path.file_name().unwrap_or_default(),
+                        latency.as_secs_f32() * 1000.0
+                    );
+                    voice.has_reported_latency = true;
+                }
 
                 // --- Mix / Crossfade Logic (unchanged) ---
                 for i in 0..frames_read {
