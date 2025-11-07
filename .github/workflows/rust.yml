@@ -126,16 +126,16 @@ jobs:
         run: |
           cat <<EOF > Cross.toml
           [target.x86_64-unknown-linux-musl]
-          dependencies = { apk = ["alsa-lib-dev"] }
+          pre-build = ["apk add --no-cache alsa-lib-dev"]
 
           [target.aarch64-unknown-linux-musl]
-          dependencies = { apk = ["alsa-lib-dev"] }
+          pre-build = ["apk add --no-cache alsa-lib-dev"]
 
           [target.armv7-unknown-linux-musleabihf]
-          dependencies = { apk = ["alsa-lib-dev"] }
+          pre-build = ["apk add --no-cache alsa-lib-dev"]
 
           [target.arm-unknown-linux-musleabihf]
-          dependencies = { apk = ["alsa-lib-dev"] }
+          pre-build = ["apk add --no-cache alsa-lib-dev"]
           EOF
 
       - name: Install rust target
