@@ -1,8 +1,8 @@
 use anyhow::Result;
+use clap::{Parser, ValueEnum};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::path::PathBuf;
-use std::env;
 use simplelog::{Config, LevelFilter, WriteLogger};
 use std::fs::File;
 use std::thread::JoinHandle;
@@ -19,35 +19,68 @@ mod wav_converter;
 use app::{AppMessage, TuiMessage};
 use organ::Organ;
 
-static CONVERT_TO_16_BIT: bool = false;
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+#[value(rename_all = "lower")] // Allows users to type 'info', 'debug', etc.
+enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None, arg_required_else_help = true)]
+struct Args {
+    /// Path to the pipe organ definition file (e.g., organs/friesach/friesach.organ)
+    #[arg(value_name = "ORGAN_DEFINITION")]
+    organ_file: PathBuf,
+
+    /// Optional path to a MIDI file to play
+    #[arg(value_name = "MIDI_FILE")]
+    midi_file: Option<PathBuf>,
+
+    /// Pre-cache all samples on startup (uses more memory, reduces latency)
+    #[arg(long)] // Creates '--precache'
+    precache: bool, // 'bool' flags are false by default
+
+    #[arg(long)] // Creates '--convert-to-16bit'
+    convert_to_16bit: bool,
+
+    /// Set the application log level
+    #[arg(long, value_name = "LEVEL", default_value = "info")]
+    log_level: LogLevel,
+}
 
 fn main() -> Result<()> {
+    let args = Args::parse();
+   
+    let log_level = match args.log_level {
+        LogLevel::Error => LevelFilter::Error,
+        LogLevel::Warn => LevelFilter::Warn,
+        LogLevel::Info => LevelFilter::Info,
+        LogLevel::Debug => LevelFilter::Debug,
+        LogLevel::Trace => LevelFilter::Trace,
+    };
+
     WriteLogger::init(
-        LevelFilter::Info,
+        log_level,
         Config::default(),
         File::create("rusty-pipes.log")?
     )?;
-    // --- Get .organ file from command line arguments ---
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-organ-file.organ>", args[0]);
-        return Err(anyhow::anyhow!("Missing .organ file argument"));
-    }
-    let organ_path = PathBuf::from(&args[1]);
+    let organ_path = args.organ_file;
+    let convert_to_16_bit = args.convert_to_16bit;
+    let precache = args.precache;
+    let midi_file_path = args.midi_file;
     if !organ_path.exists() {
         return Err(anyhow::anyhow!("File not found: {}", organ_path.display()));
     }
-
-    // Check for optional MIDI file path
-    let midi_file_path: Option<PathBuf> = args.get(2).map(PathBuf::from);
-
-    let precache = true;
 
     // --- Parse the organ definition ---
     // This is the immutable definition of the instrument.
     // We wrap it in an Arc to share it safely and cheaply with all threads.
     println!("Loading organ definition...");
-    let organ = Arc::new(Organ::load(&organ_path, CONVERT_TO_16_BIT, precache)?);
+    let organ = Arc::new(Organ::load(&organ_path, convert_to_16_bit, precache)?);
     println!("Successfully loaded organ: {}", organ.name);
     println!("Found {} stops.", organ.stops.len());
 

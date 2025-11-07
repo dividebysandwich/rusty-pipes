@@ -21,6 +21,7 @@ num-traits = "0.2.19"
 log = "0.4"
 simplelog = "0.12"
 midly = "0.5"
+clap = { version = "4.5", features = ["derive"] }
 
 [profile.release]
 lto = true
