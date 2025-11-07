@@ -127,19 +127,20 @@ jobs:
           cat <<EOF > Cross.toml
           [target.x86_64-unknown-linux-musl]
           image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:0.2.5"
-          pre-build = ["apk add --no-cache alsa-lib-dev"]
+          # [FIX] Use the absolute path /sbin/apk
+          pre-build = ["/sbin/apk add --no-cache alsa-lib-dev"]
 
           [target.aarch64-unknown-linux-musl]
           image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:0.2.5"
-          pre-build = ["apk add --no-cache alsa-lib-dev"]
+          pre-build = ["/sbin/apk add --no-cache alsa-lib-dev"]
 
           [target.armv7-unknown-linux-musleabihf]
           image = "ghcr.io/cross-rs/armv7-unknown-linux-musleabihf:0.2.5"
-          pre-build = ["apk add --no-cache alsa-lib-dev"]
+          pre-build = ["/sbin/apk add --no-cache alsa-lib-dev"]
 
           [target.arm-unknown-linux-musleabihf]
           image = "ghcr.io/cross-rs/arm-unknown-linux-musleabihf:0.2.5"
-          pre-build = ["apk add --no-cache alsa-lib-dev"]
+          pre-build = ["/sbin/apk add --no-cache alsa-lib-dev"]
           EOF
 
       - name: Install rust target
@@ -150,13 +151,14 @@ jobs:
           if [[ $TARGET == *musl* ]]; then
             cross build --release --verbose --target $TARGET
           else
-            # [FIX] Set the pkg-config path for GNU cross-compilation
+            # Set PKG_CONFIG to the correct cross-compiler wrapper.
+            # This tells the build script to use the target-specific
+            # pkg-config, which knows where to find the arm/aarch64 libs.
             if [[ $TARGET == 'aarch64-unknown-linux-gnu' ]]; then
-              export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig"
-            # [SYNTAX FIX] Removed the stray single quote from the end of the line
+              export PKG_CONFIG="aarch64-linux-gnu-pkg-config"
             elif [[ $TARGET == *arm*-linux-gnueabihf ]]; then
               # This covers both 'armv7' and 'arm' targets
-              export PKG_CONFIG_PATH="/usr/lib/arm-linux-gnueabihf/pkgconfig"
+              export PKG_CONFIG="arm-linux-gnueabihf-pkg-config"
             fi
             
             cargo build --release --verbose --target $TARGET
