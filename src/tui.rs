@@ -274,7 +274,7 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
             Constraint::Percentage(20), // MIDI Log
             Constraint::Length(1),      // Footer
         ])
-        .split(frame.size());
+        .split(frame.area());
 
     // --- Footer Help Text / Error ---
     let footer_widget = if let Some(err) = &state.error_msg {

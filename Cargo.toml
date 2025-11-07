@@ -6,13 +6,13 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0"
 cpal = "0.16.0"
-crossterm = "0.27"
+crossterm = "0.29"
 decibel = "0.1.2"
 ini = "1.3.0"
 midir = "0.10"
-ratatui = { version = "0.27", features = ["crossterm"] }
+ratatui = { version = "0.29", features = ["crossterm"] }
 ringbuf = "0.4"
-rubato = "0.15"
+rubato = "0.16"
 rodio = "0.21.1"
 hound = "3.5.1"
 byteorder = "1.5.0"
