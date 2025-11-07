@@ -80,25 +80,28 @@ jobs:
       - name: Install and configure GNU dependencies
         if: runner.os == 'Linux' && !contains(matrix.TARGET, 'musl')
         run: |
-          # Add foreign architectures for cross-compiling
+          # Add foreign architectures
           sudo dpkg --add-architecture arm64
           sudo dpkg --add-architecture armhf
 
+          # 1. Add 'universe' and 'multiverse' components to find the pkg-config wrappers
+          sudo perl -i -pe 's/Components: main restricted/Components: main restricted universe multiverse/g' /etc/apt/sources.list.d/ubuntu.sources
+          # 2. Restrict this file to 'amd64' so apt doesn't look for arm packages here
           sudo perl -i -p0e 's/Types: deb/Types: deb\nArchitectures: amd64/g' /etc/apt/sources.list.d/ubuntu.sources
           
-          # 2. Add the 'ubuntu-ports' repository which contains arm64/armhf packages
-          UBUNTU_CODENAME=$(lsb_release -cs) # Gets "noble"
+          # Add the 'ubuntu-ports' repository for arm64/armhf packages
+          UBUNTU_CODENAME=$(lsb_release -cs)
           cat <<EOF | sudo tee /etc/apt/sources.list.d/ubuntu-ports.list
           deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME} main restricted universe multiverse
           deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-updates main restricted universe multiverse
           deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-security main restricted universe multiverse
           deb [arch=arm64,armhf] http://ports.ubuntu.com/ubuntu-ports ${UBUNTU_CODENAME}-backports main restricted universe multiverse
           EOF
-          
+
           # Update package lists
           sudo apt-get update
           
-          # Install cross-compilers AND the ALSA dev libraries for all GNU targets
+          # Install all dependencies
           sudo apt-get install -qq -y \
             crossbuild-essential-arm64 \
             crossbuild-essential-armhf \
@@ -107,8 +110,8 @@ jobs:
             libasound2-dev:armhf \
             pkg-config-aarch64-linux-gnu \
             pkg-config-arm-linux-gnueabihf
-            
-          # Configure cargo linkers for GNU targets
+
+          # Configure cargo linkers
           cat >>~/.cargo/config <<EOF
           [target.aarch64-unknown-linux-gnu]
           linker = "aarch64-linux-gnu-gcc"
