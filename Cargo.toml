@@ -1,6 +1,6 @@
 [package]
-name = "rusty_pipes"
-version = "0.1.0"
+name = "rusty-pipes"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
