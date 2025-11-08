@@ -96,6 +96,93 @@ fn write_f32_waves_to_bytes(
     Ok(output_bytes)
 }
 
+/// Helper function to scale loop points within a 'smpl' chunk's binary data.
+/// This modifies the `smpl_data` buffer in place.
+fn scale_smpl_chunk_loops(
+    smpl_data: &mut Vec<u8>,
+    ratio: f64,
+    new_sample_rate: u32
+) -> Result<()> {
+    // smpl chunk data is complex. We need to parse it carefully.
+    // We'll use a cursor to read and write in place.
+    if smpl_data.len() < 36 {
+        // Not enough data for header (up to cSampleLoops)
+        return Err(anyhow!("'smpl' chunk too small to parse (< 36 bytes)"));
+    }
+
+    let mut cursor = Cursor::new(smpl_data);
+
+    // --- Read and Write Header Fields ---
+    // We just seek past the first 8 bytes (Manufacturer, Product)
+    cursor.seek(SeekFrom::Start(8))?;
+    
+    // dwSamplePeriod (offset 8)
+    // This is nanoseconds per sample: (1_000_000_000 / sample_rate)
+    let new_sample_period = (1_000_000_000.0 / new_sample_rate as f64).round() as u32;
+    cursor.write_u32::<LittleEndian>(new_sample_period)?;
+
+    // Seek past MIDIUnityNote, MIDIPitchFraction, SMPTEFormat, SMPTEOffset (4*4 = 16 bytes)
+    // Current pos is 12, so seek 16 more.
+    cursor.seek(SeekFrom::Current(16))?; // Now at byte 28
+
+    // cSampleLoops (offset 28)
+    let num_loops = cursor.read_u32::<LittleEndian>()?;
+    
+    // cbSamplerData (offset 32)
+    let _sampler_data_size = cursor.read_u32::<LittleEndian>()?;
+    
+    // Cursor is now at byte 36, the start of the loop array.
+
+    if num_loops == 0 {
+        return Ok(()); // No loops to modify
+    }
+
+    // Check if we have enough data for all loops
+    let loop_array_size = num_loops as u64 * 24; // Each loop is 6 * u32 = 24 bytes
+    let header_size = 36_u64;
+    let expected_min_size = header_size + loop_array_size;
+
+    if (cursor.get_ref().len() as u64) < expected_min_size {
+        return Err(anyhow!(
+            "Invalid 'smpl' chunk: header reports {} loops, but data is too small ({} < {})", 
+            num_loops, cursor.get_ref().len(), expected_min_size
+        ));
+    }
+
+    // --- Iterate and Modify Loops ---
+    for i in 0..num_loops {
+        let loop_start_pos = cursor.position();
+        log::debug!("Scaling loop {}", i);
+
+        // Seek past dwCuePointID (u32) and dwType (u32)
+        cursor.seek(SeekFrom::Current(8))?; // Now at loop_start_pos + 8
+
+        // dwStart (offset 8 in loop struct)
+        let start_frame = cursor.read_u32::<LittleEndian>()?;
+        let new_start_frame = (start_frame as f64 * ratio).round() as u32;
+
+        // dwEnd (offset 12 in loop struct)
+        let end_frame = cursor.read_u32::<LittleEndian>()?;
+        let new_end_frame = (end_frame as f64 * ratio).round() as u32;
+
+        log::debug!(
+            "  Loop {}: Start {} -> {}, End {} -> {}",
+            i, start_frame, new_start_frame, end_frame, new_end_frame
+        );
+
+        // We need to write the new values back.
+        // Go back to the start of dwStart
+        cursor.seek(SeekFrom::Start(loop_start_pos + 8))?;
+        cursor.write_u32::<LittleEndian>(new_start_frame)?;
+        cursor.write_u32::<LittleEndian>(new_end_frame)?;
+
+        // Seek to the end of this loop struct (past dwFraction, dwPlayCount)
+        // We are at loop_start_pos + 16, need to go to loop_start_pos + 24
+        cursor.seek(SeekFrom::Start(loop_start_pos + 24))?;
+    }
+
+    Ok(())
+}
 
 /// Parses WAV file metadata chunks.
 pub fn parse_wav_metadata<R: Read + Seek>(
@@ -225,7 +312,7 @@ pub fn process_sample_file(
     let file = File::open(&full_path)?;
     let mut reader = BufReader::new(file);
 
-    let (format, other_chunks, data_offset, data_size) = 
+    let (format, mut other_chunks, data_offset, data_size) = 
         parse_wav_metadata(&mut reader, &full_path)?;
 
     let target_bits = if convert_to_16_bit { 16 } else { format.bits_per_sample };
@@ -275,11 +362,18 @@ pub fn process_sample_file(
     let data_reader = BufReader::new(reader);
     let input_waves = read_f32_waves(data_reader, format, data_size)?;
 
-    // Resample if needed
-    let output_waves = if needs_resample {
+    // Calculate resample ratio here to use for audio AND loops
+    // Default to 1.0 if no resampling is needed
+    let resample_ratio = if needs_resample {
         let pitch_factor = 2.0f64.powf(-pitch_tuning_cents as f64 / 1200.0);
         let effective_input_rate = format.sample_rate as f64 / pitch_factor;
-        let resample_ratio = target_sample_rate as f64 / effective_input_rate;
+        target_sample_rate as f64 / effective_input_rate
+    } else {
+        1.0
+    };
+
+    // Resample if needed
+    let output_waves = if needs_resample {
 
         // Use high-quality Sinc resampler for offline processing
         let params = SincInterpolationParameters {
@@ -301,6 +395,22 @@ pub fn process_sample_file(
     } else {
         input_waves // Pass through
     };
+
+    // Scale loop points in the smpl chunk, if it exists
+    if needs_resample {
+        for chunk in other_chunks.iter_mut() {
+            if &chunk.id == b"smpl" {
+                log::debug!("Found 'smpl' chunk, scaling loop points by ratio: {}", resample_ratio);
+                // Modify the chunk.data Vec<u8> in place
+                if let Err(e) = scale_smpl_chunk_loops(&mut chunk.data, resample_ratio, target_sample_rate) {
+                    // Log the error but don't fail the whole conversion.
+                    // Better to have un-scaled loops than no file.
+                    log::warn!("Failed to scale loop points for {:?}: {}", relative_path, e);
+                }
+                break; // Assume only one smpl chunk
+            }
+        }
+    }
 
     // Convert to target format bytes
     let final_data_chunk = write_f32_waves_to_bytes(&output_waves, target_bits, target_is_float)?;
