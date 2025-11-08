@@ -504,8 +504,8 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(80), // Stops
-            Constraint::Percentage(20), // MIDI Log
+            Constraint::Percentage(70), // Stops
+            Constraint::Percentage(30), // MIDI Log
             Constraint::Length(1),      // Footer
         ])
         .split(frame.area());
@@ -559,29 +559,56 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
             let column_items: Vec<ListItem> = all_stops[start_idx..end_idx].iter()
                 .map(|(global_idx, stop)| {
                     // Build the channel string
-                    let channels_str = if let Some(channels) = state.stop_channels.get(global_idx) {
-                        if channels.is_empty() {
-                            "[ ]".to_string()
-                        } else {
-                            // Collect channel numbers (displaying 1-10)
-                            let mut channel_nums: Vec<String> = channels.iter()
-                                .map(|c| if *c == 9 { "10".to_string() } else { (c + 1).to_string() })
-                                .collect();
-                            // Sort them numerically for consistent display
-                            channel_nums.sort_by_key(|a| a.parse::<u8>().unwrap_or(0));
-                            format!("[{}]", channel_nums.join(" "))
-                        }
-                    } else {
-                        "[ ]".to_string()
-                    };
+// Get the set of active channels for this stop
+                    let active_channels = state
+                        .stop_channels
+                        .get(global_idx)
+                        .cloned()
+                        .unwrap_or_default();
 
-                    // Add padding to align stop names
-                    let line = Line::from(format!("{:<15} {}", channels_str, stop.name));
-                    
+                    // Build the Vec<Span> for the 10 channel slots
+                    // We will use 2-character wide slots: "■■" for empty, " 1" or "10" for full
+                    let mut channel_spans: Vec<Span> = Vec::with_capacity(22); // 10 slots + 9 spaces + 1 spacer + name
+
+                    for i in 0..10u8 { // 0..=9, representing channels 1-10
+                        if active_channels.contains(&i) {
+                            // Channel is active: Display number (e.g., " 1", "10")
+                            let display_num = if i == 9 {
+                                "0".to_string()
+                            } else {
+                                format!("{}", i + 1) // Padded to 2 chars
+                            };
+                            channel_spans.push(Span::styled(
+                                display_num,
+                                // Use a bright color for active channels
+                                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                            ));
+                        } else {
+                            // Channel is inactive: Display gray block "■"
+                            channel_spans.push(Span::styled(
+                                "■", 
+                                Style::default().fg(Color::DarkGray),
+                            ));
+                        }
+                        
+                    }
+
+                    // Add padding and the stop name
+                    channel_spans.push(Span::raw(format!("   {}", stop.name))); // 3 spaces for padding
+
+                    // Create the Line from all the spans
+                    let line = Line::from(channel_spans);
+
+                    // --- 🎨 END OF MODIFIED SECTION ---
+
+
                     let style = if selected_index == *global_idx {
                         // Highlight selected
                         Style::default().fg(Color::Black).bg(Color::Cyan)
-                    } else if state.stop_channels.get(global_idx).map_or(false, |s| !s.is_empty()) {
+                    
+                    // --- MODIFIED LINE ---
+                    } else if !active_channels.is_empty() { // Re-use the set we already fetched
+                    // ---
                         // Highlight if any channel is active
                         Style::default().fg(Color::Green)
                     } else {
@@ -595,7 +622,6 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
             let title = if col_idx == 0 { state.organ.name.as_str() } else if col_idx == 2 { "Stops (F1-F12: Recall, Shift+F1-F12: Save)" } else { "" };
             let list_widget = List::new(column_items)
                 .block(Block::default().borders(Borders::ALL).title(title));
-
             // We don't use render_stateful_widget because we handle selection manually
             frame.render_widget(list_widget, *rect);
         }
