@@ -16,11 +16,13 @@ Rusty Pipes is a digital organ instrument compatible with GrandOrgue sample sets
 * Polyphony limited only by CPU power
 * MIDI controlled
 * On-the-fly configurable MIDI channel mapping
+* MIDI mappings can be quickly saved into one of 10 slots and recalled
+* MIDI mappings are saved to disk for each organ (by name)
 * MIDI file playback
 
 ## Missing features / Limitations / Known Issues
 
-* Will not work well on HDDs or slow SDDs (little can be done about that)
+* Will not work well on HDDs or slow SSDs (little can be done about that)
 * Support for different manuals and switches
 * Does not work as a plugin in DAWs
 
@@ -41,6 +43,8 @@ Options:
       --precache           Pre-cache all samples on startup (uses more memory, reduces latency)
       --convert-to-16bit   
       --log-level <LEVEL>  Set the application log level [default: info] [possible values: error, warn, info, debug, trace]
+      --ir-file <IR_FILE>        Optional path to a convolution reverb Impulse Response (IR) file
+      --reverb-mix <REVERB_MIX>  Reverb mix level (0.0 = dry, 1.0 = fully wet) [default: 0.5]
   -h, --help               Print help
   -V, --version            Print version
 ```
@@ -62,9 +66,11 @@ Options:
 | ----------- | ----------- |
 | Cursor keys| Select Drawbar / Register |
 | Space | Toggle Drawbar / Register on or off | 
-| 1,2,3...0 | Map midi channel to selected stop |
-| A | Enable all midi channels on selected stop |
-| N | Disable all midi channels on selected stop |
+| 1,2,3...0 | Map MIDI channel to selected stop |
+| Shift+F1..Shift+F10 | Save current MIDI mapping into one of 10 slots |
+| F1..F10 | Load MIDI mapping of given slot |
+| A | Enable all MIDI channels on selected stop |
+| N | Disable all MIDI channels on selected stop |
 | P | Panic (All notes turn off) |
 | Q | Quit |
 
