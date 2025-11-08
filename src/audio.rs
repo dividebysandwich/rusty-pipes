@@ -613,6 +613,9 @@ fn spawn_audio_processing_thread<P>(
                                 if let Some(rank) = organ.ranks.get(rank_id) {
                                     if let Some(pipe) = rank.pipes.get(&note) {
                                         let total_gain = rank.gain_db + pipe.gain_db;
+                                        log::debug!("[AudioThread] NoteOn received for note {} on stop '{}' (rank: '{}', gain: {:.2}dB)",
+                                            note, stop_name, rank_id, total_gain);
+                                        log::debug!("[AudioThread] -> Playing pipe sample: {:?}", pipe.attack_sample_path.file_name().unwrap_or_default());
                                         // Play attack sample
                                         match Voice::new(
                                             &pipe.attack_sample_path,
