@@ -1,6 +1,6 @@
 # Rusty Pipes
 
-[![Watch the video](https://img.youtube.com/vi/Ewm-s5aoeLc /0.jpg)](https://www.youtube.com/watch?v=Ewm-s5aoeLc 
+[![Watch the video](https://img.youtube.com/vi/Ewm-s5aoeLc/0.jpg)](https://www.youtube.com/watch?v=Ewm-s5aoeLc)
 
 (Click to play video)
 
