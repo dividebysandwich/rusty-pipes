@@ -112,14 +112,13 @@ fn main() -> Result<()> {
         println!("Starting MIDI file playback: {}", path.display());
         _midi_file_thread = Some(midi::play_midi_file(
             path,
-            audio_tx.clone(),
             tui_tx.clone()
         )?);
         _midi_connection = None;
     } else {
         // --- Use live MIDI input ---
         println!("Initializing MIDI...");
-        _midi_connection = Some(midi::setup_midi_input(audio_tx.clone(), tui_tx.clone())?);
+        _midi_connection = Some(midi::setup_midi_input(tui_tx.clone())?);
         _midi_file_thread = None;
         println!("MIDI input enabled.");
     }

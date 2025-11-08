@@ -9,34 +9,20 @@ use std::time::Duration;
 use midly::{Smf, TrackEventKind, MidiMessage as MidlyMidiMessage, MetaMessage};
 use std::time::Instant;
 
-use crate::app::{AppMessage, TuiMessage};
+use crate::app::TuiMessage;
 
-/// Formats any MIDI message as a readable string.
-fn format_midi_message(message: &[u8]) -> String {
-    let mut s = String::new();
-    for (i, byte) in message.iter().enumerate() {
-        s.push_str(&format!("0x{:02X}", byte));
-        if i < message.len() - 1 {
-            s.push(' ');
-        }
-    }
-
-    // Add a basic interpretation
-    match message.get(0) {
-        Some(0x90..=0x9F) => s.push_str(" (Note On)"),
-        Some(0x80..=0x8F) => s.push_str(" (Note Off)"),
-        Some(0xB0..=0xBF) => s.push_str(" (CC)"),
-        Some(0xE0..=0xEF) => s.push_str(" (Pitch Bend)"),
-        _ => s.push_str(" (Other)"),
-    }
-    s
+/// Converts a MIDI note number to its name (e.g., 60 -> "C4").
+fn midi_note_to_name(note: u8) -> String {
+    const NOTES: [&str; 12] = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+    let octave = (note / 12).saturating_sub(1); // MIDI note 0 is C-1
+    let note_name = NOTES[(note % 12) as usize];
+    format!("{}{}", note_name, octave)
 }
 
 pub fn setup_midi_input(
-    audio_tx: Sender<AppMessage>,
     tui_tx: Sender<TuiMessage>,
 ) -> Result<MidiInputConnection<()>> {
-    let mut midi_in = MidiInput::new("grandorgue-rs-input")?;
+    let mut midi_in = MidiInput::new("rusty-pipes-input")?;
     midi_in.ignore(Ignore::ActiveSense);
 
     let in_ports = midi_in.ports();
@@ -64,38 +50,56 @@ pub fn setup_midi_input(
     let port_name = midi_in.port_name(in_port)?;
 
     let connection = midi_in.connect(in_port, &port_name, move |_timestamp, message, _| {
-        // 1. Log the formatted message to the TUI thread
-        let log_msg = format_midi_message(message);
-        // We don't want to panic if the TUI is gone, so we ignore the error
-        let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
         let now = Instant::now();
         
-        // 2. Parse and send to Audio thread
+        // Parse and send to Audio thread
         if message.len() >= 3 {
+            let channel = message[0] & 0x0F; // MIDI channels 0-15
             match message[0] {
-                0x90..=0x9F => { // Note On (channel 1-16)
+                0x90..=0x9F => { // Note On
                     let note = message[1];
                     let velocity = message[2];
                     if velocity > 0 {
                         // This is a real Note On
-                        audio_tx.send(AppMessage::NoteOn(note, velocity)).unwrap_or_else(|e| {
-                            let _ = tui_tx.send(TuiMessage::Error(format!("Failed to send NoteOn: {}", e)));
-                        });
+                        let note_name = midi_note_to_name(note);
+                        let log_msg = format!("Note On: {} (Ch {}, Vel {})", note_name, channel + 1, velocity);
+                        let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
+                        // Send raw event to TUI
+                        let _ = tui_tx.send(TuiMessage::MidiNoteOn(note, velocity, channel));
+                        // Send piano roll event
                         let _ = tui_tx.send(TuiMessage::TuiNoteOn(note, now));
                     } else {
                         // Note On with velocity 0 is a Note Off
-                         audio_tx.send(AppMessage::NoteOff(note)).unwrap_or_else(|e| {
-                            let _ = tui_tx.send(TuiMessage::Error(format!("Failed to send NoteOff: {}", e)));
-                        });
+                        let note_name = midi_note_to_name(note);
+                        let log_msg = format!("Note Off: {} (Ch {})", note_name, channel + 1);
+                        let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
+                        // Send raw event to TUI
+                        let _ = tui_tx.send(TuiMessage::MidiNoteOff(note, channel));
+                        // Send piano roll event
                         let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, now));
                     }
                 },
-                0x80..=0x8F => { // Note Off (channel 1-16)
+                0x80..=0x8F => { // Note Off
                     let note = message[1];
-                    audio_tx.send(AppMessage::NoteOff(note)).unwrap_or_else(|e| {
-                        let _ = tui_tx.send(TuiMessage::Error(format!("Failed to send NoteOff: {}", e)));
-                    });
+                    let note_name = midi_note_to_name(note);
+                    let log_msg = format!("Note Off: {} (Ch {})", note_name, channel + 1);
+                    let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
+                    // Send raw event to TUI
+                    let _ = tui_tx.send(TuiMessage::MidiNoteOff(note, channel));
+                    // Send piano roll event
                     let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, now));
+                },
+                0xB0..=0xBF => { // Controller Change
+                    let controller = message[1];
+                    if controller == 123 { // CC #123 = All Notes Off
+                        let log_msg = format!("All Off (Ch {})", channel + 1);
+                        let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
+                        // Send raw event to TUI
+                        let _ = tui_tx.send(TuiMessage::MidiChannelNotesOff(channel));
+                        // Also clear the TUI piano roll
+                        let _ = tui_tx.send(TuiMessage::TuiAllNotesOff);
+                    }
+                    // TODO: Handle Sustain (CC #64) if needed
                 },
                 _ => {} // Ignore other messages
             }
@@ -109,7 +113,6 @@ pub fn setup_midi_input(
 /// Spawns a new thread to play a MIDI file.
 pub fn play_midi_file(
     path: PathBuf,
-    audio_tx: Sender<AppMessage>,
     tui_tx: Sender<TuiMessage>,
 ) -> Result<JoinHandle<()>> {
 
@@ -196,48 +199,44 @@ pub fn play_midi_file(
             // Process the MIDI event
             match event.kind {
                 TrackEventKind::Midi { channel, message } => {
+                    let channel_num = channel.as_int(); // This is 0-15
                     match message {
                         MidlyMidiMessage::NoteOn { key, vel } => {
                             let key = key.as_int();
                             let vel = vel.as_int();
+                            let note_name = midi_note_to_name(key);
                             if vel > 0 {
-                                let log_msg = format!("0x9{} 0x{:02X} 0x{:02X} (Note On)", channel.as_int(), key, vel);
+                                let log_msg = format!("Note On: {} (Ch {}, Vel {})", note_name, channel_num + 1, vel);
                                 let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
                                 let _ = tui_tx.send(TuiMessage::TuiNoteOn(key, now));
-                                audio_tx.send(AppMessage::NoteOn(key, vel))
+                                let _ = tui_tx.send(TuiMessage::MidiNoteOn(key, vel, channel_num));
                             } else {
                                 // Velocity 0 is a Note Off
-                                let log_msg = format!("0x8{} 0x{:02X} 0x00 (Note Off)", channel.as_int(), key);
+                                let log_msg = format!("Note Off: {} (Ch {})", note_name, channel_num + 1);
                                 let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
                                 let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, now));
-                                audio_tx.send(AppMessage::NoteOff(key))
-                            }.unwrap_or_else(|e| {
-                                let _ = tui_tx.send(TuiMessage::Error(format!("File player failed to send message: {}", e)));
-                            });
+                                let _ = tui_tx.send(TuiMessage::MidiNoteOff(key, channel_num));
+                            }
                         },
                         MidlyMidiMessage::NoteOff { key, vel: _ } => {
                             let key = key.as_int();
-                            let log_msg = format!("0x8{} 0x{:02X} 0x00 (Note Off)", channel.as_int(), key);
+                            let note_name = midi_note_to_name(key);
+                            let log_msg = format!("Note Off: {} (Ch {})", note_name, channel_num + 1);
                             let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
                             let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, now));
-                            audio_tx.send(AppMessage::NoteOff(key)).unwrap_or_else(|e| {
-                                let _ = tui_tx.send(TuiMessage::Error(format!("File player failed to send NoteOff: {}", e)));
-                            });
+                            let _ = tui_tx.send(TuiMessage::MidiNoteOff(key, channel_num));
                         },
                         MidlyMidiMessage::Controller { controller, value: _ } => {
                             // CC #123 is "All Notes Off"
                             if controller.as_int() == 123 {
-                                let log_msg = format!("0xB{} 0x7B 0x00 (All Off)", channel.as_int());
+                                let log_msg = format!("All Off (Ch {})", channel_num + 1);
                                 let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                                
-                                audio_tx.send(AppMessage::AllNotesOff).unwrap_or_else(|e| {
-                                    let _ = tui_tx.send(TuiMessage::Error(format!("File player failed to send AllNotesOff: {}", e)));
-                                });
+                                let _ = tui_tx.send(TuiMessage::MidiChannelNotesOff(channel_num));
                                 let _ = tui_tx.send(TuiMessage::TuiAllNotesOff);
                             }
                             // TODO: Handle Sustain command (CC #64)
                         },
-                        _ => {} // Ignore other MIDI messages (CC, etc.)
+                        _ => {} // Ignore other MIDI messages
                     }
                 },
                 TrackEventKind::Meta(MetaMessage::Tempo(micros)) => {

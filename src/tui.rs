@@ -32,7 +32,8 @@ struct PlayedNote {
 struct TuiState {
     organ: Arc<Organ>,
     list_state: ListState,
-    active_stops: BTreeSet<usize>,
+    /// Maps stop_index -> set of active MIDI channels (0-9)
+    stop_channels: HashMap<usize, BTreeSet<u8>>,
     midi_log: VecDeque<String>,
     error_msg: Option<String>,
     items_per_column: usize,
@@ -42,7 +43,9 @@ struct TuiState {
     // Notes that have finished playing, but are still within the display window
     finished_notes_display: VecDeque<PlayedNote>,
     // Time parameters for the scrolling window
-    piano_roll_display_duration: Duration, // How much time (ms) to show on screen
+    piano_roll_display_duration: Duration,
+    /// Maps MIDI Channel (0-15) -> Set of active notes (0-127)
+    channel_active_notes: HashMap<u8, BTreeSet<u8>>,
 }
 
 impl TuiState {
@@ -54,7 +57,7 @@ impl TuiState {
         Self {
             organ,
             list_state,
-            active_stops: BTreeSet::new(),
+            stop_channels: HashMap::new(),
             midi_log: VecDeque::with_capacity(MIDI_LOG_CAPACITY),
             error_msg: None,
             items_per_column,
@@ -62,6 +65,7 @@ impl TuiState {
             currently_playing_notes: HashMap::new(),
             finished_notes_display: VecDeque::new(),
             piano_roll_display_duration: Duration::from_secs(1), // Show 1 second of history
+            channel_active_notes: HashMap::new(),
         }
     }
 
@@ -101,40 +105,70 @@ impl TuiState {
         };
         self.list_state.select(Some(i));
     }
-    fn toggle_selected_stop(&mut self) -> (usize, bool) {
-        if let Some(selected_index) = self.list_state.selected() {
-            let is_now_active = if self.active_stops.contains(&selected_index) {
-                self.active_stops.remove(&selected_index);
-                false
-            } else {
-                self.active_stops.insert(selected_index);
-                true
-            };
-            (selected_index, is_now_active)
-        } else {
-            (0, false) // Should not happen
-        }
-    }
 
-        /// Activates all stops.
-    fn select_all_stops(&mut self, audio_tx: &Sender<AppMessage>) -> Result<()> {
-        for i in 0..self.stops_count {
-            if self.active_stops.insert(i) {
-                // Send message only if it wasn't already active
-                audio_tx.send(AppMessage::StopToggle(i, true))?;
-            }
+    /// Toggles a specific channel (0-9) for the currently selected stop.
+    fn toggle_stop_channel(&mut self, channel: u8, audio_tx: &Sender<AppMessage>) -> Result<()> {
+        if let Some(selected_index) = self.list_state.selected() {
+            let stop_set = self.stop_channels.entry(selected_index).or_default();
+            
+            if stop_set.contains(&channel) {
+                stop_set.remove(&channel);
+                
+                // --- Send NoteOff for all active notes on this channel for this stop ---
+                if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
+                    if let Some(stop) = self.organ.stops.get(selected_index) {
+                        let stop_name = stop.name.clone();
+                        for &note in notes_to_stop {
+                            audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
+                        }
+                    }
+                }
+            } else {
+                stop_set.insert(channel);
+            };
         }
         Ok(())
     }
 
-    /// Deactivates all stops.
-    fn select_none_stops(&mut self, audio_tx: &Sender<AppMessage>) -> Result<()> {
-        // Collect stops to deactivate to avoid modifying BTreeSet while iterating
-        let stops_to_deactivate: Vec<usize> = self.active_stops.iter().copied().collect();
-        for i in stops_to_deactivate {
-            if self.active_stops.remove(&i) {
-                // Send message only if it was active
-                audio_tx.send(AppMessage::StopToggle(i, false))?;
+    /// Activates all channels (0-9) for the selected stop.
+    fn select_all_channels_for_stop(&mut self) {
+        if let Some(selected_index) = self.list_state.selected() {
+            let stop_set = self.stop_channels.entry(selected_index).or_default();
+            for channel in 0..10 { // Channels 0-9
+                stop_set.insert(channel);
+            }
+        }
+    }
+
+    /// Deactivates all channels (0-9) for the selected stop.
+    fn select_none_channels_for_stop(&mut self, audio_tx: &Sender<AppMessage>) -> Result<()> {
+        if let Some(selected_index) = self.list_state.selected() {
+            if let Some(stop_set) = self.stop_channels.get_mut(&selected_index) {
+                // Collect channels to deactivate
+                let channels_to_deactivate: Vec<u8> = stop_set.iter().copied()
+                    .filter(|&c| c < 10)
+                    .collect();
+
+                if !channels_to_deactivate.is_empty() {
+                    if let Some(stop) = self.organ.stops.get(selected_index) {
+                        let stop_name = stop.name.clone();
+                        for channel in channels_to_deactivate {
+                            // --- Send NoteOff for all active notes on this channel for this stop ---
+                            if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
+                                for &note in notes_to_stop {
+                                    audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
+                                }
+                            }
+                            // Now remove it from the state
+                            stop_set.remove(&channel);
+                        }
+                    } else {
+                        // Fallback (shouldn't happen)
+                        for channel in channels_to_deactivate {
+                            stop_set.remove(&channel);
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -214,6 +248,54 @@ pub fn run_tui_loop(
         // Handle cross-thread messages (non-blocking)
         while let Ok(msg) = tui_rx.try_recv() {
             match msg {
+                // --- Raw MIDI events ---
+                TuiMessage::MidiNoteOn(note, vel, channel) => {
+                    // Track the active note
+                    app_state.channel_active_notes.entry(channel).or_default().insert(note);
+                    // Find all stops mapped to this channel and send AppMessage
+                    for (stop_index, active_channels) in &app_state.stop_channels {
+                        if active_channels.contains(&channel) {
+                            if let Some(stop) = app_state.organ.stops.get(*stop_index) {
+                                let stop_name = stop.name.clone();
+                                audio_tx.send(AppMessage::NoteOn(note, vel, stop_name))?;
+                            }
+                        }
+                    }
+                },
+                TuiMessage::MidiNoteOff(note, channel) => {
+                    // Stop tracking the active note
+                    if let Some(notes) = app_state.channel_active_notes.get_mut(&channel) {
+                        notes.remove(&note);
+                    }
+                    // Find all stops mapped to this channel and send AppMessage
+                    for (stop_index, active_channels) in &app_state.stop_channels {
+                        if active_channels.contains(&channel) {
+                            if let Some(stop) = app_state.organ.stops.get(*stop_index) {
+                                let stop_name = stop.name.clone();
+                                audio_tx.send(AppMessage::NoteOff(note, stop_name))?;
+                            }
+                        }
+                    }
+                },
+                TuiMessage::MidiChannelNotesOff(channel) => {
+                    // Handle channel-specific all notes off
+                    if let Some(notes_to_stop) = app_state.channel_active_notes.remove(&channel) {
+                        // Find all stops mapped to this channel
+                        for (stop_index, active_channels) in &app_state.stop_channels {
+                            if active_channels.contains(&channel) {
+                                if let Some(stop) = app_state.organ.stops.get(*stop_index) {
+                                    let stop_name = stop.name.clone();
+                                    // Send NoteOff for each note that was active on this channel
+                                    for &note in &notes_to_stop {
+                                        audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                
+                // --- Other TUI messages ---
                 TuiMessage::MidiLog(log) => app_state.add_midi_log(log),
                 TuiMessage::Error(err) => app_state.error_msg = Some(err),
                 TuiMessage::TuiNoteOn(note, start_time) => app_state.handle_tui_note_on(note, start_time),
@@ -226,35 +308,54 @@ pub fn run_tui_loop(
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => {
-                            // Send Quit message to audio thread
-                            audio_tx.send(AppMessage::Quit)?;
-                            break; // Exit TUI loop
+                    // Handle channel toggles
+                    let channel_to_toggle = match key.code {
+                        KeyCode::Char('1') => Some(0),
+                        KeyCode::Char('2') => Some(1),
+                        KeyCode::Char('3') => Some(2),
+                        KeyCode::Char('4') => Some(3),
+                        KeyCode::Char('5') => Some(4),
+                        KeyCode::Char('6') => Some(5),
+                        KeyCode::Char('7') => Some(6),
+                        KeyCode::Char('8') => Some(7),
+                        KeyCode::Char('9') => Some(8),
+                        KeyCode::Char('0') => Some(9),
+                        _ => None,
+                    };
+                    if let Some(channel) = channel_to_toggle {
+                        app_state.toggle_stop_channel(channel, &audio_tx)?;
+                    } else {
+                        // Handle other keys if no channel key was pressed
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                // Send Quit message to audio thread
+                                audio_tx.send(AppMessage::Quit)?;
+                                break; // Exit TUI loop
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                app_state.next_item();
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                app_state.prev_item();
+                            }
+                            KeyCode::Char('l') | KeyCode::Right => app_state.next_col(),
+                            KeyCode::Char('h') | KeyCode::Left => app_state.prev_col(),
+                            KeyCode::Char('p') => {
+                                // Send "Panic" message (Global All Notes Off)
+                                audio_tx.send(AppMessage::AllNotesOff)?;
+                            }
+                            // Remove Space/Enter bindings as they are replaced by 1-0
+                            // KeyCode::Char(' ') | KeyCode::Enter => { ... }
+                            KeyCode::Char('a') => {
+                                // All channels for selected stop
+                                app_state.select_all_channels_for_stop();
+                            }
+                            KeyCode::Char('n') => {
+                                // No channels for selected stop
+                                app_state.select_none_channels_for_stop(&audio_tx)?;
+                            }
+                            _ => {}
                         }
-                        KeyCode::Down | KeyCode::Char('j') => {
-                            app_state.next_item();
-                        }
-                        KeyCode::Up | KeyCode::Char('k') => {
-                            app_state.prev_item();
-                        }
-                        KeyCode::Char('l') | KeyCode::Right => app_state.next_col(),
-                        KeyCode::Char('h') | KeyCode::Left => app_state.prev_col(),
-                        KeyCode::Char('p') => {
-                            // Send "Panic" message
-                            audio_tx.send(AppMessage::AllNotesOff)?;
-                        }
-                        KeyCode::Char(' ') | KeyCode::Enter => {
-                            let (index, is_active) = app_state.toggle_selected_stop();
-                            audio_tx.send(AppMessage::StopToggle(index, is_active))?;
-                        }
-                        KeyCode::Char('a') => {
-                            app_state.select_all_stops(&audio_tx)?;
-                        }
-                        KeyCode::Char('n') => {
-                            app_state.select_none_stops(&audio_tx)?;
-                        }
-                        _ => {}
                     }
                 }
             }
@@ -281,9 +382,8 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
         Paragraph::new(err.as_str())
             .style(Style::default().fg(Color::White).bg(Color::Red))
     } else {
-        let help_text = "Quit: q | Up: ↑/k | Down: ↓/j | Toggle: Space/Enter | Panic: p | All: a | None: n";
-        Paragraph::new(help_text).alignment(Alignment::Center)
-    };
+        let help_text = "Quit: q | Nav: ↑/k, ↓/j, ←/h, →/l | Toggle Chan: 1-0 | Panic: p | Stop All Chan: a | Stop No Chan: n";
+        Paragraph::new(help_text).alignment(Alignment::Center)    };
     frame.render_widget(footer_widget, main_layout[2]);
 
     // --- Stop List (Multi-column) ---
@@ -325,18 +425,31 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
 
             let column_items: Vec<ListItem> = all_stops[start_idx..end_idx].iter()
                 .map(|(global_idx, stop)| {
-                    let prefix = if state.active_stops.contains(global_idx) {
-                        "[X] "
+                    // Build the channel string
+                    let channels_str = if let Some(channels) = state.stop_channels.get(global_idx) {
+                        if channels.is_empty() {
+                            "[ ]".to_string()
+                        } else {
+                            // Collect channel numbers (displaying 1-10)
+                            let mut channel_nums: Vec<String> = channels.iter()
+                                .map(|c| if *c == 9 { "10".to_string() } else { (c + 1).to_string() })
+                                .collect();
+                            // Sort them numerically for consistent display
+                            channel_nums.sort_by_key(|a| a.parse::<u8>().unwrap_or(0));
+                            format!("[{}]", channel_nums.join(" "))
+                        }
                     } else {
-                        "[ ] "
+                        "[ ]".to_string()
                     };
-                    let line = Line::from(format!("{}{}", prefix, stop.name));
+
+                    // Add padding to align stop names
+                    let line = Line::from(format!("{:<15} {}", channels_str, stop.name));
                     
                     let style = if selected_index == *global_idx {
                         // Highlight selected
                         Style::default().fg(Color::Black).bg(Color::Cyan)
-                    } else if state.active_stops.contains(global_idx) {
-                        // Highlight active
+                    } else if state.stop_channels.get(global_idx).map_or(false, |s| !s.is_empty()) {
+                        // Highlight if any channel is active
                         Style::default().fg(Color::Green)
                     } else {
                         // Normal

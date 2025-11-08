@@ -4,7 +4,7 @@ use cpal::{SampleFormat, SampleRate, Stream, StreamConfig};
 use decibel::{AmplitudeRatio, DecibelRatio};
 use ringbuf::traits::{Observer, Consumer, Producer, Split};
 use ringbuf::{HeapCons, HeapRb};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{HashMap}; // BTreeSet is no longer needed here
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::{mpsc, Arc};
@@ -452,7 +452,11 @@ fn spawn_audio_processing_thread<P>(
     spawn_reaper_thread(reaper_rx);
 
     thread::spawn(move || {
-        let mut active_stops: BTreeSet<usize> = BTreeSet::new();
+        // Create a map from stop_name -> stop_index for fast lookup
+        let stop_name_to_index_map: HashMap<String, usize> = organ.stops.iter().enumerate()
+            .map(|(i, stop)| (stop.name.clone(), i))
+            .collect();
+
         let mut active_notes: HashMap<u8, Vec<ActiveNote>> = HashMap::new();
         let mut voices: HashMap<u64, Voice> = HashMap::with_capacity(128);
         let mut voice_counter: u64 = 0;
@@ -477,86 +481,96 @@ fn spawn_audio_processing_thread<P>(
             // --- Handle incoming messages ---
             while let Ok(msg) = rx.try_recv() {
                 match msg {
-                    AppMessage::NoteOn(note, _vel) => {
-                        // Check if note is already active
-                        if let Some(notes) = active_notes.get_mut(&note) {
-                            if !notes.is_empty() {
-                                log::warn!("[AudioThread] NoteOn received for already active note {}. Ignoring.", note);
-                                continue; // Ignore this NoteOn
-                            }
-                        }
-                        if _vel > 0 {
+                    AppMessage::NoteOn(note, _vel, stop_name) => {
+                        let note_on_time = Instant::now();
+                        // Find the stop_index from the stop_name
+                        if let Some(stop_index) = stop_name_to_index_map.get(&stop_name) {
+                            let stop = &organ.stops[*stop_index];
                             let mut new_notes = Vec::new();
-                            let note_on_time = Instant::now();
-                            for stop_index in &active_stops {
-                                let stop = &organ.stops[*stop_index];
-                                for rank_id in &stop.rank_ids {
-                                    if let Some(rank) = organ.ranks.get(rank_id) {
-                                        if let Some(pipe) = rank.pipes.get(&note) {
-                                            let total_gain = rank.gain_db + pipe.gain_db;
-                                            // Play attack sample
-                                            match Voice::new(
-                                                &pipe.attack_sample_path,
-                                                Arc::clone(&organ),
-                                                sample_rate,
-                                                total_gain,
-                                                false,
-                                                true,
-                                                note_on_time,
-                                            ) {
-                                                Ok(voice) => {
-                                                    let voice_id = voice_counter;
-                                                    voice_counter += 1;
-                                                    voices.insert(voice_id, voice);
 
-                                                    new_notes.push(ActiveNote {
-                                                        note,
-                                                        start_time: Instant::now(),
-                                                        stop_index: *stop_index,
-                                                        rank_id: rank_id.clone(),
-                                                        voice_id,
-                                                    });
-                                                }
-                                                Err(e) => {
-                                                    log::error!("[AudioThread] Error creating attack voice: {}", e)
-                                                }
+                            for rank_id in &stop.rank_ids {
+                                if let Some(rank) = organ.ranks.get(rank_id) {
+                                    if let Some(pipe) = rank.pipes.get(&note) {
+                                        let total_gain = rank.gain_db + pipe.gain_db;
+                                        // Play attack sample
+                                        match Voice::new(
+                                            &pipe.attack_sample_path,
+                                            Arc::clone(&organ),
+                                            sample_rate,
+                                            total_gain,
+                                            false,
+                                            true,
+                                            note_on_time,
+                                        ) {
+                                            Ok(voice) => {
+                                                let voice_id = voice_counter;
+                                                voice_counter += 1;
+                                                voices.insert(voice_id, voice);
+
+                                                new_notes.push(ActiveNote {
+                                                    note,
+                                                    start_time: note_on_time, // Use the same start time
+                                                    stop_index: *stop_index,
+                                                    rank_id: rank_id.clone(),
+                                                    voice_id,
+                                                });
+                                            }
+                                            Err(e) => {
+                                                log::error!("[AudioThread] Error creating attack voice: {}", e)
                                             }
                                         }
                                     }
                                 }
                             }
+                            
                             if !new_notes.is_empty() {
-                                // insert() returns the old Vec if one existed
-                                let _old_notes = active_notes.insert(note, new_notes);
-
-                                // // If there were old notes, we MUST kill them
-                                // if let Some(notes_to_stop) = old_notes {
-                                //     log::warn!("[AudioThread] NoteOn re-trigger on note {}. Fading old voices.", note);
-                                //     for stopped_note in notes_to_stop {
-                                //         // This is the same logic from handle_note_off
-                                //         if let Some(voice) = voices.get_mut(&stopped_note.voice_id) {
-                                //             voice.is_cancelled.store(true, Ordering::SeqCst);
-                                //             voice.is_fading_out = true;
-                                //             // We do NOT add a release sample here, as this is a
-                                //             // re-trigger, not a release. The new voice takes over.
-                                //         }
-                                //     }
-                                // }
+                                // Add all new notes to the map entry for that note number
+                                active_notes.entry(note).or_default().extend(new_notes);
                             }
+
                         } else {
-                            handle_note_off(
-                                note, &organ, &mut voices, &mut active_notes,
-                                sample_rate, &mut voice_counter,
-                            );
+                            log::warn!("[AudioThread] NoteOn for unknown stop: {}", stop_name);
                         }
                     }
-                    AppMessage::NoteOff(note) => {
-                        handle_note_off(
-                            note, &organ, &mut voices, &mut active_notes,
-                            sample_rate, &mut voice_counter,
-                        );
+                    AppMessage::NoteOff(note, stop_name) => {
+                        // Find the stop_index from the stop_name
+                        if let Some(stop_index) = stop_name_to_index_map.get(&stop_name) {
+                            let mut stopped_note_opt: Option<ActiveNote> = None;
+                            
+                            // Check if the note is active at all
+                            if let Some(note_list) = active_notes.get_mut(&note) {
+                                // Find the index of the specific note to remove
+                                if let Some(pos) = note_list.iter().position(|an| an.stop_index == *stop_index) {
+                                    // Remove it from the list and take ownership
+                                    stopped_note_opt = Some(note_list.remove(pos));
+                                }
+                                
+                                // If list is now empty, remove the note key from the main map
+                                if note_list.is_empty() {
+                                    active_notes.remove(&note);
+                                }
+                            }
+
+                            // If we successfully removed a note, trigger its release
+                            if let Some(stopped_note) = stopped_note_opt {
+                                 trigger_note_release(
+                                    stopped_note,
+                                    &organ,
+                                    &mut voices,
+                                    sample_rate,
+                                    &mut voice_counter
+                                );
+                            } else {
+                                // This is common if NoteOff is sent twice, etc.
+                                log::trace!("[AudioThread] NoteOff for stop {} on note {}, but not found.", stop_name, note);
+                            }
+
+                        } else {
+                             log::warn!("[AudioThread] NoteOff for unknown stop: {}", stop_name);
+                        }
                     }
                     AppMessage::AllNotesOff => {
+                        // This is a panic, stop all notes
                         let notes: Vec<u8> = active_notes.keys().cloned().collect();
                         for note in notes {
                             handle_note_off(
@@ -565,48 +579,7 @@ fn spawn_audio_processing_thread<P>(
                             );
                         }
                     }
-                    AppMessage::StopToggle(stop_index, is_active) => {
-                        if is_active {
-                            active_stops.insert(stop_index);
-                        } else {
-                            // Remove the desired stop from set to prevent future notes being played
-                            active_stops.remove(&stop_index); 
-                        
-                            // Find all currently playing notes on this stop
-                            let mut notes_to_stop: Vec<ActiveNote> = Vec::new();
-                        
-                            // Iterate over all active notes (e.g., C4, G#5, etc.)
-                            active_notes.values_mut().for_each(|note_list| {
-                                // Use retain to keep notes that *don't* match the stop_index
-                                note_list.retain(|an| {
-                                    if an.stop_index == stop_index {
-                                        // If it matches, add it to our stop list...
-                                        notes_to_stop.push(an.clone()); // We need to own it
-                                        // ...and return false to remove it from note_list
-                                        false 
-                                    } else {
-                                        // Keep it
-                                        true
-                                    }
-                                });
-                            });
-
-                            // Clean up any note keys that now have empty lists
-                            active_notes.retain(|_note, note_list| !note_list.is_empty());
-
-                            // Process each note that needs to be stopped
-                            for current_note in notes_to_stop {
-                                trigger_note_release(
-                                    current_note,
-                                    &organ,
-                                    &mut voices,
-                                    sample_rate,
-                                    &mut voice_counter
-                                );
-                            }
-
-                        }
-                    }
+                    // AppMessage::StopToggle removed
                     AppMessage::Quit => {
                         drop(reaper_tx);
                         return; // Exit thread
@@ -808,6 +781,8 @@ fn handle_note_off(
     sample_rate: u32,
     voice_counter: &mut u64,
 ) {
+    // This removes *all* active notes for this note number,
+    // which is used for the panic function
     if let Some(notes_to_stop) = active_notes.remove(&note) {
         for stopped_note in notes_to_stop {
             // This `stopped_note` is an `ActiveNote`

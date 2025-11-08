@@ -3,14 +3,12 @@ use std::time::Instant;
 /// Messages sent from the TUI and MIDI threads to the Audio thread.
 #[derive(Debug)]
 pub enum AppMessage {
-    /// MIDI Note On event. (key, velocity)
-    NoteOn(u8, u8),
-    /// MIDI Note Off event. (key)
-    NoteOff(u8),
+    /// MIDI Note On event. (key, velocity, stop name)
+    NoteOn(u8, u8, String),
+    /// MIDI Note Off event. (key, stop name)
+    NoteOff(u8, String),
     /// A command to stop all currently playing notes.
     AllNotesOff,
-    /// TUI stop toggle event. (stop_index, is_active)
-    StopToggle(usize, bool),
     /// TUI quit event.
     Quit,
 }
@@ -26,6 +24,14 @@ pub enum TuiMessage {
     TuiNoteOn(u8, Instant),
     TuiNoteOff(u8, Instant),
     TuiAllNotesOff,
+
+    /// --- Midi events to TUI---
+    /// (note, velocity, channel)
+    MidiNoteOn(u8, u8, u8),
+    /// (note, channel)
+    MidiNoteOff(u8, u8),
+    /// (channel)
+    MidiChannelNotesOff(u8),
 }
 
 /// Holds information about a currently playing note.
