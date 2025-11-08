@@ -22,6 +22,7 @@ log = "0.4"
 simplelog = "0.12"
 midly = "0.5"
 clap = { version = "4.5", features = ["derive"] }
+fft-convolver = "0.2.0"
 
 [profile.release]
 lto = true

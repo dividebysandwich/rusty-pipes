@@ -50,6 +50,10 @@ struct Args {
     /// Set the application log level
     #[arg(long, value_name = "LEVEL", default_value = "info")]
     log_level: LogLevel,
+
+    /// Optional path to a convolution reverb Impulse Response (IR) file
+    #[arg(long, value_name = "IR_FILE")]
+    ir_file: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -72,6 +76,7 @@ fn main() -> Result<()> {
     let convert_to_16_bit = args.convert_to_16bit;
     let precache = args.precache;
     let midi_file_path = args.midi_file;
+    let ir_file_path = args.ir_file;
     if !organ_path.exists() {
         return Err(anyhow::anyhow!("File not found: {}", organ_path.display()));
     }
@@ -127,7 +132,7 @@ fn main() -> Result<()> {
     // This function will block until the user quits.
     // It takes ownership of its own sender to send messages (StopToggle, Quit).
     println!("Starting TUI... Press 'q' to quit.");
-    tui::run_tui_loop(audio_tx, tui_rx, organ)?;
+    tui::run_tui_loop(audio_tx, tui_rx, organ, ir_file_path)?;
 
     // --- Shutdown ---
     // When run_tui_loop returns (on quit), main exits.

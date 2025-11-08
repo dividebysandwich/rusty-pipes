@@ -3,8 +3,9 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, SampleRate, Stream, StreamConfig};
 use decibel::{AmplitudeRatio, DecibelRatio};
 use ringbuf::traits::{Observer, Consumer, Producer, Split};
+use fft_convolver::FFTConvolver;
 use ringbuf::{HeapCons, HeapRb};
-use std::collections::{HashMap}; // BTreeSet is no longer needed here
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::{mpsc, Arc};
@@ -12,7 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
-use std::path::{Path};
+use std::path::Path;
 use std::mem;
 
 use crate::app::{ActiveNote, AppMessage};
@@ -52,6 +53,7 @@ struct Voice {
 }
 
 impl Voice {
+    // ... (impl Voice is unchanged) ...
     fn new(path: &Path, organ: Arc<Organ>, sample_rate: u32, gain_db: f32, start_fading_in: bool, is_attack_sample: bool, note_on_time: Instant) -> Result<Self> {
         
         let amplitude_ratio: AmplitudeRatio<f64> = DecibelRatio(gain_db as f64).into();
@@ -305,7 +307,7 @@ impl Voice {
                     } // --- End of 'loader_loop ---
 
                     log::trace!("[LoaderThread] EXITED_MAIN_LOOP: {:?}", path_str);
-
+                
                     Ok(()) // Success
                 })(); // End of fallible closure
                 
@@ -327,7 +329,7 @@ impl Voice {
             is_finished_clone.store(true, Ordering::SeqCst);
         });
 
-        // --- 4. Return the non-blocking Voice struct ---
+        // --- Return the non-blocking Voice struct ---
         Ok(Self {
             gain,
             debug_path: path.to_path_buf(),
@@ -356,6 +358,116 @@ impl Drop for Voice {
             log::warn!("[Voice::Drop] Leaking thread handle for {:?}.", self.debug_path.file_name().unwrap_or_default());
             mem::forget(handle);
         }
+    }
+}
+
+/// Contains a stereo FFT convolver for reverb processing.
+struct StereoConvolver {
+    convolver_l: FFTConvolver<f32>,
+    convolver_r: FFTConvolver<f32>,
+    is_loaded: bool,
+    block_size: usize, // Store block size for re-initialization
+}
+
+impl StereoConvolver {
+    /// Creates a new, empty stereo convolver.
+    fn new(block_size: usize) -> Self {
+        Self {
+            convolver_l: FFTConvolver::<f32>::default(),
+            convolver_r: FFTConvolver::<f32>::default(),
+            is_loaded: false,
+            block_size,
+        }
+    }
+
+    /// Loads a WAV file as an Impulse Response.
+    fn load_ir(&mut self, path: &Path, sample_rate: u32) -> Result<()> {
+        log::info!("[Convolver] Loading IR from {:?}", path);
+
+        // --- Load IR file ---
+        let file = File::open(path)
+            .map_err(|e| anyhow!("[Convolver] Failed to open IR {:?}: {}", path, e))?;
+        let mut reader = BufReader::new(file);
+
+        let (fmt, _chunks, data_start, data_size) = 
+            parse_wav_metadata(&mut reader, path)
+            .map_err(|e| anyhow!("[Convolver] Failed to parse IR metadata for {:?}: {}", path, e))?;
+
+        if fmt.sample_rate != sample_rate {
+            // fft_convolver doesn't resample, so this is a problem.
+            // For a real-world app, you'd need to resample the IR here.
+            // For now, we'll log an error and refuse to load.
+            return Err(anyhow!(
+                "[Convolver] IR {:?} has sample rate {}Hz, but engine is {}Hz. Please resample the IR to {}Hz.",
+                path.file_name().unwrap_or_default(), fmt.sample_rate, sample_rate, sample_rate
+            ));
+        }
+
+        let decoder = WavSampleReader::new(reader, fmt, data_start, data_size)
+            .map_err(|e| anyhow!("[Convolver] Failed to create IR reader for {:?}: {}", path, e))?;
+        
+        let ir_samples_interleaved: Vec<f32> = decoder.collect();
+        if ir_samples_interleaved.is_empty() {
+            return Err(anyhow!("[Convolver] IR file {:?} contains no samples.", path));
+        }
+
+        // --- De-interleave ---
+        let mut ir_l: Vec<f32> = Vec::new();
+        let mut ir_r: Vec<f32> = Vec::new();
+        let ir_channels = fmt.num_channels as usize;
+
+        if ir_channels == 1 {
+            // Mono IR: copy to both L and R
+            ir_l = ir_samples_interleaved;
+            ir_r = ir_l.clone();
+            log::debug!("[Convolver] Loaded mono IR ({} frames).", ir_l.len());
+        } else {
+            // Stereo IR: de-interleave
+            let num_frames = ir_samples_interleaved.len() / ir_channels;
+            ir_l.reserve(num_frames);
+            ir_r.reserve(num_frames);
+            for i in 0..num_frames {
+                // We only care about the first two channels if it's > stereo
+                ir_l.push(ir_samples_interleaved[i * ir_channels]); // L
+                ir_r.push(ir_samples_interleaved[i * ir_channels + 1]); // R
+            }
+            log::debug!("[Convolver] Loaded stereo IR ({} frames).", ir_l.len());
+        }
+
+        // --- Set IR in convolvers ---
+        // We must re-create the convolvers, as `init` is the only way
+        // to set the IR, and it can only be called once.
+        let mut new_convolver_l = FFTConvolver::<f32>::default();
+        let mut new_convolver_r = FFTConvolver::<f32>::default();
+
+        // init(block_size, impulse_response)
+        let _ = new_convolver_l.init(self.block_size, &ir_l);
+        let _ = new_convolver_r.init(self.block_size, &ir_r);
+        
+        // Replace the old convolvers
+        self.convolver_l = new_convolver_l;
+        self.convolver_r = new_convolver_r;
+        
+        self.is_loaded = true;
+        
+        log::info!("[Convolver] Successfully loaded IR: {:?}", path.file_name().unwrap_or_default());
+        Ok(())
+    }
+
+    /// Processes a block of stereo audio.
+    fn process(&mut self, dry_l: &[f32], dry_r: &[f32], wet_l: &mut [f32], wet_r: &mut [f32]) {
+        if !self.is_loaded {
+            // If no IR is loaded, fill output with silence
+            wet_l.fill(0.0);
+            wet_r.fill(0.0);
+            return;
+        }
+        
+        // fft-convolver::process(input_slice, output_slice)
+        // These calls will panic if the slice lengths don't match self.block_size.
+        // Our main loop ensures they do.
+        let _ = self.convolver_l.process(dry_l, wet_l);
+        let _ = self.convolver_r.process(dry_r, wet_r);
     }
 }
 
@@ -460,8 +572,15 @@ fn spawn_audio_processing_thread<P>(
         let mut active_notes: HashMap<u8, Vec<ActiveNote>> = HashMap::new();
         let mut voices: HashMap<u64, Voice> = HashMap::with_capacity(128);
         let mut voice_counter: u64 = 0;
-        // Buffers for processing
+        
+        // This buffer holds the "dry" mix from all voices
         let mut mix_buffer_stereo: [Vec<f32>; CHANNEL_COUNT] = [
+            vec![0.0; buffer_size_frames],
+            vec![0.0; buffer_size_frames],
+        ];
+        
+        // This buffer will hold the "wet" signal from the convolver
+        let mut wet_buffer_stereo: [Vec<f32>; CHANNEL_COUNT] = [
             vec![0.0; buffer_size_frames],
             vec![0.0; buffer_size_frames],
         ];
@@ -470,11 +589,13 @@ fn spawn_audio_processing_thread<P>(
         
         // --- This buffer is for popping from the voice's ringbuf ---
         let mut voice_read_buffer: Vec<f32> = vec![0.0; buffer_size_frames * CHANNEL_COUNT];
-
         let mut tmp_drain_buffer: Vec<f32> = vec![0.0; buffer_size_frames * CHANNEL_COUNT];
 
-        let mut loop_counter: u64 = 0;
+        // Initialize the StereoConvolver with the correct block size
+        let mut convolver = StereoConvolver::new(buffer_size_frames);
+        let mut wet_dry_ratio: f32 = 0.0; // Start 100% dry
 
+        let mut loop_counter: u64 = 0;
         let mut voices_to_remove: Vec<u64> = Vec::with_capacity(32);
 
         loop {
@@ -579,7 +700,27 @@ fn spawn_audio_processing_thread<P>(
                             );
                         }
                     }
-                    // AppMessage::StopToggle removed
+                    // Handle new reverb messages
+                    AppMessage::SetReverbWetDry(ratio) => {
+                        wet_dry_ratio = ratio.clamp(0.0, 1.0);
+                        log::info!("[AudioThread] Reverb wet/dry ratio set to {:.0}%", wet_dry_ratio * 100.0);
+                    }
+                    AppMessage::SetReverbIr(path) => {
+                        match convolver.load_ir(&path, sample_rate) {
+                            Ok(_) => {
+                                if wet_dry_ratio == 0.0 {
+                                    wet_dry_ratio = 0.3;
+                                    log::info!("[AudioThread] IR loaded. Setting wet/dry to 30%.");
+                                }
+                            },
+                            Err(e) => {
+                                log::error!("[AudioThread] Failed to load IR: {}", e);
+                                convolver.is_loaded = false;
+                                wet_dry_ratio = 0.0;
+                                log::warn!("[AudioThread] Reverb disabled due to IR load error.");
+                            }
+                        }
+                    }
                     AppMessage::Quit => {
                         drop(reaper_tx);
                         return; // Exit thread
@@ -621,7 +762,7 @@ fn spawn_audio_processing_thread<P>(
                     attack_voice.is_awaiting_release_sample = false; // Done waiting
                     attack_voice.release_voice_id = None;
                 }
-            
+                
                 if release_id != u64::MAX {
                     if let Some(release_voice) = voices.get_mut(&release_id) {
                         release_voice.is_fading_in = true;
@@ -658,7 +799,7 @@ fn spawn_audio_processing_thread<P>(
                     voice.has_reported_latency = true;
                 }
 
-                // --- Mix / Crossfade Logic (unchanged) ---
+                // --- Mix / Crossfade Logic ---
                 for i in 0..frames_read {
                     if voice.is_fading_in {
                         voice.fade_level += fade_increment;
@@ -731,10 +872,37 @@ fn spawn_audio_processing_thread<P>(
                 voices_to_remove.clear();
             }
 
-            // --- Interleave and push to ring buffer ---
+            // Get mutable, non-overlapping slices *from the array itself*
+            let (wet_l_slice, wet_r_slice) = wet_buffer_stereo.split_at_mut(1);
+            let wet_l_vec = &mut wet_l_slice[0]; // This is &mut Vec<f32>
+            let wet_r_vec = &mut wet_r_slice[0]; // This is &mut Vec<f32>
+            // --- Apply Convolution Reverb ---
+            // The input and output slices MUST match the block_size the
+            // convolver was initialized with. Our buffers are already
+            // correctly sized to `buffer_size_frames`.
+            convolver.process(
+                &mix_buffer_stereo[0],     // Dry L
+                &mix_buffer_stereo[1],     // Dry R
+                wet_l_vec,                 // Wet L (&mut [f32])
+                wet_r_vec,                 // Wet R (&mut [f32])
+            );
+
+            // --- Interleave, Mix, and push to ring buffer ---
+            let dry_level = 1.0 - wet_dry_ratio;
+            let wet_level = wet_dry_ratio;
+
             for i in 0..buffer_size_frames {
-                interleaved_buffer[i * CHANNEL_COUNT] = mix_buffer_stereo[0][i];
-                interleaved_buffer[i * CHANNEL_COUNT + 1] = mix_buffer_stereo[1][i];
+                let dry_l = mix_buffer_stereo[0][i];
+                let dry_r = mix_buffer_stereo[1][i];
+                let wet_l = wet_buffer_stereo[0][i];
+                let wet_r = wet_buffer_stereo[1][i];
+
+                // Apply wet/dry mix (linear crossfade)
+                let final_l = (dry_l * dry_level) + (wet_l * wet_level);
+                let final_r = (dry_r * dry_level) + (wet_r * wet_level);
+
+                interleaved_buffer[i * CHANNEL_COUNT] = final_l;
+                interleaved_buffer[i * CHANNEL_COUNT + 1] = final_r;
             }
 
             let mut offset = 0;
@@ -774,6 +942,7 @@ fn spawn_audio_processing_thread<P>(
 
 /// Helper function to handle Note Off logic
 fn handle_note_off(
+    // ... (function is unchanged) ...
     note: u8,
     organ: &Arc<Organ>,
     voices: &mut HashMap<u64, Voice>,
@@ -850,6 +1019,7 @@ pub fn start_audio_playback(rx: mpsc::Receiver<AppMessage>, organ: Arc<Organ>) -
     );
 
     // Calculate buffer size in frames
+    // THIS IS CRITICAL: it must match the block_size for the convolver
     let buffer_size_frames = (sample_rate * BUFFER_SIZE_MS / 1000) as usize;
 
     // Create the ring buffer

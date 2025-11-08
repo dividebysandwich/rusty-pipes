@@ -11,6 +11,7 @@ use ratatui::{
 };
 use std::{
     io::{stdout, Stdout},
+    path::PathBuf,
     sync::{mpsc::{Sender, Receiver}, Arc},
     time::{Duration, Instant},
     collections::{BTreeSet, HashMap, VecDeque},
@@ -234,10 +235,24 @@ pub fn run_tui_loop(
     audio_tx: Sender<AppMessage>,
     tui_rx: Receiver<TuiMessage>,
     organ: Arc<Organ>,
+    ir_file_path: Option<PathBuf>,
 ) -> Result<()> {
     let mut terminal = setup_terminal()?;
     let mut app_state = TuiState::new(organ);
 
+    if let Some(path) = ir_file_path {
+        if path.exists() {
+            let log_msg = format!("Loading IR file: {:?}", path.file_name().unwrap());
+            app_state.add_midi_log(log_msg);
+            // Send the message to the audio thread
+            audio_tx.send(AppMessage::SetReverbIr(path))?;
+            audio_tx.send(AppMessage::SetReverbWetDry(0.3))?; // Default wet/dry mix
+        } else {
+            // Log an error to the TUI, but don't crash
+            let log_msg = format!("ERROR: IR file not found: {}", path.display());
+            app_state.add_midi_log(log_msg);
+        }
+    }
     loop {
         // Update piano roll state before drawing
         app_state.update_piano_roll_state();

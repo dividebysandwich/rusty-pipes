@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::path::PathBuf;
 
 /// Messages sent from the TUI and MIDI threads to the Audio thread.
 #[derive(Debug)]
@@ -9,6 +10,10 @@ pub enum AppMessage {
     NoteOff(u8, String),
     /// A command to stop all currently playing notes.
     AllNotesOff,
+    /// Set the reverb impulse response file path.
+    SetReverbIr(PathBuf),
+    /// Set the reverb wet/dry mix.
+    SetReverbWetDry(f32),
     /// TUI quit event.
     Quit,
 }
