@@ -153,12 +153,6 @@ impl Organ {
                 let tracker_delay_ms: u32 = get_prop("TrackerDelay", "trackerdelay", "0").parse().unwrap_or(0);
                 
                 let mut pipes = HashMap::new();
-
-                // --- Variables for sequence checking ---
-                let mut last_pipe_index: Option<usize> = None; // For checking PipeXXX sequence
-                let mut last_filename_note_num: Option<u8> = None; // For checking filename note sequence
-                let mut last_filename_str: String = String::new(); // For logging
-
                 for i in 1..=pipe_count {
                     let pipe_key_prefix_upper = format!("Pipe{:03}", i);
                     let pipe_key_prefix_lower = format!("pipe{:03}", i);
@@ -166,53 +160,9 @@ impl Organ {
 
                     // Get attack sample
                     if let Some(attack_path_str) = get_prop(&pipe_key_prefix_upper, &pipe_key_prefix_lower, "").non_empty_or(None) {
-                        let normalized_path_str = attack_path_str.replace('\\', "/");
-                        let path = Path::new(&normalized_path_str); // Use normalized string
-                        // Check for jumps in PipeXXX index (e.g., Pipe001 -> Pipe003)
-                        if let Some(last_i) = last_pipe_index {
-                            if i != last_i + 1 {
-                                log::warn!(
-                                    "Rank {} ({}): Non-sequential pipe definition. Found {}, but last was {}. This may indicate a missing pipe definition in the .organ file.",
-                                    id_str, name, pipe_key_prefix_upper, format!("Pipe{:03}", last_i)
-                                );
-                            }
-                        }
-                        last_pipe_index = Some(i);
-
-                        // Check for jumps in note number parsed from filename
-                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                            let numeric_part = stem.chars()
-                                .take_while(|c| c.is_ascii_digit())
-                                .collect::<String>();
-
-                            if let Ok(current_note_num) = numeric_part.parse::<u8>() {
-                                if let Some(last_note_num) = last_filename_note_num {
-                                    // Check for a jump (e.g., 62 -> 64)
-                                    // We allow a difference of 0 (same note) or 1 (next note)
-                                    if current_note_num > last_note_num + 1 {
-                                        log::warn!(
-                                            "Rank {} ({}): Potential non-sequential note in filename. Jumped from note {} (in file \"{}\") to note {} (in file \"{}\").",
-                                            id_str, name, last_note_num, last_filename_str, current_note_num, attack_path_str
-                                        );
-                                    }
-                                }
-                                last_filename_note_num = Some(current_note_num);
-                                last_filename_str = attack_path_str.clone();
-                            } else if !numeric_part.is_empty() {
-                                // The numeric part was non-empty but failed to parse
-                                // e.g. "128" (overflows u8) or very long string
-                                log::warn!(
-                                    "Rank {} ({}): Could not parse note number '{}' from filename '{}'.",
-                                    id_str, name, numeric_part, attack_path_str
-                                );
-                            }
-                            // If numeric_part is empty (e.g., "Note-C.wav"), we just skip.
-                        }
                         // Handle path separators and create relative path
                         let attack_path_str = attack_path_str.replace('\\', "/");
                         let mut attack_sample_path_relative = PathBuf::from(&attack_path_str);
-
-                        log::debug!("Rank {} Pipe {}: MIDI Note {} -> Attack Sample: {:?}", id_str, i, midi_note, attack_sample_path_relative);
 
                         let pipe_gain_db: f32 = get_prop(
                             &format!("{}Gain", pipe_key_prefix_upper), 

@@ -277,7 +277,7 @@ pub fn process_sample_file(
 
     // Resample if needed
     let output_waves = if needs_resample {
-        let pitch_factor = 2.0f64.powf(pitch_tuning_cents as f64 / 1200.0);
+        let pitch_factor = 2.0f64.powf(-pitch_tuning_cents as f64 / 1200.0);
         let effective_input_rate = format.sample_rate as f64 / pitch_factor;
         let resample_ratio = target_sample_rate as f64 / effective_input_rate;
 
