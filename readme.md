@@ -28,6 +28,12 @@ Rusty Pipes is a digital organ instrument compatible with GrandOrgue sample sets
 
 *Contributions are welcome!*
 
+## Download
+
+Downloads are available here: [https://github.com/dividebysandwich/rusty-pipes/releases](https://github.com/dividebysandwich/rusty-pipes/releases)
+
+On Arch linux, just run ```yay -S rusty-pipes``` or ```paru -S rusty-pipes```
+
 ## Starting
 
 Note: RustyPipes will create pitch-corrected samples of all pipes that have a pitch factor configured on startup. It will not overwrite the original files, but create new files with the pitch shift in the filename. This step is done automatically and only done the first time a particular organ is loaded.
