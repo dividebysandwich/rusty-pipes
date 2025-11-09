@@ -54,7 +54,7 @@ Options:
       --original-tuning            Preserve original (de)tuning of recorded samples up to +/- 20 cents to preserve organ character
       --list-midi-devices          List all available MIDI input devices and exit
       --midi-device <DEVICE_NAME>  Select a MIDI device by name
-      --audio-buffer-ms <BUFFER_MS>  Audio buffer size in milliseconds (lower values reduce latency but may cause glitches) [default: 5]
+      --audio-buffer-ms <BUFFER_MS>  Audio buffer size in milliseconds (lower values reduce latency but may cause glitches) [default: 10]
   -h, --help               Print help
   -V, --version            Print version
 ```

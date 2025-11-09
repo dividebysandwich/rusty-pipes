@@ -71,7 +71,7 @@ struct Args {
     midi_device: Option<String>,
 
     /// Audio buffer size in milliseconds (lower values reduce latency but may cause glitches)
-    #[arg(long, value_name = "BUFFER_MS", default_value_t = 5)]
+    #[arg(long, value_name = "BUFFER_MS", default_value_t = 10)]
     audio_buffer_ms: u32,
 
 }
