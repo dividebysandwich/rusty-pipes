@@ -1,3 +1,5 @@
+<img width="1461" height="664" alt="image" src="https://github.com/user-attachments/assets/d3948c97-c606-443a-8d98-96902ccd4a69" />
+
 # Rusty Pipes
 
 [![Watch the video](https://img.youtube.com/vi/Ewm-s5aoeLc/0.jpg)](https://www.youtube.com/watch?v=Ewm-s5aoeLc)
