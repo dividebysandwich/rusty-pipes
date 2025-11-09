@@ -60,7 +60,7 @@ pub struct ReleaseSample {
 
 impl Organ {
     /// Loads and parses a .organ file.
-    pub fn load(path: &Path, convert_to_16_bit: bool, pre_cache: bool) -> Result<Self> {
+    pub fn load(path: &Path, convert_to_16_bit: bool, pre_cache: bool, original_tuning: bool) -> Result<Self> {
         println!("Loading organ from: {:?}", path);
         let base_path = path.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
         if pre_cache {
@@ -170,11 +170,18 @@ impl Organ {
                             "0.0"
                         ).parse().unwrap_or(0.0);
                         
-                        let pitch_tuning_cents: f32 = get_prop(
+                        let mut pitch_tuning_cents: f32 = get_prop(
                             &format!("{}PitchTuning", pipe_key_prefix_upper), 
                             &format!("{}pitchtuning", pipe_key_prefix_lower), 
                             "0.0"
                         ).parse().unwrap_or(0.0);
+
+                        // if original_tuning is enabled, we only apply pitch tuning if it's more than +/- 20 cents
+                        if original_tuning {
+                            if pitch_tuning_cents.abs() <= 20.0 {
+                                pitch_tuning_cents = 0.0;
+                            }
+                        }
 
                         // Only process if needed (16-bit conversion OR pitch shift)
                             if convert_to_16_bit || pitch_tuning_cents != 0.0 {

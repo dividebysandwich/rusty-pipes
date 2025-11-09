@@ -6,7 +6,6 @@ use std::path::PathBuf;
 use simplelog::{Config, LevelFilter, WriteLogger};
 use std::fs::File;
 use std::thread::JoinHandle;
-use midir::MidiInputConnection;
 
 mod app;
 mod audio;
@@ -58,6 +57,12 @@ struct Args {
     /// Reverb mix level (0.0 = dry, 1.0 = fully wet)
     #[arg(long, value_name = "REVERB_MIX", default_value_t = 0.5)]
     reverb_mix: f32,
+
+    /// Preserve original (de)tuning of recorded samples up to +/- 20 cents
+    /// With some sample sets this can restore some of the original character of the organ.
+    #[arg(long)] // Creates '--preserve-tuning'
+    original_tuning: bool,
+
 }
 
 fn main() -> Result<()> {
@@ -82,6 +87,7 @@ fn main() -> Result<()> {
     let midi_file_path = args.midi_file;
     let ir_file_path = args.ir_file;
     let reverb_mix = args.reverb_mix;
+    let original_tuning = args.original_tuning;
     if !organ_path.exists() {
         return Err(anyhow::anyhow!("File not found: {}", organ_path.display()));
     }
@@ -90,7 +96,7 @@ fn main() -> Result<()> {
     // This is the immutable definition of the instrument.
     // We wrap it in an Arc to share it safely and cheaply with all threads.
     println!("Loading organ definition...");
-    let organ = Arc::new(Organ::load(&organ_path, convert_to_16_bit, precache)?);
+    let organ = Arc::new(Organ::load(&organ_path, convert_to_16_bit, precache, original_tuning)?);
     println!("Successfully loaded organ: {}", organ.name);
     println!("Found {} stops.", organ.stops.len());
 
@@ -108,11 +114,10 @@ fn main() -> Result<()> {
     let _stream = audio::start_audio_playback(audio_rx, Arc::clone(&organ))?;
     println!("Audio engine running.");
 
-    // --- Start the MIDI input ---
-    // This sets up the MIDI callback.
-    // The `_midi_connection` must also be kept in scope.
-    let _midi_connection: Option<MidiInputConnection<()>>;
+    // --- Start MIDI input ---
+    // The _midi_connection is now managed inside the TUI
     let _midi_file_thread: Option<JoinHandle<()>>;
+    let is_file_playback = midi_file_path.is_some(); // NEW: Tell TUI if file is playing
 
     if let Some(path) = midi_file_path {
         // --- Play from MIDI file ---
@@ -122,26 +127,31 @@ fn main() -> Result<()> {
         println!("Starting MIDI file playback: {}", path.display());
         _midi_file_thread = Some(midi::play_midi_file(
             path,
-            tui_tx.clone()
+            tui_tx.clone() // TUI still needs messages from file player
         )?);
-        _midi_connection = None;
     } else {
         // --- Use live MIDI input ---
-        println!("Initializing MIDI...");
-        _midi_connection = Some(midi::setup_midi_input(tui_tx.clone())?);
         _midi_file_thread = None;
-        println!("MIDI input enabled.");
+        println!("Initializing TUI for MIDI device selection...");
     }
 
     // --- Run the TUI on the main thread ---
     // This function will block until the user quits.
-    // It takes ownership of its own sender to send messages (StopToggle, Quit).
     println!("Starting TUI... Press 'q' to quit.");
-    tui::run_tui_loop(audio_tx, tui_rx, organ, ir_file_path, reverb_mix)?;
+    
+    // Pass in tui_tx so the TUI can create the MIDI callback
+    // Pass in is_file_playback to tell the TUI to skip MIDI selection
+    tui::run_tui_loop(
+        audio_tx,
+        tui_rx,
+        tui_tx,
+        organ,
+        ir_file_path,
+        reverb_mix,
+        is_file_playback,
+    )?;
 
     // --- Shutdown ---
-    // When run_tui_loop returns (on quit), main exits.
-    // `_stream` and `_midi_connection` are dropped, cleaning up their threads.
     println!("Shutting down...");
     Ok(())
 }
