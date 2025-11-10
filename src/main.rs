@@ -31,7 +31,7 @@ enum LogLevel {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None, arg_required_else_help = true)]
 struct Args {
-    /// Path to the pipe organ definition file (e.g., organs/friesach/friesach.organ)
+    /// Path to organ definition file (e.g., friesach/friesach.organ or friesach/OrganDefinitions/Friesach.Organ_Hauptwerk_xml)
     #[arg(value_name = "ORGAN_DEFINITION")]
     organ_file: Option<PathBuf>,
 

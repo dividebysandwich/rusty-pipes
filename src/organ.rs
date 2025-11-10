@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Context, Result};
-use ini::inistr; // Use the macro import
+use ini::inistr;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use serde::Deserialize;
+use quick_xml::de::from_str;
 
 use crate::wav_converter;
 use crate::wav_converter::SampleMetadata;
@@ -58,10 +60,511 @@ pub struct ReleaseSample {
     pub max_key_press_time_ms: i64,
 }
 
+// These structs are defined *only* for XML deserialization.
+// They mirror the Hauptwerk XML file structure.
+
+fn default_string() -> String { "".to_string() }
+fn default_f32() -> f32 { 0.0 }
+fn default_i64() -> i64 { -1 } // -1 for default release
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(rename = "Hauptwerk")]
+struct HauptwerkXml {
+    #[serde(rename = "ObjectList", default)]
+    object_lists: Vec<ObjectList>,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct ObjectList {
+    #[serde(rename = "@ObjectType")]
+    object_type: String,
+
+    #[serde(rename = "Stop", default)]
+    stops: Vec<XmlStop>,
+    #[serde(rename = "Rank", default)]
+    ranks: Vec<XmlRank>,
+    #[serde(rename = "StopRank", default)]
+    stop_ranks: Vec<XmlStopRank>,
+    #[serde(rename = "_General", default)]
+    general: Vec<XmlGeneral>,
+
+    #[serde(rename = "Pipe_SoundEngine01", default)]
+    pipes: Vec<XmlPipe>,
+    
+    #[serde(rename = "Pipe_SoundEngine01_Layer", default)]
+    layers: Vec<XmlLayer>,
+    
+    #[serde(rename = "Pipe_SoundEngine01_AttackSample", default)]
+    attack_samples: Vec<XmlAttackSample>,
+    
+    #[serde(rename = "Pipe_SoundEngine01_ReleaseSample", default)]
+    release_samples: Vec<XmlReleaseSample>,
+
+    #[serde(rename = "Sample", default)]
+    samples: Vec<XmlSample>,
+
+    #[serde(rename = "Combination", default)]
+    combinations: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "WindCompartmentLinkage", default)]
+    wind_linkages: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "CombinationElement", default)]
+    combination_elements: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "Switch", default)]
+    switches: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "DisplayPage", default)]
+    display_pages: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "Enclosure", default)]
+    enclosures: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "Key", default)]
+    keys: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "Winding", default)]
+    windings: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "ContinuousControl", default)]
+    continuous_controls: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "ContinuousControlImageSetStage", default)]
+    cc_image_set_stages: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "ContinuousControlLinkage", default)]
+    cc_linkages: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "ContinuousControlStageSwitch", default)]
+    cc_stage_switches: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "Division", default)]
+    divisions: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "DivisionInput", default)]
+    division_inputs: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "ImageSet", default)]
+    image_sets: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "ImageSetElement", default)]
+    image_set_elements: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "ImageSetInstance", default)]
+    image_set_instances: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "KeyAction", default)]
+    key_actions: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "KeyImageSet", default)]
+    key_image_sets: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "Keyboard", default)]
+    keyboards: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "RequiredInstallationPackage", default)]
+    req_packages: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "SwitchLinkage", default)]
+    switch_linkages: Vec<serde::de::IgnoredAny>,
+    #[serde(rename = "WindCompartment", default)]
+    wind_compartments: Vec<serde::de::IgnoredAny>
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlGeneral {
+    #[serde(rename = "Name", default = "default_string")]
+    name: String,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlStop {
+    #[serde(rename = "StopID")]
+    id: String,
+    #[serde(rename = "Name", default = "default_string")]
+    name: String,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlStopRank {
+    #[serde(rename = "StopID")]
+    stop_id: String,
+    #[serde(rename = "RankID")]
+    rank_id: String,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlRank {
+    #[serde(rename = "RankID")]
+    id: String,
+    #[serde(rename = "Name", default = "default_string")]
+    name: String,
+}
+
+// From ObjectType="Pipe_SoundEngine01"
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlPipe {
+    #[serde(rename = "PipeID")]
+    id: String,
+    #[serde(rename = "RankID")]
+    rank_id: String,
+    #[serde(rename = "NormalMIDINoteNumber")]
+    midi_note: u8,
+}
+
+// From ObjectType="Pipe_SoundEngine01_Layer"
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlLayer {
+    #[serde(rename = "LayerID")]
+    id: String,
+    #[serde(rename = "PipeID")]
+    pipe_id: String,
+    // midi_note field removed from here
+    #[serde(rename = "AudioEngine_GainDb", default = "default_f32")]
+    gain_db: f32,
+    #[serde(rename = "AudioEngine_PitchTuningCents", default = "default_f32")]
+    pitch_tuning_cents: f32,
+}
+
+// From ObjectType="Sample"
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlSample {
+    #[serde(rename = "SampleID")]
+    id: String,
+    #[serde(rename = "SampleFilename", default = "default_string")]
+    path: String,
+    #[serde(rename = "InstallationPackageID", default = "default_string")]
+    installation_package_id: String,
+}
+
+// From ObjectType="Pipe_SoundEngine01_AttackSample"
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlAttackSample {
+    #[serde(rename = "LayerID")]
+    layer_id: String,
+    #[serde(rename = "SampleID")]
+    sample_id: String,
+    // The "path" field is removed
+}
+
+// From ObjectType="Pipe_SoundEngine01_ReleaseSample"
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlReleaseSample {
+    #[serde(rename = "LayerID")] // Assuming it links to Layer
+    layer_id: String,
+    #[serde(rename = "MaxKeypressTimeMilliseconds", default = "default_i64")]
+    max_key_press_time_ms: i64,
+    #[serde(rename = "SampleID")]
+    sample_id: String,
+}
+
 impl Organ {
-    /// Loads and parses a .organ file.
+    /// Loads and parses an organ file (either .organ or .Organ_Hauptwerk_xml).
+    /// This function dispatches to the correct parser based on the file extension.
     pub fn load(path: &Path, convert_to_16_bit: bool, pre_cache: bool, original_tuning: bool) -> Result<Self> {
-        println!("Loading organ from: {:?}", path);
+        let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+        
+        if extension == "organ" {
+            // Call the original INI loader
+            Self::load_grandorgue(path, convert_to_16_bit, pre_cache, original_tuning)
+        } else if extension == "Organ_Hauptwerk_xml" {
+            // Call the new XML loader
+            Self::load_hauptwerk(path, convert_to_16_bit, pre_cache, original_tuning)
+        } else {
+            Err(anyhow!("Unsupported organ file format: {:?}", path))
+        }
+    }
+
+    /// Loads and parses a Hauptwerk (.Organ_Hauptwerk_xml) file.
+    fn load_hauptwerk(path: &Path, convert_to_16_bit: bool, pre_cache: bool, original_tuning: bool) -> Result<Self> {
+        println!("Loading Hauptwerk organ from: {:?}", path);
+        
+        let organ_root_path = path.parent()
+            .and_then(|p| p.parent())
+            .ok_or_else(|| anyhow!("Invalid Hauptwerk file path structure. Expected .../OrganDefinitions/*.Organ_Hauptwerk_xml"))?;
+
+        if pre_cache {
+            println!("[Organ] Pre-caching mode enabled. This may take a moment...");
+        }
+        
+        let file_content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow!("Failed to read Hauptwerk XML file {:?}: {}", path, e))?;
+
+        let mut organ = Organ {
+            base_path: organ_root_path.to_path_buf(),
+            name: path.file_stem().unwrap_or_default().to_string_lossy().replace(".Organ_Hauptwerk_xml", ""),
+            sample_cache: if pre_cache { Some(HashMap::new()) } else { None },
+            metadata_cache: if pre_cache { Some(HashMap::new()) } else { None },
+            ..Default::default()
+        };
+
+        // Deserialize the XML
+        log::debug!("Parsing XML file...");
+        let xml_data: HauptwerkXml = from_str(&file_content)
+            .map_err(|e| anyhow!("Failed to parse Hauptwerk XML: {}", e))?;
+        log::debug!("XML parsing complete. Found {} ObjectList entries.", xml_data.object_lists.len());
+
+        // Extract and organize XML objects
+        let mut xml_stops = Vec::new();
+        let mut xml_ranks = Vec::new();
+        let mut xml_pipes = Vec::new(); 
+        let mut xml_layers = Vec::new();
+        let mut xml_attack_samples = Vec::new();
+        let mut xml_release_samples = Vec::new();
+        let mut xml_stop_ranks = Vec::new();
+        let mut xml_generals = Vec::new();
+        let mut xml_samples = Vec::new();
+
+        for list in xml_data.object_lists {
+            match list.object_type.as_str() {
+                "Stop" => xml_stops.extend(list.stops),
+                "Rank" => xml_ranks.extend(list.ranks),
+                "StopRank" => xml_stop_ranks.extend(list.stop_ranks),
+                "_General" => xml_generals.extend(list.general),
+                "Pipe_SoundEngine01" => xml_pipes.extend(list.pipes),
+                "Pipe_SoundEngine01_Layer" => xml_layers.extend(list.layers),
+                "Pipe_SoundEngine01_AttackSample" => xml_attack_samples.extend(list.attack_samples),
+                "Pipe_SoundEngine01_ReleaseSample" => xml_release_samples.extend(list.release_samples),
+                "Sample" => xml_samples.extend(list.samples),
+                _ => {} // Ignore other object types
+            }
+        }
+        
+        log::debug!("Collected: {} stops, {} ranks, {} stop-ranks.", xml_stops.len(), xml_ranks.len(), xml_stop_ranks.len());
+        log::debug!("Collected: {} pipes, {} layers, {} attacks, {} releases, {} samples.",
+            xml_pipes.len(), xml_layers.len(), xml_attack_samples.len(), xml_release_samples.len(), xml_samples.len());
+
+        // Set organ name
+        if let Some(general) = xml_generals.first() {
+            if !general.name.is_empty() {
+                organ.name = general.name.clone();
+            }
+        }
+        
+        // Build StopRank map (StopID -> Vec<RankID>)
+        let mut stop_to_ranks_map: HashMap<String, Vec<String>> = HashMap::new();
+        for sr in xml_stop_ranks {
+            stop_to_ranks_map
+                .entry(sr.stop_id)
+                .or_default()
+                .push(sr.rank_id);
+        }
+
+        // Build Ranks map (empty pipes)
+        let mut ranks_map: HashMap<String, Rank> = HashMap::new();
+        for xr in xml_ranks {
+            ranks_map.insert(xr.id.clone(), Rank {
+                name: xr.name,
+                id_str: xr.id,
+                pipe_count: 0,
+                pipes: HashMap::new(),
+                first_midi_note: 0,
+                gain_db: 0.0,
+                tracker_delay_ms: 0,
+            });
+        }
+        log::debug!("Created {} empty ranks.", ranks_map.len());
+
+        // Assemble Pipes
+        
+        // Create lookup maps for quick assembly
+        let pipe_map: HashMap<String, &XmlPipe> = xml_pipes.iter().map(|p| (p.id.clone(), p)).collect();
+        
+        // Map SampleID -> Sample (for filename)
+        let sample_map: HashMap<String, &XmlSample> = xml_samples.iter()
+            .filter(|s| !s.path.is_empty()) // Only map samples that have a path
+            .map(|s| (s.id.clone(), s))
+            .collect();
+
+        
+        // Map LayerID -> AttackSample (for SampleID)
+        // We can just use collect() since it's a 1-to-1 mapping
+        let attack_map: HashMap<String, &XmlAttackSample> = xml_attack_samples.iter()
+            .map(|a| (a.layer_id.clone(), a))
+            .collect();
+        
+        // Map LayerID -> Vec<ReleaseSamples> (for SampleID)
+        let mut release_map: HashMap<String, Vec<&XmlReleaseSample>> = HashMap::new();
+        for rel in &xml_release_samples {
+             release_map.entry(rel.layer_id.clone()).or_default().push(rel);
+        }
+
+        log::debug!("Built Sample map ({} entries), Attack map ({} entries).", sample_map.len(), attack_map.len());
+        log::debug!("Assembling pipes from {} layers...", xml_layers.len());
+        let mut pipes_assembled = 0;
+
+        // Iterate layers (the central object) and build pipes
+        for layer in &xml_layers {
+            // Find the pipe this layer belongs to
+            let Some(pipe_info) = pipe_map.get(&layer.pipe_id) else {
+                log::warn!("Layer {} references non-existent PipeID {}", layer.id, layer.pipe_id);
+                continue;
+            };
+
+            // Find the rank this pipe belongs to
+            let Some(rank) = ranks_map.get_mut(&pipe_info.rank_id) else {
+                println!("Pipe {} references non-existent RankID {}", pipe_info.id, pipe_info.rank_id);
+                continue;
+            };
+
+            // Find the Attack linking object (LayerID -> SampleID)
+            let Some(attack_link) = attack_map.get(&layer.id) else {
+                log::warn!("Layer {} has no attack sample link.", layer.id);
+                continue;
+            };
+
+            // Find the Sample object (SampleID -> SampleFileName)
+            let Some(attack_sample_info) = sample_map.get(&attack_link.sample_id) else {
+                log::warn!("Layer {} references non-existent SampleID {}", layer.id, attack_link.sample_id);
+                continue;
+            };
+           
+            let mut pitch_tuning_cents = layer.pitch_tuning_cents;
+            if original_tuning && pitch_tuning_cents.abs() <= 20.0 {
+                pitch_tuning_cents = 0.0;
+            }
+
+            // Process Attack Sample
+            let attack_path_str = format!("OrganInstallationPackages/{:0>6}/{}", attack_sample_info.installation_package_id,attack_sample_info.path.replace('\\', "/"));
+            let mut attack_sample_path_relative = PathBuf::from(&attack_path_str);
+            
+            if convert_to_16_bit || pitch_tuning_cents != 0.0 {
+                attack_sample_path_relative = wav_converter::process_sample_file(
+                    &attack_sample_path_relative,
+                    &organ.base_path,
+                    pitch_tuning_cents,
+                    convert_to_16_bit,
+                )?;
+            }
+            let attack_sample_path = organ.base_path.join(attack_sample_path_relative);
+
+            // Pre-cache Attack (if enabled)
+            if let Some(audio_cache) = &mut organ.sample_cache {
+                if !audio_cache.contains_key(&attack_sample_path) {
+                    match wav_converter::load_sample_as_f32(&attack_sample_path) {
+                        Ok((samples, metadata)) => {
+                            audio_cache.insert(attack_sample_path.clone(), Arc::new(samples));
+                            organ.metadata_cache.as_mut().unwrap().insert(attack_sample_path.clone(), Arc::new(metadata));
+                        }
+                        Err(e) => println!("[ERROR] [Cache] Failed to load sample {:?}: {}", attack_sample_path, e),
+                    }
+                }
+            }
+
+            // Process Release Samples (needs double-lookup too)
+            let mut releases = Vec::new();
+            if let Some(xml_release_links) = release_map.get(&layer.id) {
+                for release_link in xml_release_links {
+                    // Find the Sample object for this release
+                    let Some(release_sample_info) = sample_map.get(&release_link.sample_id) else {
+                        log::warn!("Release for Layer {} references non-existent SampleID {}", layer.id, release_link.sample_id);
+                        continue;
+                    };
+                    
+                    let rel_path_str = release_sample_info.path.replace('\\', "/");
+                    let mut rel_path_relative = PathBuf::from(&rel_path_str);
+
+                    if convert_to_16_bit || pitch_tuning_cents != 0.0 {
+                        rel_path_relative = wav_converter::process_sample_file(
+                            &rel_path_relative,
+                            &organ.base_path,
+                            pitch_tuning_cents,
+                            convert_to_16_bit,
+                        )?;
+                    }
+                    let rel_path = organ.base_path.join(rel_path_relative);
+
+                    // Pre-cache Release (if enabled)
+                    if let Some(audio_cache) = &mut organ.sample_cache {
+                        if !audio_cache.contains_key(&rel_path) {
+                            match wav_converter::load_sample_as_f32(&rel_path) {
+                                Ok((samples, metadata)) => {
+                                    audio_cache.insert(rel_path.clone(), Arc::new(samples));
+                                    organ.metadata_cache.as_mut().unwrap().insert(rel_path.clone(), Arc::new(metadata));
+                                }
+                                Err(e) => println!("[ERROR] [Cache] Failed to load sample {:?}: {}", rel_path, e),
+                            }
+                        }
+                    }
+
+                    releases.push(ReleaseSample {
+                        path: rel_path,
+                        max_key_press_time_ms: release_link.max_key_press_time_ms,
+                    });
+                }
+            }
+            
+            releases.sort_by_key(|r| if r.max_key_press_time_ms == -1 { i64::MAX } else { r.max_key_press_time_ms });
+
+            // Create and insert Pipe into its Rank
+            let final_pipe = Pipe {
+                attack_sample_path,
+                gain_db: layer.gain_db,
+                pitch_tuning_cents: 0.0,
+                releases,
+            };
+
+            if let Some(_existing) = rank.pipes.insert(pipe_info.midi_note, final_pipe) {
+                log::warn!("Duplicate pipe for MIDI note {} in Rank {}. Overwriting.",
+                    pipe_info.midi_note, rank.id_str);
+            }
+            pipes_assembled += 1; // Count successfully assembled pipes
+        }
+
+        log::debug!("Pipe assembly loop finished. Assembled {} pipes.", pipes_assembled);
+
+        // Final Assembly
+        
+        // Update pipe counts in ranks
+        for rank in ranks_map.values_mut() {
+            rank.pipe_count = rank.pipes.len();
+        }
+
+        // Build Stops Vec
+        let mut stops_filtered = 0;
+        let mut stops_map: HashMap<String, Stop> = HashMap::new();
+        log::debug!("--- Starting Stop Filtering ---");
+        let xml_stops_len = xml_stops.len();
+        for xs in xml_stops {
+            // Apply same filter as INI loader
+            if xs.name.contains("Key action") || xs.name.contains("noise") || xs.name.is_empty() {
+                stops_filtered += 1;
+                continue;
+            }
+
+            log::debug!("Filtering stop '{}' (ID: {})", xs.name, xs.id);
+            let rank_ids = stop_to_ranks_map.get(&xs.id).cloned().unwrap_or_default();
+            
+            if rank_ids.is_empty() {
+                log::debug!("-> Stop {} has no associated rank IDs.", xs.id);
+            } else {
+                log::debug!("-> Stop {} is associated with rank IDs: {:?}", xs.id, rank_ids);
+            }
+
+            let has_pipes = rank_ids.iter().any(|rid| {
+                if let Some(rank) = ranks_map.get(rid) {
+                    if !rank.pipes.is_empty() {
+                        log::debug!("-> Rank {} (Name: {}) has {} pipes. OK.", rid, rank.name, rank.pipes.len());
+                        true
+                    } else {
+                        log::debug!("-> Rank {} (Name: {}) has 0 pipes.", rid, rank.name);
+                        false
+                    }
+                } else {
+                    log::debug!("-> Rank ID {} not found in ranks_map.", rid);
+                    false
+                }
+            });
+
+            if !rank_ids.is_empty() && has_pipes {
+                log::debug!("-> SUCCESS: Adding stop '{}'", xs.name);
+                stops_map.insert(xs.id.clone(), Stop {
+                    name: xs.name,
+                    id_str: xs.id,
+                    rank_ids,
+                });
+            } else {
+                log::debug!("-> FILTERED: Stop '{}' (ID: {}): No (valid) ranks associated or ranks have no pipes.", xs.name, xs.id);
+                 stops_filtered += 1;
+            }
+        }
+        log::debug!("--- Stop Filtering Finished ---");
+
+        println!("Parsing complete. Stops found: {}. Stops filtered (noise/empty/no pipes): {}. Stops added: {}.", xml_stops_len, stops_filtered, stops_map.len());
+
+        let mut stops: Vec<Stop> = stops_map.into_values().collect();
+        stops.sort_by_key(|s| s.id_str.parse::<u32>().unwrap_or(0));
+
+        organ.stops = stops;
+        organ.ranks = ranks_map;
+
+        log::debug!("Final maps: {} stops, {} ranks.", organ.stops.len(), organ.ranks.len());
+        Ok(organ)
+    }
+
+    /// Loads and parses a GrandOrgue (.organ) file.
+    fn load_grandorgue(path: &Path, convert_to_16_bit: bool, pre_cache: bool, original_tuning: bool) -> Result<Self> {
+        println!("Loading GrandOrgue organ from: {:?}", path);
         let base_path = path.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
         if pre_cache {
             println!("[Organ] Pre-caching mode enabled. This may take a moment...");
@@ -103,9 +606,8 @@ impl Organ {
                     .map(|s| s.to_string()) // Convert to Option<String>
                     .unwrap_or_else(|| default.to_string()) // Provide default String
                     .trim()
-                    .replace("__HASH__", "#") // <-- 4. Replace placeholder back
+                    .replace("__HASH__", "#") // Replace placeholder back
                     .to_string()
-
             };
 
             
@@ -243,7 +745,7 @@ impl Organ {
                                 // Pre-cache release sample if enabled
                                 if let Some(audio_cache) = &mut organ.sample_cache {
                                     if !audio_cache.contains_key(&rel_path) {
-                                         match wav_converter::load_sample_as_f32(&rel_path) {
+                                        match wav_converter::load_sample_as_f32(&rel_path) {
                                             Ok((samples, metadata)) => {
                                                 audio_cache.insert(rel_path.clone(), Arc::new(samples));
                                                 organ.metadata_cache.as_mut().unwrap().insert(rel_path.clone(), Arc::new(metadata));
