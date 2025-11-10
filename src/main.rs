@@ -70,9 +70,9 @@ struct Args {
     #[arg(long, value_name = "DEVICE_NAME")]
     midi_device: Option<String>,
 
-    /// Audio buffer size in milliseconds (lower values reduce latency but may cause glitches)
-    #[arg(long, value_name = "BUFFER_MS", default_value_t = 10)]
-    audio_buffer_ms: u32,
+    /// Audio buffer size in frames (lower values reduce latency but may cause glitches)
+    #[arg(long, value_name = "NUM_FRAMES", default_value_t = 512)]
+    audio_buffer_frames: usize,
 
 }
 
@@ -126,7 +126,7 @@ fn main() -> Result<()> {
     let reverb_mix = args.reverb_mix;
     let original_tuning = args.original_tuning;
     let preselected_midi_device = args.midi_device;
-    let audio_buffer_ms = args.audio_buffer_ms;
+    let audio_buffer_frames = args.audio_buffer_frames;
     if !organ_path.exists() {
         return Err(anyhow::anyhow!("File not found: {}", organ_path.display()));
     }
@@ -150,7 +150,7 @@ fn main() -> Result<()> {
     // This spawns the audio processing thread and starts the cpal audio stream.
     // The `_stream` variable must be kept in scope, or audio will stop.
     println!("Starting audio engine...");
-    let _stream = audio::start_audio_playback(audio_rx, Arc::clone(&organ), audio_buffer_ms)?;
+    let _stream = audio::start_audio_playback(audio_rx, Arc::clone(&organ), audio_buffer_frames)?;
     println!("Audio engine running.");
 
     // --- Start MIDI input ---

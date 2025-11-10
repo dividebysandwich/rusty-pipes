@@ -975,7 +975,7 @@ fn handle_note_off(
 }
 
 /// Sets up the cpal audio stream and spawns the processing thread.
-pub fn start_audio_playback(rx: mpsc::Receiver<AppMessage>, organ: Arc<Organ>, audio_buffer_ms: u32) -> Result<Stream> {
+pub fn start_audio_playback(rx: mpsc::Receiver<AppMessage>, organ: Arc<Organ>, buffer_size_frames: usize) -> Result<Stream> {
     let available_hosts = cpal::available_hosts();
     log::info!("[Cpal] Available audio hosts:");
     for host_id in &available_hosts {
@@ -1028,10 +1028,6 @@ pub fn start_audio_playback(rx: mpsc::Receiver<AppMessage>, organ: Arc<Organ>, a
         "[Cpal] Using config: SampleRate: {}, Channels: {}, Format: {:?}",
         sample_rate, channels, sample_format
     );
-
-    // Calculate buffer size in frames
-    // THIS IS CRITICAL: it must match the block_size for the convolver
-    let buffer_size_frames = (sample_rate * audio_buffer_ms / 1000) as usize;
 
     // Create the ring buffer
     let ring_buf_capacity = buffer_size_frames * channels * 10;
