@@ -1336,6 +1336,7 @@ dependencies = [
  "ringbuf",
  "rodio",
  "rubato",
+ "rustfft",
  "serde",
  "serde_json",
  "simplelog",

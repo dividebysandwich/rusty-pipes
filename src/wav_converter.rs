@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write, Cursor};
 use std::path::{Path, PathBuf};
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
+use rustfft::{FftPlanner, num_complex::Complex};
 
 use crate::wav::{parse_smpl_chunk, WavFmt, OtherChunk};
 
@@ -29,7 +30,7 @@ fn read_i24<R: Read>(reader: &mut R) -> std::io::Result<i32> {
 }
 
 /// Helper to read all audio data from a reader into f32 waves
-fn read_f32_waves<R: Read>(
+pub fn read_f32_waves<R: Read>(
     mut reader: R, 
     format: WavFmt,
     data_size: u32
@@ -464,4 +465,65 @@ pub fn process_sample_file(
     writer.flush()?;
 
     Ok(new_relative_path)
+}
+
+/// Analyzes a slice of f32 audio samples and returns the dominant frequency in Hz.
+///
+/// This function takes a segment from the start of the sample (after a small offset),
+/// applies a Hann window to reduce spectral leakage, runs an FFT, and finds the 
+/// frequency bin with the highest magnitude.
+///
+/// Returns `None` if the sample is too short or an error occurs.
+pub fn find_dominant_frequency(samples: &[f32], sample_rate: u32) -> Option<f32> {
+    // We'll analyze a block of 8192 samples. This gives good frequency resolution.
+    const FFT_SIZE: usize = 1024*20;
+    // Start a little bit into the sample to avoid the initial click/transient.
+    let start_offset: usize = samples.len() - FFT_SIZE - 1000;
+
+    if samples.len() < start_offset + FFT_SIZE {
+        log::warn!("[FFT] Sample too short for pitch detection (len: {})", samples.len());
+        return None; // Sample is too short
+    }
+
+    let segment = &samples[start_offset..(start_offset + FFT_SIZE)];
+
+    // Create windowed f64-precision complex samples
+    let mut buffer: Vec<Complex<f64>> = segment
+        .iter()
+        .enumerate()
+        .map(|(i, &s)| {
+            // Apply Hann window
+            let hann_factor = 0.5 * (1.0 - (2.0 * std::f64::consts::PI * i as f64 / (FFT_SIZE as f64 - 1.0)).cos());
+            Complex::new((s as f64) * hann_factor, 0.0)
+        })
+        .collect();
+
+    // Run the FFT
+    let mut planner = FftPlanner::<f64>::new();
+    let fft = planner.plan_fft_forward(FFT_SIZE);
+    fft.process(&mut buffer);
+
+    // Find the peak magnitude in the first half of the spectrum (skip DC bin 0)
+    let spectrum = &buffer[1..(FFT_SIZE / 2)]; // 0 is DC, we skip it.
+    let mut max_magnitude_sq = 0.0;
+    let mut max_index = 0;
+
+    for (i, c) in spectrum.iter().enumerate() {
+        let mag_sq = c.norm_sqr(); // (re*re + im*im)
+        if mag_sq > max_magnitude_sq {
+            max_magnitude_sq = mag_sq;
+            max_index = i + 1; // +1 because we skipped the DC bin
+        }
+    }
+
+    if max_index == 0 {
+        return None; // No signal found
+    }
+
+    // Convert the winning index back to a frequency (Hz)
+    let freq_resolution = sample_rate as f32 / FFT_SIZE as f32;
+    let dominant_freq_hz = max_index as f32 * freq_resolution;
+
+    log::debug!("[FFT] Detected dominant freq: {:.2} Hz", dominant_freq_hz);
+    Some(dominant_freq_hz)
 }

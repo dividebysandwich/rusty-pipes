@@ -3,6 +3,8 @@ use ini::inistr;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::io::{BufReader, Seek, SeekFrom};
+use std::fs::File;
 use serde::Deserialize;
 use quick_xml::de::from_str;
 use itertools::Itertools;
@@ -411,57 +413,129 @@ impl Organ {
                 log::warn!("Layer {} references non-existent SampleID {}", layer.id, attack_link.sample_id);
                 continue;
             };
-            
+
             // Get Target Pitch (the note this pipe should play)
             let target_midi_note = pipe_info.midi_note as f32;
 
+            // --- FFT Analysis of Original Sample Pitch ---
+            
             // Get Original Pitch (the recorded pitch of the .wav file)
             // We must convert it to a MIDI note number for comparison.
-            let original_midi_note = if let Some(pitch_hz) = attack_sample_info.pitch_exact_sample_pitch {
-                if pitch_hz > 0.0 {
-                    // Use exact pitch (Hz) if available
-                    // Formula: MIDI_note = 12 * log2(freq_hz / 440.0) + 69.0
-                    let pitch = 12.0 * (pitch_hz / 440.0).log2() + 69.0;
-                    log::debug!("SampleID {} has Pitch_ExactSamplePitch {} Hz, target MIDI note {:.2}.",
-                        attack_link.sample_id, pitch_hz, target_midi_note);
+            let rank_name_lower = rank.name.to_lowercase();
+            let is_noise_rank = rank_name_lower.contains("traktur") || 
+                                  rank_name_lower.contains("key") ||
+                                  rank_name_lower.contains("noise") ||
+                                  rank_name_lower.contains("action") ||
+                                  rank_name_lower.contains("stop");
 
-                    pitch
-                } else {
-                    // Invalid pitch, fallback to target_midi_note to get 0 shift
-                    log::warn!("SampleID {} has invalid Pitch_ExactSamplePitch {}. Assuming no shift.", 
-                        attack_link.sample_id, pitch_hz);
-
-                    target_midi_note
-                }
-            } else if let Some(midi_note) = attack_sample_info.pitch_normal_midi_note_number {
-                log::debug!("SampleID {} has Pitch_NormalMidiNoteNumber {}, target MIDI note {:.2}.",
-                    attack_link.sample_id, midi_note, target_midi_note);
-                // Fallback to MIDI note number if pitch in Hz is not specified
-                midi_note as f32
+            let final_original_midi_note = if is_noise_rank {
+                // For noise ranks, ASSUME NO PITCH SHIFT.
+                // The sample (e.g., "071-b.wav") is just a noise triggered by key 71.
+                // Its "pitch" is irrelevant.
+                log::debug!("Noise rank '{}': Assuming no pitch shift for pipe {}", rank.name, pipe_info.id);
+                target_midi_note // Set original = target, so shift is 0
+            
             } else {
-                // Priority 3: No pitch defined in XML. Try to infer from filename.
-                if let Some(inferred_note) = Self::try_infer_midi_note_from_filename(&attack_sample_info.path) {
-                    if (inferred_note - target_midi_note).abs() > 0.01 { // Check if it's actually different
-                        log::info!("SampleID {} has no defined pitch. Inferred original pitch {} from filename '{}' (target is {}).",
-                            attack_link.sample_id, inferred_note, attack_sample_info.path, target_midi_note);
+                // This is a TONAL rank. Proceed with full pitch detection.
+                'pitch_check: {
+                    // Get Original Pitch from Metadata (XML or filename)
+                    let metadata_original_midi_note = if let Some(pitch_hz) = attack_sample_info.pitch_exact_sample_pitch {
+                        if pitch_hz > 0.0 {
+                            12.0 * (pitch_hz / 440.0).log2() + 69.0
+                        } else {
+                            log::warn!("SampleID {} has invalid Pitch_ExactSamplePitch {}.", attack_link.sample_id, pitch_hz);
+                            target_midi_note
+                        }
+                    } else if let Some(midi_note) = attack_sample_info.pitch_normal_midi_note_number {
+                        midi_note as f32
                     } else {
-                        // Inferred note matches target, so no shift. This is the common case.
-                        log::debug!("SampleID {} has no defined pitch. Inferred pitch {} from filename, matches target {}.",
-                            attack_link.sample_id, inferred_note, target_midi_note);
+                        if let Some(inferred_note) = Self::try_infer_midi_note_from_filename(&attack_sample_info.path) {
+                            inferred_note
+                        } else {
+                            log::warn!("SampleID {} has no pitch and filename '{}' is unparsable. Assuming no shift.",
+                                attack_link.sample_id, attack_sample_info.path);
+                            target_midi_note
+                        }
+                    };
+
+                    // --- START: FFT Verification ---
+                    let original_sample_path_str = format!("OrganInstallationPackages/{:0>6}/{}", attack_sample_info.installation_package_id,attack_sample_info.path.replace('\\', "/"));
+                    let original_sample_full_path = organ.base_path.join(&original_sample_path_str);
+
+                    let file = match File::open(&original_sample_full_path) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            log::error!("Failed to open sample {} for FFT check: {}", original_sample_path_str, e);
+                            break 'pitch_check metadata_original_midi_note; // Use metadata
+                        }
+                    };
+                    let mut reader = BufReader::new(file);
+
+                    let (format, _, data_offset, data_size) = match wav_converter::parse_wav_metadata(&mut reader, &original_sample_full_path) {
+                        Ok(meta) => meta,
+                        Err(e) => {
+                            log::error!("Failed to parse sample {} for FFT check: {}", original_sample_path_str, e);
+                            break 'pitch_check metadata_original_midi_note; // Use metadata
+                        }
+                    };
+
+                    if reader.seek(SeekFrom::Start(data_offset)).is_err() {
+                        log::error!("Failed to seek to data in sample {} for FFT check", original_sample_path_str);
+                        break 'pitch_check metadata_original_midi_note; // Use metadata
                     }
-                    inferred_note // Use the inferred note
-                } else {
-                    // Priority 4: Filename parsing failed, fallback to original behavior (no shift)
-                    log::warn!("SampleID {} has no defined pitch and filename '{}' could not be parsed. Assuming pitch matches target {}.",
-                        attack_link.sample_id, attack_sample_info.path, target_midi_note);
-                    target_midi_note // Fallback
-                }
-            };
 
-            // Calculate the coarse pitch shift in cents
+                    let input_waves = match wav_converter::read_f32_waves(reader, format, data_size) {
+                        Ok(waves) => waves,
+                        Err(e) => {
+                            log::error!("Failed to read wave data from {} for FFT check: {}", original_sample_path_str, e);
+                            break 'pitch_check metadata_original_midi_note; // Use metadata
+                        }
+                    };
+
+                    if input_waves.is_empty() || input_waves[0].is_empty() {
+                        log::warn!("Sample {} is silent or empty, skipping FFT check.", original_sample_path_str);
+                        break 'pitch_check metadata_original_midi_note; // Use metadata
+                    }
+
+                    if let Some(detected_hz) = wav_converter::find_dominant_frequency(&input_waves[0], format.sample_rate) {
+                        let detected_midi_note = 12.0 * (detected_hz / 440.0).log2() + 69.0;
+                        
+                        // We assume the metadata is *at least* in the right ballpark.
+                        // The FFT might be off by one or more octaves (12 semitones).
+                        // Let's adjust the detected note to be as close as possible to the metadata note.
+                        let diff = metadata_original_midi_note - detected_midi_note;
+                        // Round diff to nearest 12-semitone (octave) multiple
+                        let octave_shift = (diff / 12.0).round() * 12.0;
+                        let octave_corrected_detected_note = detected_midi_note + octave_shift;
+
+                        let diff_cents = (octave_corrected_detected_note - metadata_original_midi_note).abs() * 100.0;
+
+                        // Is the octave-corrected detected pitch *still* off by more than 50 cents?
+                        if diff_cents > 10.0 && diff_cents < 150.0 {
+                            // YES. This is a real mismatch (e.g., C vs C#). Trust the FFT.
+                            log::warn!(
+                                "PITCH MISMATCH: Sample {} (Pipe {}). Metadata implies note {:.2}. FFT (octave-corrected) detects {:.2}. USING FFT.",
+                                attack_sample_info.path,
+                                pipe_info.id,
+                                metadata_original_midi_note,
+                                octave_corrected_detected_note
+                            );
+                            break 'pitch_check octave_corrected_detected_note; // Override with *octave-corrected* FFT result
+                        } else {
+                            // NO. Metadata and FFT (octave-corrected) agree. Trust metadata.
+                            // This prevents FFT harmonic-locking from causing any shift.
+                            break 'pitch_check metadata_original_midi_note; 
+                        }
+                    } else {
+                        log::warn!("FFT analysis failed for sample {}. Using metadata pitch.", original_sample_path_str);
+                        break 'pitch_check metadata_original_midi_note; // Use metadata
+                    }
+                    // --- END: FFT Verification ---
+                } // end 'pitch_check block
+            }; // end 'else' (tonal rank)
+
             // This is the difference between where it *should* play and where it *was* recorded.
-            let final_pitch_tuning_cents = (target_midi_note - original_midi_note) * 100.0;
-
+            let final_pitch_tuning_cents = (target_midi_note - final_original_midi_note) * 100.0;
 
             // Process Attack Sample
             let attack_path_str = format!("OrganInstallationPackages/{:0>6}/{}", attack_sample_info.installation_package_id,attack_sample_info.path.replace('\\', "/"));
@@ -480,7 +554,7 @@ impl Organ {
 
             if final_pitch_tuning_cents != 0.0 {
                 log::debug!("Pipe (LayerID {}) attack sample '{}' retuned by {:.2} cents (Target MIDI: {}, Original MIDI: {}). File: {}",
-                    layer.id, attack_sample_info.path, final_pitch_tuning_cents, target_midi_note, original_midi_note, attack_sample_path_relative.display());
+                    layer.id, attack_sample_info.path, final_pitch_tuning_cents, target_midi_note, final_original_midi_note, attack_sample_path_relative.display());
             }
 
             let attack_sample_path = organ.base_path.join(attack_sample_path_relative);
