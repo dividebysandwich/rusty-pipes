@@ -10,9 +10,11 @@ Rusty Pipes is a digital organ instrument compatible with GrandOrgue sample sets
 
 ## Features
 
+* GrandOrgue Sample Set support
+* Hauptwerk Sample Set support (Experimental)
 * Streaming-based sample playback
-* Extremely low memory requirements
-* Works with very large sample sets regardless of installed system RAM
+* RAM based sample playback (optional)
+* Extremely low memory requirements (in streaming mode)
 * Polyphony limited only by CPU power
 * MIDI controlled
 * On-the-fly configurable MIDI channel mapping
@@ -79,7 +81,7 @@ Options:
 
 ### Control via MIDI input
 
-```rusty_pipes /path/to/name.organ```
+```rusty-pipes /path/to/name.organ```
 
 ### Select MIDI device via command line parameter
 
@@ -108,7 +110,19 @@ Starting audio engine...
 
 ### Play MIDI file
 
-```rusty_pipes /path/to/name.organ /path/to/file.mid```
+```rusty-pipes /path/to/name.organ /path/to/file.mid```
+
+### Loading Hauptwerk organs
+
+> [!NOTE]
+> Hauptwerk support is experimental and known to still have pitch issues with some sample sets
+
+This example loads the Hauptwerk sample set "GreenPositiv", using convolutional reverb at a 70% wet, 30% dry mix, and using an impulse response file from [Lars Virtual Pipe Organ Site](https://familjenpalo.se/vpo/ir-recordings/)
+
+```rusty-pipes --ir-file BureaChurchRev1at24-48.wav --reverb-mix 0.7 /home/user/Hauptwerk/Organs/GreenPositiv/OrganDefinitions/GreenPositiv.Organ_Hauptwerk_xml```
+
+> [!NOTE]
+> Some Hauptwerk organs are mixed completely dry on purpose and may require the use of the convolutional reverb setting to be used.
 
 ## User Interface
 
