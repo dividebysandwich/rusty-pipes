@@ -64,7 +64,6 @@ pub struct ReleaseSample {
 // They mirror the Hauptwerk XML file structure.
 
 fn default_string() -> String { "".to_string() }
-fn default_f32() -> f32 { 0.0 }
 fn default_i64() -> i64 { -1 } // -1 for default release
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -195,15 +194,11 @@ struct XmlPipe {
 // From ObjectType="Pipe_SoundEngine01_Layer"
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlLayer {
+    //#[serde(rename = "Pipe_SoundEngine01_LayerID")]
     #[serde(rename = "LayerID")]
     id: String,
     #[serde(rename = "PipeID")]
     pipe_id: String,
-    // midi_note field removed from here
-    #[serde(rename = "AudioEngine_GainDb", default = "default_f32")]
-    gain_db: f32,
-    #[serde(rename = "AudioEngine_PitchTuningCents", default = "default_f32")]
-    pitch_tuning_cents: f32,
 }
 
 // From ObjectType="Sample"
@@ -215,6 +210,8 @@ struct XmlSample {
     path: String,
     #[serde(rename = "InstallationPackageID", default = "default_string")]
     installation_package_id: String,
+    pitch_exact_sample_pitch: Option<f32>,
+    pitch_normal_midi_note_number: Option<u8>,
 }
 
 // From ObjectType="Pipe_SoundEngine01_AttackSample"
@@ -256,7 +253,7 @@ impl Organ {
     }
 
     /// Loads and parses a Hauptwerk (.Organ_Hauptwerk_xml) file.
-    fn load_hauptwerk(path: &Path, convert_to_16_bit: bool, pre_cache: bool, original_tuning: bool) -> Result<Self> {
+    fn load_hauptwerk(path: &Path, convert_to_16_bit: bool, pre_cache: bool, _original_tuning: bool) -> Result<Self> {
         println!("Loading Hauptwerk organ from: {:?}", path);
         
         let organ_root_path = path.parent()
@@ -287,7 +284,7 @@ impl Organ {
         // Extract and organize XML objects
         let mut xml_stops = Vec::new();
         let mut xml_ranks = Vec::new();
-        let mut xml_pipes = Vec::new(); 
+        let mut xml_pipes = Vec::new();    
         let mut xml_layers = Vec::new();
         let mut xml_attack_samples = Vec::new();
         let mut xml_release_samples = Vec::new();
@@ -350,7 +347,7 @@ impl Organ {
         // Create lookup maps for quick assembly
         let pipe_map: HashMap<String, &XmlPipe> = xml_pipes.iter().map(|p| (p.id.clone(), p)).collect();
         
-        // Map SampleID -> Sample (for filename)
+        // Map SampleID -> Sample (for filename and pitch)
         let sample_map: HashMap<String, &XmlSample> = xml_samples.iter()
             .filter(|s| !s.path.is_empty()) // Only map samples that have a path
             .map(|s| (s.id.clone(), s))
@@ -358,7 +355,6 @@ impl Organ {
 
         
         // Map LayerID -> AttackSample (for SampleID)
-        // We can just use collect() since it's a 1-to-1 mapping
         let attack_map: HashMap<String, &XmlAttackSample> = xml_attack_samples.iter()
             .map(|a| (a.layer_id.clone(), a))
             .collect();
@@ -383,7 +379,7 @@ impl Organ {
 
             // Find the rank this pipe belongs to
             let Some(rank) = ranks_map.get_mut(&pipe_info.rank_id) else {
-                println!("Pipe {} references non-existent RankID {}", pipe_info.id, pipe_info.rank_id);
+                log::debug!("Pipe {} references non-existent RankID {}", pipe_info.id, pipe_info.rank_id);
                 continue;
             };
 
@@ -398,24 +394,60 @@ impl Organ {
                 log::warn!("Layer {} references non-existent SampleID {}", layer.id, attack_link.sample_id);
                 continue;
             };
-           
-            let mut pitch_tuning_cents = layer.pitch_tuning_cents;
-            if original_tuning && pitch_tuning_cents.abs() <= 20.0 {
-                pitch_tuning_cents = 0.0;
-            }
+            
+            // Get Target Pitch (the note this pipe should play)
+            let target_midi_note = pipe_info.midi_note as f32;
+
+            // Get Original Pitch (the recorded pitch of the .wav file)
+            // We must convert it to a MIDI note number for comparison.
+            let original_midi_note = if let Some(pitch_hz) = attack_sample_info.pitch_exact_sample_pitch {
+                if pitch_hz > 0.0 {
+                    // Use exact pitch (Hz) if available
+                    // Formula: MIDI_note = 12 * log2(freq_hz / 440.0) + 69.0
+                    let pitch = 12.0 * (pitch_hz / 440.0).log2() + 69.0;
+                    log::debug!("SampleID {} has Pitch_ExactSamplePitch {} Hz, target MIDI note {:.2}.",
+                        attack_link.sample_id, pitch_hz, target_midi_note);
+
+                    pitch
+                } else {
+                    // Invalid pitch, fallback to target_midi_note to get 0 shift
+                    log::warn!("SampleID {} has invalid Pitch_ExactSamplePitch {}. Assuming no shift.", 
+                        attack_link.sample_id, pitch_hz);
+
+                    target_midi_note
+                }
+            } else if let Some(midi_note) = attack_sample_info.pitch_normal_midi_note_number {
+                // Fallback to MIDI note number if pitch in Hz is not specified
+                midi_note as f32
+            } else {
+                // If no pitch is defined in the sample, we must assume its
+                // original pitch matches the target pipe's pitch.
+                target_midi_note
+            };
+
+            // Calculate the coarse pitch shift in cents
+            // This is the difference between where it *should* play and where it *was* recorded.
+            let final_pitch_tuning_cents = (target_midi_note - original_midi_note) * 100.0;
+
 
             // Process Attack Sample
             let attack_path_str = format!("OrganInstallationPackages/{:0>6}/{}", attack_sample_info.installation_package_id,attack_sample_info.path.replace('\\', "/"));
             let mut attack_sample_path_relative = PathBuf::from(&attack_path_str);
             
-            if convert_to_16_bit || pitch_tuning_cents != 0.0 {
+            if convert_to_16_bit || final_pitch_tuning_cents != 0.0 {
                 attack_sample_path_relative = wav_converter::process_sample_file(
                     &attack_sample_path_relative,
                     &organ.base_path,
-                    pitch_tuning_cents,
+                    final_pitch_tuning_cents,
                     convert_to_16_bit,
                 )?;
             }
+
+            if final_pitch_tuning_cents != 0.0 {
+                log::debug!("Pipe (LayerID {}) attack sample '{}' retuned by {:.2} cents (Target MIDI: {}, Original MIDI: {}). File: {}",
+                    layer.id, attack_sample_info.path, final_pitch_tuning_cents, target_midi_note, original_midi_note, attack_sample_path_relative.display());
+            }
+
             let attack_sample_path = organ.base_path.join(attack_sample_path_relative);
 
             // Pre-cache Attack (if enabled)
@@ -426,7 +458,7 @@ impl Organ {
                             audio_cache.insert(attack_sample_path.clone(), Arc::new(samples));
                             organ.metadata_cache.as_mut().unwrap().insert(attack_sample_path.clone(), Arc::new(metadata));
                         }
-                        Err(e) => println!("[ERROR] [Cache] Failed to load sample {:?}: {}", attack_sample_path, e),
+                        Err(e) => eprintln!("[ERROR] [Cache] Failed to load sample {:?}: {}", attack_sample_path, e),
                     }
                 }
             }
@@ -445,11 +477,11 @@ impl Organ {
 
                     let mut rel_path_relative = PathBuf::from(&rel_path_str);
 
-                    if convert_to_16_bit || pitch_tuning_cents != 0.0 {
+                    if convert_to_16_bit || final_pitch_tuning_cents != 0.0 {
                         rel_path_relative = wav_converter::process_sample_file(
                             &rel_path_relative,
                             &organ.base_path,
-                            pitch_tuning_cents,
+                            final_pitch_tuning_cents,
                             convert_to_16_bit,
                         )?;
                     }
@@ -463,7 +495,7 @@ impl Organ {
                                     audio_cache.insert(rel_path.clone(), Arc::new(samples));
                                     organ.metadata_cache.as_mut().unwrap().insert(rel_path.clone(), Arc::new(metadata));
                                 }
-                                Err(e) => println!("[ERROR] [Cache] Failed to load sample {:?}: {}", rel_path, e),
+                                Err(e) => eprintln!("[ERROR] [Cache] Failed to load sample {:?}: {}", rel_path, e),
                             }
                         }
                     }
@@ -480,7 +512,7 @@ impl Organ {
             // Create and insert Pipe into its Rank
             let final_pipe = Pipe {
                 attack_sample_path,
-                gain_db: layer.gain_db,
+                gain_db: 0.0,
                 pitch_tuning_cents: 0.0,
                 releases,
             };
@@ -499,6 +531,10 @@ impl Organ {
         // Update pipe counts in ranks
         for rank in ranks_map.values_mut() {
             rank.pipe_count = rank.pipes.len();
+            // Optionally find the first MIDI note
+            if let Some(first_key) = rank.pipes.keys().next() {
+                rank.first_midi_note = *first_key;
+            }
         }
 
         // Build Stops Vec
@@ -562,7 +598,7 @@ impl Organ {
         log::debug!("Final maps: {} stops, {} ranks.", organ.stops.len(), organ.ranks.len());
         Ok(organ)
     }
-
+    
     /// Loads and parses a GrandOrgue (.organ) file.
     fn load_grandorgue(path: &Path, convert_to_16_bit: bool, pre_cache: bool, original_tuning: bool) -> Result<Self> {
         println!("Loading GrandOrgue organ from: {:?}", path);
