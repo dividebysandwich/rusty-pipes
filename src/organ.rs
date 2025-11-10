@@ -440,8 +440,9 @@ impl Organ {
                         log::warn!("Release for Layer {} references non-existent SampleID {}", layer.id, release_link.sample_id);
                         continue;
                     };
-                    
-                    let rel_path_str = release_sample_info.path.replace('\\', "/");
+
+                    let rel_path_str = format!("OrganInstallationPackages/{:0>6}/{}", release_sample_info.installation_package_id, release_sample_info.path.replace('\\', "/"));
+
                     let mut rel_path_relative = PathBuf::from(&rel_path_str);
 
                     if convert_to_16_bit || pitch_tuning_cents != 0.0 {
