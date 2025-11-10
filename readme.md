@@ -96,7 +96,7 @@ Available MIDI Input Devices:
 
 $ rusty-pipes --midi-device "LUMI Keys Block 80FR:LUMI Keys Block 80FR Bluetooth 129:0" Organs/Friesach/Friesach.organ
 Loading organ definition...
-Loading organ from: "/home/toumal/Documents/Organs/Friesach/Friesach.organ"
+Loading organ from: "/home/user/Organs/Friesach/Friesach.organ"
 Found 335 sections in INI.
 Parsing complete. Stops found: 158. Stops filtered (noise/empty): 114. Stops added: 44.
 Successfully loaded organ: Friesach
