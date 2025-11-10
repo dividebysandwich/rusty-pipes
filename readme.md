@@ -2,7 +2,7 @@
 
 # Rusty Pipes
 
-Rusty Pipes is a digital organ instrument compatible with GrandOrgue sample sets. It features a text-based user interface, can be controlled via MIDI and play back MIDI files. Unlike GrandOrgue, Rusty Pipes streams samples from disk and does not load them into RAM, unless you want it to..
+Rusty Pipes is a digital organ instrument compatible with GrandOrgue sample sets. It features a text-based user interface, can be controlled via MIDI and play back MIDI files. Rusty Pipes can stream samples from disk instead of load them into RAM, though a RAM precache mode similar to GrandOrgue and Hauptwerk is available too.
 
 [![Watch the video](https://img.youtube.com/vi/Ewm-s5aoeLc/0.jpg)](https://www.youtube.com/watch?v=Ewm-s5aoeLc)
 
@@ -42,7 +42,7 @@ Note: RustyPipes will create pitch-corrected samples of all pipes that have a pi
 Usage: rusty-pipes [OPTIONS] <ORGAN_DEFINITION> [MIDI_FILE]
 
 Arguments:
-  <ORGAN_DEFINITION>  Path to the pipe organ definition file (e.g., organs/friesach/friesach.organ)
+  <ORGAN_DEFINITION>  Path to organ definition file (e.g., friesach/friesach.organ or friesach/OrganDefinitions/Friesach.Organ_Hauptwerk_xml)
   [MIDI_FILE]         Optional path to a MIDI file to play
 
 Options:
@@ -134,6 +134,16 @@ There's plenty of places where you can find sample sets for GrandOrgue. Some are
 * [Lars Virtual Pipe Organ Site](https://familjenpalo.se/vpo/)
 
 * [Piotr Grabowsky](https://piotrgrabowski.pl/)
+
+## Where to get convolution reverb impulse response files
+
+IR files are just .wav files that tell the system how a room reacts to a single, discrete impulse.
+
+* [Lars Virtual Pipe Organ Site](https://familjenpalo.se/vpo/ir-recordings/) has a few recordings. Be sure to take the 24 bit 48kHz mono ones.
+
+* Go to a concert hall or church and pop a balloon or do a single loud clap.
+
+Please be reasonable and ask for permission before popping balloons in churches.
 
 ## Compiling
 
