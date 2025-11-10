@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use serde::Deserialize;
 use quick_xml::de::from_str;
+use itertools::Itertools;
 
 use crate::wav_converter;
 use crate::wav_converter::SampleMetadata;
@@ -252,6 +253,22 @@ impl Organ {
         }
     }
 
+    fn try_infer_midi_note_from_filename(path_str: &str) -> Option<f32> {
+        let path = Path::new(path_str);
+        
+        // Get the filename stem, e.g., "052-e" from "052-e.wav"
+        let stem = path.file_stem().and_then(|s| s.to_str())?;
+        
+        // Take the part before a potential '-', e.g., "052" from "052-e"
+        let note_str = stem.split('-').next()?;
+        
+        // Try to parse just that part as a number
+        match note_str.parse::<u8>() {
+            Ok(midi_note) => Some(midi_note as f32),
+            Err(_) => None // Failed to parse
+        }
+    }
+
     /// Loads and parses a Hauptwerk (.Organ_Hauptwerk_xml) file.
     fn load_hauptwerk(path: &Path, convert_to_16_bit: bool, pre_cache: bool, _original_tuning: bool) -> Result<Self> {
         println!("Loading Hauptwerk organ from: {:?}", path);
@@ -422,9 +439,23 @@ impl Organ {
                 // Fallback to MIDI note number if pitch in Hz is not specified
                 midi_note as f32
             } else {
-                // If no pitch is defined in the sample, we must assume its
-                // original pitch matches the target pipe's pitch.
-                target_midi_note
+                // Priority 3: No pitch defined in XML. Try to infer from filename.
+                if let Some(inferred_note) = Self::try_infer_midi_note_from_filename(&attack_sample_info.path) {
+                    if (inferred_note - target_midi_note).abs() > 0.01 { // Check if it's actually different
+                        log::info!("SampleID {} has no defined pitch. Inferred original pitch {} from filename '{}' (target is {}).",
+                            attack_link.sample_id, inferred_note, attack_sample_info.path, target_midi_note);
+                    } else {
+                        // Inferred note matches target, so no shift. This is the common case.
+                        log::debug!("SampleID {} has no defined pitch. Inferred pitch {} from filename, matches target {}.",
+                            attack_link.sample_id, inferred_note, target_midi_note);
+                    }
+                    inferred_note // Use the inferred note
+                } else {
+                    // Priority 4: Filename parsing failed, fallback to original behavior (no shift)
+                    log::warn!("SampleID {} has no defined pitch and filename '{}' could not be parsed. Assuming pitch matches target {}.",
+                        attack_link.sample_id, attack_sample_info.path, target_midi_note);
+                    target_midi_note // Fallback
+                }
             };
 
             // Calculate the coarse pitch shift in cents
@@ -436,6 +467,8 @@ impl Organ {
             let attack_path_str = format!("OrganInstallationPackages/{:0>6}/{}", attack_sample_info.installation_package_id,attack_sample_info.path.replace('\\', "/"));
             let mut attack_sample_path_relative = PathBuf::from(&attack_path_str);
             
+            log::debug!("Processing LayerID {}: midi note {}, Attack sample path '{}'", layer.id, target_midi_note, attack_sample_path_relative.display());
+
             if convert_to_16_bit || final_pitch_tuning_cents != 0.0 {
                 attack_sample_path_relative = wav_converter::process_sample_file(
                     &attack_sample_path_relative,
@@ -564,7 +597,16 @@ impl Organ {
                 if let Some(rank) = ranks_map.get(rid) {
                     if !rank.pipes.is_empty() {
                         log::debug!("-> Rank {} (Name: {}) has {} pipes. OK.", rid, rank.name, rank.pipes.len());
+                        // List pipes and their samples for debugging, ordered by midi_note
+                        for (midi_note, pipe) in rank.pipes.iter().sorted_by_key(|(k, _)| *k) {
+                            log::debug!("   - MIDI Note {}: Attack Sample: {}", midi_note, pipe.attack_sample_path.display());
+                            for release in &pipe.releases {
+                                log::debug!("       - Release Sample: {} (Max Key Press Time: {} ms)", release.path.display(), release.max_key_press_time_ms);
+                            }
+                        }
+
                         true
+                        
                     } else {
                         log::debug!("-> Rank {} (Name: {}) has 0 pipes.", rid, rank.name);
                         false
