@@ -417,6 +417,8 @@ impl Organ {
                     target_midi_note
                 }
             } else if let Some(midi_note) = attack_sample_info.pitch_normal_midi_note_number {
+                log::debug!("SampleID {} has Pitch_NormalMidiNoteNumber {}, target MIDI note {:.2}.",
+                    attack_link.sample_id, midi_note, target_midi_note);
                 // Fallback to MIDI note number if pitch in Hz is not specified
                 midi_note as f32
             } else {
