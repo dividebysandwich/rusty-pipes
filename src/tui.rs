@@ -1,3 +1,4 @@
+
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -10,23 +11,18 @@ use ratatui::{
     widgets::{Block, Borders, canvas::{Canvas, Line as CanvasLine}, List, ListItem, ListState, Paragraph},
 };
 use std::{
-    fs::File,
-    io::{stdout, BufReader, BufWriter, Stdout},
+    io::{stdout, Stdout},
     path::PathBuf,
     sync::{mpsc::{Sender, Receiver}, Arc},
     time::{Duration, Instant},
-    collections::{BTreeSet, HashMap, VecDeque},
 };
 
-use midir::{MidiInput, MidiInputPort, MidiInputConnection, Ignore};
-use crate::midi;
-use crate::{app::{AppMessage, TuiMessage}, organ::Organ};
+use midir::MidiInputConnection;
+use crate::app::{AppMessage, TuiMessage};
+use crate::organ::Organ;
+// Import the new shared state and connection function
+use crate::app_state::{AppState, connect_to_midi};
 
-const PRESET_FILE_PATH: &str = "rusty-pipes.presets.json";
-type PresetBank = [Option<HashMap<usize, BTreeSet<u8>>>; 12];
-type PresetConfig = HashMap<String, PresetBank>;
-
-const MIDI_LOG_CAPACITY: usize = 10; // Max log lines
 const NUM_COLUMNS: usize = 3; // Number of columns for the stop list
 
 enum AppMode {
@@ -34,139 +30,65 @@ enum AppMode {
     MainApp,
 }
 
-/// Loads the MIDI channel mapping preset bank for the specified organ from the JSON file.
-fn load_presets(organ_name: &str) -> PresetBank {
-    File::open(PRESET_FILE_PATH)
-        .map_err(anyhow::Error::from) // Convert std::io::Error
-        .and_then(|file| {
-            // Read the entire config map
-            serde_json::from_reader(BufReader::new(file)).map_err(anyhow::Error::from)
-        })
-        .ok() // Convert Result to Option
-        .and_then(|config: PresetConfig| {
-            // Find the presets for this organ
-            config.get(organ_name).cloned()
-        })
-        .unwrap_or_else(Default::default) // Return an empty bank [None; 12] if not found
-}
-
-/// Creates a MIDI connection using the specified input and port.
-/// This function consumes the `MidiInput` to create the connection.
-fn connect_to_midi(
-    midi_input: MidiInput, // Takes ownership
-    port: &MidiInputPort,
-    port_name: &str,
-    tui_tx: &Sender<TuiMessage>,
-) -> Result<MidiInputConnection<()>> {
-    let tui_tx_clone = tui_tx.clone();
-    let conn = midi_input.connect(
-        port, 
-        port_name, 
-        move |_timestamp, message, _| {
-            midi::midi_callback(message, &tui_tx_clone);
-        }, 
-        ()
-    ).map_err(|e| anyhow::anyhow!("Failed to connect to MIDI device {}: {}", port_name, e))?;
-    
-    Ok(conn)
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct PlayedNote {
-    note: u8,
-    start_time: Instant,
-    end_time: Option<Instant>, // None if still playing
-}
-
-/// Holds the state for the TUI.
+/// Holds the state specific to the TUI.
 struct TuiState {
     mode: AppMode,
-    organ: Arc<Organ>,
-    list_state: ListState,
-    midi_input: Option<MidiInput>,
-    available_ports: Vec<(MidiInputPort, String)>, 
-    port_list_state: ListState,
-    /// Maps stop_index -> set of active MIDI channels (0-9)
-    stop_channels: HashMap<usize, BTreeSet<u8>>,
-    midi_log: VecDeque<String>,
-    error_msg: Option<String>,
+    shared_state: AppState, // The shared logic is now encapsulated here
+    list_state: ListState, // TUI-specific selection state
+    port_list_state: ListState, // TUI-specific selection state
     items_per_column: usize,
     stops_count: usize,
-    // Currently active notes, mapping midi note -> PlayedNote instance
-    currently_playing_notes: HashMap<u8, PlayedNote>,    
-    // Notes that have finished playing, but are still within the display window
-    finished_notes_display: VecDeque<PlayedNote>,
-    // Time parameters for the scrolling window
-    piano_roll_display_duration: Duration,
-    /// Maps MIDI Channel (0-15) -> Set of active notes (0-127)
-    channel_active_notes: HashMap<u8, BTreeSet<u8>>,
-    /// MIDI channel assignment presets
-    presets: PresetBank,
 }
 
 impl TuiState {
-    fn new(organ: Arc<Organ>, presets: PresetBank, is_file_playback: bool) -> Result<Self> {
-        let mut midi_in = MidiInput::new("rusty-pipes-input")?;
-        midi_in.ignore(Ignore::ActiveSense);
-        let mut available_ports = Vec::new();
-        for port in midi_in.ports() {
-            let port_name = midi_in.port_name(&port)?;
-            available_ports.push((port, port_name));
-        }
-        
+    fn new(organ: Arc<Organ>, is_file_playback: bool) -> Result<Self> {
+        let shared_state = AppState::new(organ, is_file_playback)?;
+
         let mut port_list_state = ListState::default();
-        if !available_ports.is_empty() {
+        if !shared_state.available_ports.is_empty() {
             port_list_state.select(Some(0));
         }
 
-        // --- Determine start mode ---
         let mode = if is_file_playback {
             AppMode::MainApp
         } else {
             AppMode::MidiSelection
         };
-        // ---
 
         let mut list_state = ListState::default();
-        list_state.select(Some(0)); // Select the first item
-        let stops_count = organ.stops.len();
+        let stops_count = shared_state.organ.stops.len();
+        if stops_count > 0 {
+            list_state.select(Some(0)); // Select the first item
+        }
         let items_per_column = (stops_count + NUM_COLUMNS - 1) / NUM_COLUMNS;
-        
+
         Ok(Self {
             mode,
-            midi_input: Some(midi_in),
-            available_ports,
-            port_list_state,
-            organ,
+            shared_state,
             list_state,
-            stop_channels: HashMap::new(),
-            midi_log: VecDeque::with_capacity(MIDI_LOG_CAPACITY),
-            error_msg: None,
+            port_list_state,
             items_per_column,
             stops_count,
-            currently_playing_notes: HashMap::new(),
-            finished_notes_display: VecDeque::new(),
-            piano_roll_display_duration: Duration::from_secs(1), // Show 1 second of history
-            channel_active_notes: HashMap::new(),
-            presets,
         })
     }
     
+    // --- TUI-specific navigation ---
+
     fn next_midi_port(&mut self) {
-        if self.available_ports.is_empty() { return; }
+        if self.shared_state.available_ports.is_empty() { return; }
         let i = match self.port_list_state.selected() {
-            Some(i) => (i + 1) % self.available_ports.len(),
+            Some(i) => (i + 1) % self.shared_state.available_ports.len(),
             None => 0,
         };
         self.port_list_state.select(Some(i));
     }
 
     fn prev_midi_port(&mut self) {
-        if self.available_ports.is_empty() { return; }
+        if self.shared_state.available_ports.is_empty() { return; }
         let i = match self.port_list_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.available_ports.len() - 1
+                    self.shared_state.available_ports.len() - 1
                 } else {
                     i - 1
                 }
@@ -175,21 +97,22 @@ impl TuiState {
         };
         self.port_list_state.select(Some(i));
     }
-    // ---
 
     fn next_item(&mut self) {
+        if self.stops_count == 0 { return; }
         let i = match self.list_state.selected() {
-            Some(i) => (i + 1) % self.organ.stops.len(),
+            Some(i) => (i + 1) % self.stops_count,
             None => 0,
         };
         self.list_state.select(Some(i));
     }
 
     fn prev_item(&mut self) {
+        if self.stops_count == 0 { return; }
         let i = match self.list_state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.organ.stops.len() - 1
+                    self.stops_count - 1
                 } else {
                     i - 1
                 }
@@ -199,6 +122,7 @@ impl TuiState {
         self.list_state.select(Some(i));
     }
     fn next_col(&mut self) {
+        if self.stops_count == 0 { return; }
         let i = match self.list_state.selected() {
             Some(i) => (i + self.items_per_column).min(self.stops_count - 1),
             None => 0,
@@ -213,27 +137,13 @@ impl TuiState {
         };
         self.list_state.select(Some(i));
     }
+    
+    // --- Logic functions now delegate to shared_state ---
 
     /// Toggles a specific channel (0-9) for the currently selected stop.
     fn toggle_stop_channel(&mut self, channel: u8, audio_tx: &Sender<AppMessage>) -> Result<()> {
         if let Some(selected_index) = self.list_state.selected() {
-            let stop_set = self.stop_channels.entry(selected_index).or_default();
-            
-            if stop_set.contains(&channel) {
-                stop_set.remove(&channel);
-                
-                // --- Send NoteOff for all active notes on this channel for this stop ---
-                if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
-                    if let Some(stop) = self.organ.stops.get(selected_index) {
-                        let stop_name = stop.name.clone();
-                        for &note in notes_to_stop {
-                            audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
-                        }
-                    }
-                }
-            } else {
-                stop_set.insert(channel);
-            };
+            self.shared_state.toggle_stop_channel(selected_index, channel, audio_tx)?;
         }
         Ok(())
     }
@@ -241,181 +151,16 @@ impl TuiState {
     /// Activates all channels (0-9) for the selected stop.
     fn select_all_channels_for_stop(&mut self) {
         if let Some(selected_index) = self.list_state.selected() {
-            let stop_set = self.stop_channels.entry(selected_index).or_default();
-            for channel in 0..10 { // Channels 0-9
-                stop_set.insert(channel);
-            }
+            self.shared_state.select_all_channels_for_stop(selected_index);
         }
     }
 
     /// Deactivates all channels (0-9) for the selected stop.
     fn select_none_channels_for_stop(&mut self, audio_tx: &Sender<AppMessage>) -> Result<()> {
         if let Some(selected_index) = self.list_state.selected() {
-            if let Some(stop_set) = self.stop_channels.get_mut(&selected_index) {
-                // Collect channels to deactivate
-                let channels_to_deactivate: Vec<u8> = stop_set.iter().copied()
-                    .filter(|&c| c < 10)
-                    .collect();
-
-                if !channels_to_deactivate.is_empty() {
-                    if let Some(stop) = self.organ.stops.get(selected_index) {
-                        let stop_name = stop.name.clone();
-                        for channel in channels_to_deactivate {
-                            // --- Send NoteOff for all active notes on this channel for this stop ---
-                            if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
-                                for &note in notes_to_stop {
-                                    audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
-                                }
-                            }
-                            // Now remove it from the state
-                            stop_set.remove(&channel);
-                        }
-                    } else {
-                        // Fallback (shouldn't happen)
-                        for channel in channels_to_deactivate {
-                            stop_set.remove(&channel);
-                        }
-                    }
-                }
-            }
+            self.shared_state.select_none_channels_for_stop(selected_index, audio_tx)?;
         }
         Ok(())
-    }
-
-    fn add_midi_log(&mut self, msg: String) {
-        if self.midi_log.len() == MIDI_LOG_CAPACITY {
-            self.midi_log.pop_front();
-        }
-        self.midi_log.push_back(msg);
-    }
-
-    fn handle_tui_note_on(&mut self, note: u8, start_time: Instant) {
-        let played_note = PlayedNote {
-            note,
-            start_time,
-            end_time: None,
-        };
-        self.currently_playing_notes.insert(note, played_note);
-    }
-
-    fn handle_tui_note_off(&mut self, note: u8, end_time: Instant) {
-        if let Some(mut played_note) = self.currently_playing_notes.remove(&note) {
-            played_note.end_time = Some(end_time);
-            self.finished_notes_display.push_back(played_note);
-        }
-    }
-
-    fn handle_tui_all_notes_off(&mut self) {
-        let now = Instant::now();
-        for (_, mut played_note) in self.currently_playing_notes.drain() {
-            played_note.end_time = Some(now);
-            self.finished_notes_display.push_back(played_note);
-        }
-    }
-
-    /// Saves the current `stop_channels` and their mapped midi channel number to a preset slot.
-    fn save_preset(&mut self, slot: usize) {
-        if slot >= 12 { return; }
-        self.presets[slot] = Some(self.stop_channels.clone());
-
-        self.add_midi_log(format!("Preset slot F{} saved", slot + 1));
-        
-        // After saving in memory, write the change to disk.
-        if let Err(e) = self.save_all_presets_to_file() {
-            self.add_midi_log(format!("ERROR saving presets: {}", e));
-        }
-    }
-
-    /// Recalls a preset from a slot into `stop_channels` along with the midi channel mapping.
-    fn recall_preset(&mut self, slot: usize, audio_tx: &Sender<AppMessage>) -> Result<()> {
-        if slot >= 12 { return Ok(()); }
-        if let Some(preset) = &self.presets[slot] {
-            let is_valid = preset.keys().all(|&stop_index| stop_index < self.organ.stops.len());
-            if is_valid {
-                // First, update all stops to the preset
-                self.stop_channels = preset.clone();
-
-                // Iterate through all stops
-                for stop in self.organ.stops.iter() {
-                    let stop_name = stop.name.clone();
-                    // Send NoteOff for all active notes on this stop
-                    for notes in self.channel_active_notes.values() {
-                        for &note in notes {
-                            audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
-                        }
-                    }
-                }
-
-                // Then, for each stop, send NoteOff for channels that are being deactivated
-                for stop in self.organ.stops.iter() {
-                    for channel in 0..10 {
-                        let active_notes_on_channel = self.channel_active_notes.get(&channel);
-                        // Get active channels for this stop in the recalled preset
-                        let active_channels = preset.get(&stop.id_str.parse::<usize>()?).cloned().unwrap_or_default();
-                        if !active_channels.contains(&channel) {
-                            // Send NoteOff for all active notes on this channel for this stop
-                            if let Some(notes_to_stop) = active_notes_on_channel {
-                                let stop_name = stop.name.clone();
-                                for &note in notes_to_stop {
-                                    audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
-                                }
-                            }
-                        }
-                    }
-                }
-                log::info!("Recalled preset from slot F{}", slot + 1);
-            } else {
-                // This can happen if the organ definition file changed
-                log::warn!(
-                    "Failed to recall preset F{}: stop count mismatch (preset has {}, organ has {})",
-                    slot + 1, preset.len(), self.stop_channels.len()
-                );
-            }
-        } else {
-            log::warn!("No preset found in slot F{}", slot + 1);
-        }
-        Ok(())
-    }
-
-    /// Saves the entire configuration map back to the JSON file.
-    fn save_all_presets_to_file(&self) -> Result<()> {
-        // 1. Load the entire config file (all organs)
-        let mut config: PresetConfig = File::open(PRESET_FILE_PATH)
-            .map_err(anyhow::Error::from)
-            .and_then(|file| serde_json::from_reader(BufReader::new(file)).map_err(anyhow::Error::from))
-            .unwrap_or_default(); // Create a new map if it doesn't exist
-
-        // 2. Update or insert the preset bank for the current organ
-        config.insert(self.organ.name.clone(), self.presets.clone());
-
-        // 3. Write the entire config file back to disk
-        let file = File::create(PRESET_FILE_PATH)?;
-        serde_json::to_writer_pretty(BufWriter::new(file), &config)?;
-        
-        Ok(())
-    }
-
-    fn update_piano_roll_state(&mut self) {
-        let now = Instant::now();
-
-        // Remove notes that are entirely off-screen
-        let oldest_time_to_display = now.checked_sub(self.piano_roll_display_duration)
-            .unwrap_or(Instant::now()); // Safely get the boundary
-
-        while let Some(front_note) = self.finished_notes_display.front() {
-            // A note is off-screen if its end_time is older than the oldest_time_to_display
-            // OR if its start_time is older and it has no end_time (very long hanging note)
-            let is_off_screen = front_note.end_time.map_or(
-                front_note.start_time < oldest_time_to_display, // Still playing, but started too long ago
-                |et| et < oldest_time_to_display, // Finished, and ended too long ago
-            );
-
-            if is_off_screen {
-                self.finished_notes_display.pop_front();
-            } else {
-                break; // Stop when we find a note that's still on screen
-            }
-        }
     }
 }
 
@@ -431,21 +176,20 @@ pub fn run_tui_loop(
     preselected_device_name: Option<String>,
 ) -> Result<()> {
     let mut terminal = setup_terminal()?;
-    let organ_name = organ.name.clone();
     let mut _midi_connection: Option<MidiInputConnection<()>> = None;
-    let mut app_state = TuiState::new(organ, load_presets(&organ_name), is_file_playback)?;
+    let mut app_state = TuiState::new(organ, is_file_playback)?;
 
     // Handle preselected MIDI device if provided
     if !is_file_playback {
         if let Some(device_name) = preselected_device_name {
             // Try to find the port by name from the state
-            let found_port = app_state.available_ports.iter()
+            let found_port = app_state.shared_state.available_ports.iter()
                 .find(|(_, name)| *name == device_name)
                 .map(|(port, _)| port.clone());
 
             if let Some(port) = found_port {
                 // Found it! Now connect.
-                if let Some(midi_input) = app_state.midi_input.take() {
+                if let Some(midi_input) = app_state.shared_state.midi_input.take() {
                     let conn = connect_to_midi(
                         midi_input,
                         &port,
@@ -454,15 +198,13 @@ pub fn run_tui_loop(
                     )?;
                     _midi_connection = Some(conn);
                     app_state.mode = AppMode::MainApp; // Switch mode
-                    app_state.add_midi_log(format!("Connected to: {}", device_name));
-                    app_state.available_ports.clear(); // Clean up
+                    app_state.shared_state.add_midi_log(format!("Connected to: {}", device_name));
+                    app_state.shared_state.available_ports.clear(); // Clean up
                 }
             } else {
                 // Error: Device name not found
                 let err_msg = format!("ERROR: MIDI device not found: '{}'", device_name);
-                // Set the error message. The TUI will start in selection mode
-                // and display this error, allowing the user to pick from the list.
-                app_state.error_msg = Some(err_msg);
+                app_state.shared_state.error_msg = Some(err_msg);
             }
         }
     }
@@ -470,81 +212,30 @@ pub fn run_tui_loop(
     if let Some(path) = ir_file_path {
         if path.exists() {
             let log_msg = format!("Loading IR file: {:?}", path.file_name().unwrap());
-            app_state.add_midi_log(log_msg);
+            app_state.shared_state.add_midi_log(log_msg);
             // Send the message to the audio thread
             audio_tx.send(AppMessage::SetReverbIr(path))?;
             audio_tx.send(AppMessage::SetReverbWetDry(reverb_mix))?;
         } else {
             // Log an error to the TUI, but don't crash
             let log_msg = format!("ERROR: IR file not found: {}", path.display());
-            app_state.add_midi_log(log_msg);
+            app_state.shared_state.add_midi_log(log_msg);
         }
     }
     loop {
         // Update piano roll state before drawing (only if in main app mode)
         if matches!(app_state.mode, AppMode::MainApp) {
-            app_state.update_piano_roll_state();
+            app_state.shared_state.update_piano_roll_state();
         }
 
         // Draw UI (which now dispatches based on mode)
         terminal.draw(|f| ui(f, &mut app_state))?;
 
         // Handle cross-thread messages (non-blocking)
+        // This now uses the shared message handler
         while let Ok(msg) = tui_rx.try_recv() {
-            match msg {
-                // --- Raw MIDI events ---
-                TuiMessage::MidiNoteOn(note, vel, channel) => {
-                    // Track the active note
-                    app_state.channel_active_notes.entry(channel).or_default().insert(note);
-                    // Find all stops mapped to this channel and send AppMessage
-                    for (stop_index, active_channels) in &app_state.stop_channels {
-                        if active_channels.contains(&channel) {
-                            if let Some(stop) = app_state.organ.stops.get(*stop_index) {
-                                let stop_name = stop.name.clone();
-                                audio_tx.send(AppMessage::NoteOn(note, vel, stop_name))?;
-                            }
-                        }
-                    }
-                },
-                TuiMessage::MidiNoteOff(note, channel) => {
-                    // Stop tracking the active note
-                    if let Some(notes) = app_state.channel_active_notes.get_mut(&channel) {
-                        notes.remove(&note);
-                    }
-                    // Find all stops mapped to this channel and send AppMessage
-                    for (stop_index, active_channels) in &app_state.stop_channels {
-                        if active_channels.contains(&channel) {
-                            if let Some(stop) = app_state.organ.stops.get(*stop_index) {
-                                let stop_name = stop.name.clone();
-                                audio_tx.send(AppMessage::NoteOff(note, stop_name))?;
-                            }
-                        }
-                    }
-                },
-                TuiMessage::MidiChannelNotesOff(channel) => {
-                    // Handle channel-specific all notes off
-                    if let Some(notes_to_stop) = app_state.channel_active_notes.remove(&channel) {
-                        // Find all stops mapped to this channel
-                        for (stop_index, active_channels) in &app_state.stop_channels {
-                            if active_channels.contains(&channel) {
-                                if let Some(stop) = app_state.organ.stops.get(*stop_index) {
-                                    let stop_name = stop.name.clone();
-                                    // Send NoteOff for each note that was active on this channel
-                                    for &note in &notes_to_stop {
-                                        audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                
-                // --- Other TUI messages ---
-                TuiMessage::MidiLog(log) => app_state.add_midi_log(log),
-                TuiMessage::Error(err) => app_state.error_msg = Some(err),
-                TuiMessage::TuiNoteOn(note, start_time) => app_state.handle_tui_note_on(note, start_time),
-                TuiMessage::TuiNoteOff(note, end_time) => app_state.handle_tui_note_off(note, end_time),
-                TuiMessage::TuiAllNotesOff => app_state.handle_tui_all_notes_off(),
+            if let Err(e) = app_state.shared_state.handle_tui_message(msg, &audio_tx) {
+                app_state.shared_state.add_midi_log(format!("Error: {}", e));
             }
         }
 
@@ -572,25 +263,22 @@ pub fn run_tui_loop(
                                     if let Some(selected_idx) = app_state.port_list_state.selected() {
 
                                         let (port_to_connect, port_name) = 
-                                            match app_state.available_ports.get(selected_idx) {
+                                            match app_state.shared_state.available_ports.get(selected_idx) {
                                                 Some((port, name)) => (port.clone(), name.clone()),
                                                 None => continue,
                                             };
 
-                                        app_state.add_midi_log(format!("Connecting to: {}", port_name));
+                                        app_state.shared_state.add_midi_log(format!("Connecting to: {}", port_name));
                                         
-                                        if let Some(midi_input) = app_state.midi_input.take() {
+                                        if let Some(midi_input) = app_state.shared_state.midi_input.take() {
                                             
-                                            let tui_tx_clone = tui_tx.clone();
-                                            let conn = midi_input.connect(
+                                            let conn = connect_to_midi(
+                                                midi_input,
                                                 &port_to_connect,
                                                 &port_name,
-                                                move |_timestamp, message, _| {
-                                                    midi::midi_callback(message, &tui_tx_clone);
-                                                }, 
-                                                ()
-                                            ).map_err(|e| anyhow::anyhow!("Failed to connect to MIDI device {}: {}", port_name, e))?;
-                                            
+                                                &tui_tx,
+                                            )?;
+                                        
                                             // Store the connection to keep it alive
                                             _midi_connection = Some(conn);
                                             
@@ -598,7 +286,7 @@ pub fn run_tui_loop(
                                             app_state.mode = AppMode::MainApp;
                                             
                                             // Free this memory as we don't need it anymore
-                                            app_state.available_ports.clear(); 
+                                            app_state.shared_state.available_ports.clear(); 
                                         }
                                     }
                                 }
@@ -626,7 +314,6 @@ pub fn run_tui_loop(
                                 // Handle other keys if no channel key was pressed
                                 match key.code {
                                     KeyCode::Char('q') | KeyCode::Esc => {
-                                        // Send Quit message to audio thread
                                         audio_tx.send(AppMessage::Quit)?;
                                         break; // Exit TUI loop
                                     }
@@ -639,26 +326,23 @@ pub fn run_tui_loop(
                                     KeyCode::Char('l') | KeyCode::Right => app_state.next_col(),
                                     KeyCode::Char('h') | KeyCode::Left => app_state.prev_col(),
                                     KeyCode::Char('p') => {
-                                        // Send "Panic" message (Global All Notes Off)
                                         audio_tx.send(AppMessage::AllNotesOff)?;
                                     }
                                     KeyCode::Char('a') => {
-                                        // All channels for selected stop
                                         app_state.select_all_channels_for_stop();
                                     }
                                     KeyCode::Char('n') => {
-                                        // No channels for selected stop
                                         app_state.select_none_channels_for_stop(&audio_tx)?;
                                     }
                                     // Save (Shift+F1-F12)
                                     KeyCode::F(n) if (1..=12).contains(&n) && key.modifiers.contains(KeyModifiers::SHIFT) => {
-                                        app_state.save_preset((n - 1) as usize); // Shift+F1 is slot 0
+                                        app_state.shared_state.save_preset((n - 1) as usize); // Shift+F1 is slot 0
                                     }
                                     // Recall (F1-F12, no modifier)
                                     KeyCode::F(n) if (1..=12).contains(&n) && key.modifiers.is_empty() => {
                                         // F1 is slot 0
-                                        if let Err(e) = app_state.recall_preset((n - 1) as usize, &audio_tx) {
-                                            app_state.add_midi_log(format!("ERROR recalling preset: {}", e));
+                                        if let Err(e) = app_state.shared_state.recall_preset((n - 1) as usize, &audio_tx) {
+                                            app_state.shared_state.add_midi_log(format!("ERROR recalling preset: {}", e));
                                         }
                                     }
                                     _ => {}
@@ -675,15 +359,16 @@ pub fn run_tui_loop(
     Ok(())
 }
 
-const PIPES: &str = r"          ███          
+// ... (LOGO, PIPES constants remain the same) ...
+const PIPES: &str = r"        ███         
       ▐█▋ ███ ▐█▋      
-  ▐█▋ ▐█▋ ███ ▐█▋ ▐█▋  
-  ▐█▋ ▐█▋ ███ ▐█▋ ▐█▋  
-  ▐█▋ ▐█▋ ███ ▐█▋ ▐█▋  
-  ▐▅▋ ▐▅▋ ▐▄▋ ▐▅▋ ▐▅▋  
-    ▀   ▀   █   ▀   ▀   
+  ▐█▋ ▐█▋ ███ ▐█▋ ▐█▋   
+  ▐█▋ ▐█▋ ███ ▐█▋ ▐█▋   
+  ▐█▋ ▐█▋ ███ ▐█▋ ▐█▋   
+  ▐▅▋ ▐▅▋ ▐▄▋ ▐▅▋ ▐▅▋   
+   ▀   ▀   █   ▀   ▀   
 █████████████████████
-          ▀▀▀▀▀         
+        ▀▀▀▀▀         
 ";
 
 const LOGO: &str = r"██████╗ ██╗   ██╗███████╗████████╗██╗   ██╗    ██████╗ ██╗██████╗ ███████╗███████╗
@@ -740,7 +425,8 @@ fn draw_midi_selection_ui(frame: &mut Frame, state: &mut TuiState) {
     frame.render_widget(logo_widget, layout[0]);
 
     // --- MIDI Device List ---
-    let items: Vec<ListItem> = state.available_ports.iter()
+    // Data now comes from shared_state
+    let items: Vec<ListItem> = state.shared_state.available_ports.iter()
         .map(|(_, name)| {
             ListItem::new(name.clone())
         })
@@ -772,7 +458,8 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
         .split(frame.area());
 
     // --- Footer Help Text / Error ---
-    let footer_widget = if let Some(err) = &state.error_msg {
+    // Data now comes from shared_state
+    let footer_widget = if let Some(err) = &state.shared_state.error_msg {
         Paragraph::new(err.as_str())
             .style(Style::default().fg(Color::White).bg(Color::Red))
     } else {
@@ -794,19 +481,21 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
         ])
         .split(stops_area);
     
+    // Use TUI-specific state for selection
     let selected_index = state.list_state.selected().unwrap_or(0);
-    let stops_count = state.organ.stops.len();
+    // Use shared_state for data
+    let stops_count = state.shared_state.organ.stops.len();
     if stops_count == 0 {
         // Handle no stops
         let no_stops_msg = Paragraph::new("No stops loaded.")
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title(state.organ.name.as_str()));
+            .block(Block::default().borders(Borders::ALL).title(state.shared_state.organ.name.as_str()));
         frame.render_widget(no_stops_msg, stops_area);
     } else {
         // Calculate items per column
         let items_per_column = (stops_count + NUM_COLUMNS - 1) / NUM_COLUMNS;
         
-        let all_stops: Vec<_> = state.organ.stops.iter().enumerate().collect();
+        let all_stops: Vec<_> = state.shared_state.organ.stops.iter().enumerate().collect();
         
         // Create a list for each column
         for (col_idx, rect) in column_layout.iter().enumerate() {
@@ -819,9 +508,9 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
 
             let column_items: Vec<ListItem> = all_stops[start_idx..end_idx].iter()
                 .map(|(global_idx, stop)| {
-                    // Build the channel string
-                    // Get the set of active channels for this stop
+                    // Get the set of active channels for this stop (from shared_state)
                     let active_channels = state
+                        .shared_state
                         .stop_channels
                         .get(global_idx)
                         .cloned()
@@ -840,7 +529,6 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
                             };
                             channel_spans.push(Span::styled(
                                 display_num,
-                                // Use a bright color for active channels
                                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
                             ));
                         } else {
@@ -850,34 +538,26 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
                                 Style::default().fg(Color::DarkGray),
                             ));
                         }
-                        
                     }
 
                     // Add padding and the stop name
                     channel_spans.push(Span::raw(format!("    {}", stop.name))); // 4 spaces for padding
-
-                    // Create the Line from all the spans
                     let line = Line::from(channel_spans);
 
                     let style = if selected_index == *global_idx {
-                        // Highlight selected
                         Style::default().fg(Color::Black).bg(Color::Cyan)
-                    
-                    } else if !active_channels.is_empty() { // Re-use the set
-                        // Highlight if any channel is active
+                    } else if !active_channels.is_empty() {
                         Style::default().fg(Color::Green)
                     } else {
-                        // Normal
                         Style::default()
                     };
                     ListItem::new(line).style(style)
                 })
                 .collect();
             
-            let title = if col_idx == 0 { state.organ.name.as_str() } else if col_idx == 2 { "Stops (F1-F12: Recall, Shift+F1-F12: Save)" } else { "" };
+            let title = if col_idx == 0 { state.shared_state.organ.name.as_str() } else if col_idx == 2 { "Stops (F1-F12: Recall, Shift+F1-F12: Save)" } else { "" };
             let list_widget = List::new(column_items)
                 .block(Block::default().borders(Borders::ALL).title(title));
-            // We don't use render_stateful_widget because we handle selection manually
             frame.render_widget(list_widget, *rect);
         }
     }
@@ -893,7 +573,8 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
         .split(bottom_area);
 
     // --- MIDI Log (in bottom_chunks[0]) ---
-    let log_items: Vec<ListItem> = state.midi_log.iter()
+    // Data from shared_state
+    let log_items: Vec<ListItem> = state.shared_state.midi_log.iter()
         .map(|msg| ListItem::new(Line::from(msg.clone())))
         .collect();
 
@@ -908,11 +589,8 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
     const PIANO_HIGH_NOTE: u8 = 108; // C8
     const BLACK_KEY_MODS: [u8; 5] = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
 
-    // Adjust y-bounds to be based on time
-    // x_bounds will be MIDI notes
-    // The current time will be the "bottom" of the display
     let now = Instant::now();
-    let display_start_time = now.checked_sub(state.piano_roll_display_duration)
+    let display_start_time = now.checked_sub(state.shared_state.piano_roll_display_duration)
         .unwrap_or(Instant::now());
 
     let piano_roll = Canvas::default()
@@ -922,20 +600,18 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
             PIANO_LOW_NOTE as f64,
             PIANO_HIGH_NOTE as f64 + 1.0,
         ])
-        // Y-bounds: 0.0 at the oldest time (top), 1.0 at current time (bottom)
         .y_bounds([
             0.0,    
-            state.piano_roll_display_duration.as_secs_f64()
+            state.shared_state.piano_roll_display_duration.as_secs_f64()
         ])
         .paint(|ctx| {
-            let area_height_coords = state.piano_roll_display_duration.as_secs_f64();
+            let area_height_coords = state.shared_state.piano_roll_display_duration.as_secs_f64();
 
-            // Draw the static keyboard background on the X-axis
+            // Draw the static keyboard background
             for note in PIANO_LOW_NOTE..=PIANO_HIGH_NOTE {
                 let is_black_key = BLACK_KEY_MODS.contains(&(note % 12));
-                let color = if is_black_key { Color::Rgb(50, 50, 50) } else { Color::Rgb(100, 100, 100) }; // Darker gray for white keys
+                let color = if is_black_key { Color::Rgb(50, 50, 50) } else { Color::Rgb(100, 100, 100) };
                 
-                // Draw a full-height line for the key
                 ctx.draw(&CanvasLine {
                     x1: note as f64,
                     y1: 0.0,
@@ -945,14 +621,14 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
                 });
             }
 
-            // Function to map a time Instant to a Y-coordinate in the canvas
+            // Function to map a time Instant to a Y-coordinate
             let map_time_to_y = |time: Instant| -> f64 {
                 let time_elapsed_from_start = time.duration_since(display_start_time).as_secs_f64();
-                time_elapsed_from_start // This maps directly to our y-bounds
+                time_elapsed_from_start
             };
 
-            // Draw finished notes
-            for played_note in &state.finished_notes_display {
+            // Draw finished notes (from shared_state)
+            for played_note in &state.shared_state.finished_notes_display {
                 let note_x = played_note.note as f64;
                 let start_y = map_time_to_y(played_note.start_time);
                 let end_y = played_note.end_time.map_or_else(
@@ -961,26 +637,22 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
                 );
                 
                 ctx.draw(&CanvasLine {
-                    x1: note_x,
-                    y1: start_y,
-                    x2: note_x,
-                    y2: end_y,
-                    color: Color::Magenta, // Finished notes color
+                    x1: note_x, y1: start_y,
+                    x2: note_x, y2: end_y,
+                    color: Color::Magenta,
                 });
             }
 
-            // Draw currently playing notes
-            for (_, played_note) in &state.currently_playing_notes {
+            // Draw currently playing notes (from shared_state)
+            for (_, played_note) in &state.shared_state.currently_playing_notes {
                 let note_x = played_note.note as f64;
                 let start_y = map_time_to_y(played_note.start_time);
                 let end_y = map_time_to_y(now);    
                 
                 ctx.draw(&CanvasLine {
-                    x1: note_x,
-                    y1: start_y,
-                    x2: note_x,
-                    y2: end_y,
-                    color: Color::Green, // Active notes color
+                    x1: note_x, y1: start_y,
+                    x2: note_x, y2: end_y,
+                    color: Color::Green,
                 });
             }
         });
