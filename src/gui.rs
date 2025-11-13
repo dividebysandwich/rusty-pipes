@@ -1,10 +1,8 @@
-
 use anyhow::Result;
 use eframe::{egui, App, Frame};
 use egui::Stroke;
 use midir::MidiInputConnection;
 use std::{
-    collections::BTreeMap,
     path::PathBuf,
     sync::{
         mpsc::{Receiver, Sender},
@@ -42,11 +40,6 @@ pub struct EguiApp {
     show_preset_save_modal: bool,
     preset_save_slot: usize,
     preset_save_name: String,
-}
-
-struct GroupedStop {
-    original_index: usize,
-    display_name: String,
 }
 
 /// Runs the main GUI loop.
@@ -218,7 +211,8 @@ impl App for EguiApp {
 
 impl EguiApp {
     fn draw_midi_selection_ui(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+        let panel_frame = egui::Frame::default().fill(egui::Color32::TRANSPARENT);
+        egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(ui.available_height() * 0.2);
                 ui.heading("Rusty Pipes");
@@ -294,7 +288,9 @@ impl EguiApp {
         self.draw_preset_panel(ctx);
         self.draw_log_and_piano_roll_panel(ctx);
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        let panel_frame = egui::Frame::default().fill(egui::Color32::TRANSPARENT);
+
+        egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
             ui.heading(&self.shared_state.organ.name);
             ui.separator();
             
@@ -403,120 +399,118 @@ impl EguiApp {
 
     fn draw_stop_list_columns(&mut self, ui: &mut egui::Ui) {
         let num_cols = 3;
-        let stops_count = self.shared_state.organ.stops.len();
+        let stops: Vec<_> = self.shared_state.organ.stops.clone();
+        let stops_count = stops.len();
+        let stop_channels = self.shared_state.stop_channels.clone();
         if stops_count == 0 {
             ui.label("No stops loaded.");
             return;
         }
 
-        // Pre-process and group the stops
-        let mut grouped_stops: BTreeMap<String, Vec<GroupedStop>> = BTreeMap::new();
-    
-        // This helper struct holds the processed stop info
-        struct GroupedStop {
-            original_index: usize,
-            display_name: String,
-        }
-    
-        for (i, stop) in self.shared_state.organ.stops.iter().enumerate() {
-            let (key, display_name) = match stop.name.split_once(' ') {
-                Some((first, rest)) => (first.to_string(), rest.to_string()),
-                None => ("Misc".to_string(), stop.name.clone()),
-            };
+        // Calculate how many stops go in each column
+        let items_per_column = (stops_count + num_cols - 1) / num_cols;
 
-            grouped_stops.entry(key).or_default().push(GroupedStop {
-                original_index: i,
-                display_name,
-            });
-        }
-        // Render columns
+        // Create 3 resizable layout columns
         ui.columns(num_cols, |cols| {
-        
-            // Distribute groups across columns
-            for (group_index, (group_key, stops_in_group)) in grouped_stops.iter().enumerate() {
-            
-                let col_idx = group_index % num_cols;
-                let ui = &mut cols[col_idx];
+            for (col_idx, ui) in cols.iter_mut().enumerate() {
+                // Calculate the range of stops for this specific column
+                let start_idx = col_idx * items_per_column;
+                let end_idx = (start_idx + items_per_column).min(stops_count);
 
-                // Render the group as a CollapsingHeader
-                egui::CollapsingHeader::new(group_key)
-                    .default_open(true)
-                    .show(ui, |ui| {
-                    
-                        // Render all stops within this group
-                        for stop_info in stops_in_group {
-                            let i = stop_info.original_index; 
-                        
-                            let is_selected = self.selected_stop_index == Some(i);
-                            let active_channels = self
-                                .shared_state
-                                .stop_channels
-                                .get(&i)
-                                .cloned()
-                                .unwrap_or_default();
-                            let is_active = !active_channels.is_empty();
+                if start_idx >= end_idx { continue; } // Skip if this column is empty
 
-                            ui.vertical(|ui| { 
+                // Render all stops for this column
+                for i in start_idx..end_idx {
+                    let is_selected = self.selected_stop_index == Some(i);
+                    let active_channels = stop_channels
+                        .get(&i)
+                        .cloned()
+                        .unwrap_or_default();
+                    let is_active = !active_channels.is_empty();
+                    let stop = &stops[i];
+
+                    ui.vertical(|ui| { 
                             
-                                // Stop Name (on top)
-                                let label_text = egui::RichText::new(&stop_info.display_name);
-                                let label_text = if is_active {
-                                    label_text.color(egui::Color32::from_rgb(100, 255, 100))
-                                } else {
-                                    label_text
-                                };
+                        // --- 1. Stop Name (on top) ---
+                        let label_text = egui::RichText::new(&stop.name);
+                        let label_text = if is_active {
+                            label_text.color(egui::Color32::from_rgb(100, 255, 100))
+                        } else {
+                            label_text
+                        };
 
-                                // The .selectable_label will wrap text automatically
-                                if ui.selectable_label(is_selected, label_text).clicked() {
-                                    self.selected_stop_index = Some(i);
-                                }
-                            
-                                // Toggles (below)
-                                ui.group(|ui| {
-                                    // Use horizontal_wrapped to allow toggles to "scale"
-                                    ui.horizontal_wrapped(|ui| {
-                                        for chan in 0..10u8 {
-                                            let is_on = active_channels.contains(&chan);
-                                            let display_char = if chan == 9 { '0' } else { (b'1' + chan) as char };
-                                        
-                                            if ui.selectable_label(is_on, display_char.to_string()).clicked() {
-                                                if let Err(e) = self.shared_state.toggle_stop_channel(i, chan, &self.audio_tx) {
-                                                    self.shared_state.add_midi_log(format!("ERROR: {}", e));
-                                                }
-                                            }
-                                        }
-                                    });
-                                }); // End toggle group
-                            }); // End vertical layout for one stop
-                        
-                            ui.add_space(4.0); // Add a small gap between stops
+                        // The .selectable_label will wrap text automatically
+                        if ui.selectable_label(is_selected, label_text).clicked() {
+                            self.selected_stop_index = Some(i);
                         }
-                    }); // End CollapsingHeader (group)
-            
-                ui.add_space(5.0); // Small gap between groups
+                        
+                        // --- 2. Toggles (below) ---
+                        ui.group(|ui| {
+                            // Use horizontal_wrapped to allow toggles to "scale"
+                            ui.horizontal_wrapped(|ui| {
+                                for chan in 0..10u8 {
+                                    let is_on = active_channels.contains(&chan);
+                                    let display_char = if chan == 9 { '0' } else { (b'1' + chan) as char };
+                                    
+                                    if ui.selectable_label(is_on, display_char.to_string()).clicked() {
+                                        if let Err(e) = self.shared_state.toggle_stop_channel(i, chan, &self.audio_tx) {
+                                            self.shared_state.add_midi_log(format!("ERROR: {}", e));
+                                        }
+                                    }
+                                }
+                            });
+                        }); // End toggle group
+                    });
+
+                    ui.add_space(2.0); // Add a small gap between stops
+                }
             }
         });
     }
+
 
     fn draw_log_and_piano_roll_panel(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("bottom_panel")
             .resizable(true)
             .default_height(250.0)
+            .min_height(250.0)
             .show(ctx, |ui| {
-                ui.columns(2, |cols| {
-                    // --- Column 0: MIDI Log ---
-                    cols[0].heading("MIDI Log");
-                    egui::ScrollArea::vertical().stick_to_bottom(true).show(&mut cols[0], |ui| {
-                        for msg in &self.shared_state.midi_log {
-                            ui.label(msg);
-                        }
-                    });
-                    
-                    // --- Column 1: Piano Roll ---
-                    cols[1].heading("Piano Roll");
-                    self.draw_piano_roll(&mut cols[1]);
-                });
+            
+            let full_rect = ui.available_rect_before_wrap();
+            let total_height = full_rect.height();
+            let midi_log_width = 300.0;
+
+            // Use a horizontal layout to hold the two columns
+            ui.horizontal(|ui| {
+                
+                // --- Column 0: MIDI Log (30%) ---
+                let log_layout = egui::Layout::top_down(egui::Align::LEFT);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(midi_log_width, total_height),
+                    log_layout,
+                    |ui| {
+                        ui.heading("MIDI Log");
+                        egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+                            for msg in &self.shared_state.midi_log {
+                                ui.label(msg);
+                            }
+                        });
+                    }
+                );
+
+                // --- Column 1: Piano Roll (70%) ---
+                let piano_layout = egui::Layout::top_down(egui::Align::LEFT);
+                // Allocate the second UI region with the remaining width and fixed height
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), total_height), // Use remaining width
+                    piano_layout,
+                    |ui| {
+                        ui.heading("Piano Roll");
+                        self.draw_piano_roll(ui);
+                    }
+                );
             });
+        });
     }
 
     fn draw_piano_roll(&self, ui: &mut egui::Ui) {
@@ -524,8 +518,10 @@ impl EguiApp {
         const PIANO_HIGH_NOTE: u8 = 108; // C8
         const BLACK_KEY_MODS: [u8; 5] = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
 
+        let desired_size = ui.available_size_before_wrap();
+
         let (response, painter) = ui.allocate_painter(
-            ui.available_size_before_wrap(),
+            desired_size,
             egui::Sense::hover(),
         );
         let rect = response.rect;

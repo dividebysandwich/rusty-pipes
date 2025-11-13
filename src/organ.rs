@@ -22,7 +22,7 @@ pub struct Organ {
 }
 
 /// Represents a single stop (a button on the TUI).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Stop {
     pub name: String,
     pub id_str: String, // e.g., "013"
