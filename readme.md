@@ -4,7 +4,7 @@
 
 Rusty Pipes is a digital organ instrument compatible with GrandOrgue sample sets. It features a text-based user interface, can be controlled via MIDI and play back MIDI files. Rusty Pipes can stream samples from disk instead of load them into RAM, though a RAM precache mode similar to GrandOrgue and Hauptwerk is available too.
 
-<img width="1693" height="1059" alt="image" src="https://github.com/user-attachments/assets/1137bc21-e37b-4aa9-982f-f03e26605cca" />
+<img width="1698" height="1067" alt="image" src="https://github.com/user-attachments/assets/539b8a25-fc89-4d85-80d1-62b175b72ca7" />
 
 
 [![Watch the video](https://img.youtube.com/vi/Ewm-s5aoeLc/0.jpg)](https://www.youtube.com/watch?v=Ewm-s5aoeLc)
@@ -131,7 +131,9 @@ This example loads the Hauptwerk sample set "GreenPositiv", using convolutional 
 
 ## User Interface
 
-<img width="1384" height="734" alt="image" src="https://github.com/user-attachments/assets/3f4ada75-ed4b-4d71-8cc4-514a655d8371" />
+RustyPipes defaults to a graphical user interface, but it also supports a text-based console user interface.
+
+<img width="1693" height="879" alt="image" src="https://github.com/user-attachments/assets/e9a0ec69-5645-4033-a47b-a01f9d25348b" />
 
 
 | Input | Action |
