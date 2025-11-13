@@ -409,15 +409,18 @@ impl EguiApp {
             return;
         }
 
-        // We use BTreeMap to automatically sort the groups alphabetically (e.g., "I", "P", "SW")
+        // Pre-process and group the stops
         let mut grouped_stops: BTreeMap<String, Vec<GroupedStop>> = BTreeMap::new();
     
+        // This helper struct holds the processed stop info
+        struct GroupedStop {
+            original_index: usize,
+            display_name: String,
+        }
+    
         for (i, stop) in self.shared_state.organ.stops.iter().enumerate() {
-            // Try to split the name by the first space
             let (key, display_name) = match stop.name.split_once(' ') {
-                // If "P Subbaß 16'", key="P", display_name="Subbaß 16'"
                 Some((first, rest)) => (first.to_string(), rest.to_string()),
-                // If "Contrabass" (no space), key="Misc", display_name="Contrabass"
                 None => ("Misc".to_string(), stop.name.clone()),
             };
 
@@ -426,23 +429,22 @@ impl EguiApp {
                 display_name,
             });
         }
-
+        // Render columns
         ui.columns(num_cols, |cols| {
         
-            // We iterate over the sorted groups and assign each to a column
+            // Distribute groups across columns
             for (group_index, (group_key, stops_in_group)) in grouped_stops.iter().enumerate() {
             
-                // Assign this group to a column (e.g., 0, 1, 2, 0, 1, 2, ...)
                 let col_idx = group_index % num_cols;
                 let ui = &mut cols[col_idx];
 
+                // Render the group as a CollapsingHeader
                 egui::CollapsingHeader::new(group_key)
-                    .default_open(true) // Start with all groups open
+                    .default_open(true)
                     .show(ui, |ui| {
                     
-                        // Render all stops *within* this group
+                        // Render all stops within this group
                         for stop_info in stops_in_group {
-                            // We MUST use the original_index for all state logic
                             let i = stop_info.original_index; 
                         
                             let is_selected = self.selected_stop_index == Some(i);
@@ -454,16 +456,29 @@ impl EguiApp {
                                 .unwrap_or_default();
                             let is_active = !active_channels.is_empty();
 
-                            // Use the same horizontal layout as before
-                            ui.horizontal(|ui| {
+                            ui.vertical(|ui| { 
+                            
+                                // Stop Name (on top)
+                                let label_text = egui::RichText::new(&stop_info.display_name);
+                                let label_text = if is_active {
+                                    label_text.color(egui::Color32::from_rgb(100, 255, 100))
+                                } else {
+                                    label_text
+                                };
 
-                                // Toggles
+                                // The .selectable_label will wrap text automatically
+                                if ui.selectable_label(is_selected, label_text).clicked() {
+                                    self.selected_stop_index = Some(i);
+                                }
+                            
+                                // Toggles (below)
                                 ui.group(|ui| {
-                                    ui.horizontal(|ui| {
+                                    // Use horizontal_wrapped to allow toggles to "scale"
+                                    ui.horizontal_wrapped(|ui| {
                                         for chan in 0..10u8 {
                                             let is_on = active_channels.contains(&chan);
                                             let display_char = if chan == 9 { '0' } else { (b'1' + chan) as char };
-
+                                        
                                             if ui.selectable_label(is_on, display_char.to_string()).clicked() {
                                                 if let Err(e) = self.shared_state.toggle_stop_channel(i, chan, &self.audio_tx) {
                                                     self.shared_state.add_midi_log(format!("ERROR: {}", e));
@@ -472,20 +487,9 @@ impl EguiApp {
                                         }
                                     });
                                 }); // End toggle group
-
-                                let label_text = egui::RichText::new(&stop_info.display_name);
-                                let label_text = if is_active {
-                                    label_text.color(egui::Color32::from_rgb(100, 255, 100)) // Green
-                                } else {
-                                    label_text
-                                };
-
-                                if ui.selectable_label(is_selected, label_text).clicked() {
-                                    self.selected_stop_index = Some(i);
-                                }
-                            }); // End horizontal layout for one stop
+                            }); // End vertical layout for one stop
                         
-                            ui.add_space(2.0); // Small gap between stops
+                            ui.add_space(4.0); // Add a small gap between stops
                         }
                     }); // End CollapsingHeader (group)
             
