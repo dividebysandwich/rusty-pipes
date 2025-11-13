@@ -148,7 +148,7 @@ impl App for EguiApp {
         }
 
         if !self.show_preset_save_modal { // Don't process keys if modal is open
-            let input = ctx.input(|i| i.clone()); // Get a snapshot of the input state
+        let input = ctx.input(|i| i.clone()); // Get a snapshot of the input state
 
             let function_keys = [
                 egui::Key::F1, egui::Key::F2, egui::Key::F3, egui::Key::F4,
@@ -174,6 +174,11 @@ impl App for EguiApp {
                         }
                     }
                 }
+            }
+            if input.key_pressed(egui::Key::P) {
+                self.audio_tx.send(AppMessage::AllNotesOff).unwrap_or_else(|e| {
+                    log::error!("ERROR sending AllNotesOff: {}", e);
+                });
             }
         }
 
@@ -431,7 +436,7 @@ impl EguiApp {
 
                     ui.vertical(|ui| { 
                             
-                        // --- 1. Stop Name (on top) ---
+                        // Stop Name (on top)
                         let label_text = egui::RichText::new(&stop.name);
                         let label_text = if is_active {
                             label_text.color(egui::Color32::from_rgb(100, 255, 100))
@@ -444,7 +449,7 @@ impl EguiApp {
                             self.selected_stop_index = Some(i);
                         }
                         
-                        // --- 2. Toggles (below) ---
+                        // Toggles (below)
                         ui.group(|ui| {
                             // Use horizontal_wrapped to allow toggles to "scale"
                             ui.horizontal_wrapped(|ui| {
@@ -558,7 +563,7 @@ impl EguiApp {
             )));
         }
         
-        // --- Helper to map time to Y-coord ---
+        // Helper to map time to Y-coord
         let map_time_to_y = |time: Instant| -> f32 {
             let time_since_start = time.duration_since(display_start_time).as_secs_f64();
             // Remap 0.0 -> total_duration to rect.bottom() -> rect.top() (inverted)
@@ -569,7 +574,7 @@ impl EguiApp {
             ) as f32
         };
         
-        // --- Helper to map note to X-coord ---
+        // Helper to map note to X-coord
         let map_note_to_x_range = |note: u8| -> (f32, f32) {
             let x_start = egui::remap(
                 note as f64, 
