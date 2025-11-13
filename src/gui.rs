@@ -1,6 +1,6 @@
 use anyhow::Result;
 use eframe::{egui, App, Frame};
-use egui::Stroke;
+use egui::{Stroke, UiBuilder};
 use midir::MidiInputConnection;
 use std::{
     path::PathBuf,
@@ -475,45 +475,43 @@ impl EguiApp {
 
 
     fn draw_log_and_piano_roll_panel(&mut self, ctx: &egui::Context) {
+        const LOG_WIDTH: f32 = 300.0;
+
         egui::TopBottomPanel::bottom("bottom_panel")
-            .resizable(true)
-            .default_height(250.0)
-            .min_height(250.0)
-            .show(ctx, |ui| {
+        .resizable(true)
+        .default_height(250.0)
+        .min_height(250.0)
+        .show(ctx, |ui| {
             
             let full_rect = ui.available_rect_before_wrap();
-            let total_height = full_rect.height();
-            let midi_log_width = 300.0;
+            let split_x = (full_rect.left() + LOG_WIDTH).min(full_rect.right());
+            let (log_rect, piano_rect) = full_rect.split_left_right_at_x(split_x);
 
-            // Use a horizontal layout to hold the two columns
-            ui.horizontal(|ui| {
+            // --- Column 0: MIDI Log (Fixed Width) ---
+            ui.scope_builder( 
+                UiBuilder{ 
+                    max_rect: Some(log_rect),
+                    layout: Some(egui::Layout::top_down(egui::Align::LEFT)),
+                    ..Default::default()
+                }, |ui| {
+                ui.heading("MIDI Log");
                 
-                // --- Column 0: MIDI Log (30%) ---
-                let log_layout = egui::Layout::top_down(egui::Align::LEFT);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(midi_log_width, total_height),
-                    log_layout,
-                    |ui| {
-                        ui.heading("MIDI Log");
-                        egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
-                            for msg in &self.shared_state.midi_log {
-                                ui.label(msg);
-                            }
-                        });
+                egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+                    // 4. (Optional but recommended) Tell labels to wrap
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap); 
+                    
+                    for msg in &self.shared_state.midi_log {
+                        ui.label(msg); // This will now wrap
                     }
-                );
+                });
+            });
 
-                // --- Column 1: Piano Roll (70%) ---
-                let piano_layout = egui::Layout::top_down(egui::Align::LEFT);
-                // Allocate the second UI region with the remaining width and fixed height
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), total_height), // Use remaining width
-                    piano_layout,
-                    |ui| {
-                        ui.heading("Piano Roll");
-                        self.draw_piano_roll(ui);
-                    }
-                );
+            // --- Column 1: Piano Roll (Remaining Width) ---
+            ui.scope_builder( UiBuilder{ max_rect: Some(piano_rect), layout: Some(egui::Layout::top_down(egui::Align::LEFT)), ..Default::default()}, |ui| {
+                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                    ui.heading("Piano Roll");
+                    self.draw_piano_roll(ui);
+                });
             });
         });
     }
