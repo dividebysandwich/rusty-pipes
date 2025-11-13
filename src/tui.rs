@@ -245,7 +245,7 @@ pub fn run_tui_loop(
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                 
-                    match tui_state.mode.clone() {
+                    match &mut tui_state.mode {
                         AppMode::MidiSelection => {
                             // --- Handle MIDI Selection Input ---
                             match key.code {
@@ -370,12 +370,12 @@ pub fn run_tui_loop(
                                 }
                             }
                         },
-                        AppMode::PresetSaveName(slot, ref mut name_buffer) => {
+                        AppMode::PresetSaveName(slot, name_buffer) => {
                             match key.code {
                                 KeyCode::Enter => {
                                     // Save the preset
                                     if !name_buffer.is_empty() {
-                                        tui_state.app_state.lock().unwrap().save_preset(slot, name_buffer.clone());
+                                        tui_state.app_state.lock().unwrap().save_preset(*slot, name_buffer.clone());
                                     }
                                     // Return to main app
                                     tui_state.mode = AppMode::MainApp;
