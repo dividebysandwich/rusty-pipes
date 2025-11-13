@@ -1,8 +1,11 @@
-<img width="1461" height="664" alt="image" src="https://github.com/user-attachments/assets/d3948c97-c606-443a-8d98-96902ccd4a69" />
+<img width="672" height="287" alt="image" src="https://github.com/user-attachments/assets/72ad0326-045e-4279-8a31-b08c0f971b3f" />
 
 # Rusty Pipes
 
 Rusty Pipes is a digital organ instrument compatible with GrandOrgue sample sets. It features a text-based user interface, can be controlled via MIDI and play back MIDI files. Rusty Pipes can stream samples from disk instead of load them into RAM, though a RAM precache mode similar to GrandOrgue and Hauptwerk is available too.
+
+<img width="1692" height="992" alt="image" src="https://github.com/user-attachments/assets/58c11ee5-e420-4739-ba2c-9981edd8fde4" />
+
 
 [![Watch the video](https://img.youtube.com/vi/Ewm-s5aoeLc/0.jpg)](https://www.youtube.com/watch?v=Ewm-s5aoeLc)
 
@@ -21,6 +24,7 @@ Rusty Pipes is a digital organ instrument compatible with GrandOrgue sample sets
 * MIDI mappings can be quickly saved into one of 10 slots and recalled
 * MIDI mappings are saved to disk for each organ (by name)
 * MIDI file playback
+* Graphical and text mode (TUI) user interface
 
 ## Missing features / Limitations / Known Issues
 
@@ -57,6 +61,7 @@ Options:
       --list-midi-devices          List all available MIDI input devices and exit
       --midi-device <DEVICE_NAME>  Select a MIDI device by name
       --audio-buffer-frames <NUM_FRAMES>  Audio buffer size (lower values reduce latency, increase in case of glitches) [default: 512]
+      --tui           Run in terminal UI (TUI) mode as a fallback
   -h, --help               Print help
   -V, --version            Print version
 ```
