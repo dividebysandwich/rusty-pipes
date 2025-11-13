@@ -4,6 +4,7 @@ use eframe::{egui, App, Frame};
 use egui::Stroke;
 use midir::MidiInputConnection;
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::{
         mpsc::{Receiver, Sender},
@@ -37,6 +38,15 @@ pub struct EguiApp {
     selected_midi_port_index: Option<usize>,
     selected_stop_index: Option<usize>,
     stop_list_scroll_offset: f32,
+
+    show_preset_save_modal: bool,
+    preset_save_slot: usize,
+    preset_save_name: String,
+}
+
+struct GroupedStop {
+    original_index: usize,
+    display_name: String,
 }
 
 /// Runs the main GUI loop.
@@ -112,6 +122,9 @@ pub fn run_gui_loop(
         selected_midi_port_index,
         selected_stop_index,
         stop_list_scroll_offset: 0.0,
+        show_preset_save_modal: false,
+        preset_save_slot: 0,
+        preset_save_name: String::new(),
     };
 
     let native_options = eframe::NativeOptions {
@@ -141,6 +154,36 @@ impl App for EguiApp {
             }
         }
 
+        if !self.show_preset_save_modal { // Don't process keys if modal is open
+            let input = ctx.input(|i| i.clone()); // Get a snapshot of the input state
+
+            let function_keys = [
+                egui::Key::F1, egui::Key::F2, egui::Key::F3, egui::Key::F4,
+                egui::Key::F5, egui::Key::F6, egui::Key::F7, egui::Key::F8,
+                egui::Key::F9, egui::Key::F10, egui::Key::F11, egui::Key::F12,
+            ];
+            for (i, &key) in function_keys.iter().enumerate() {
+                if input.key_pressed(key) {
+                    if input.modifiers.shift {
+                        self.preset_save_slot = i;
+                        // Pre-fill name if it exists, otherwise "Preset F{}"
+                        self.preset_save_name = self.shared_state.presets[i]
+                            .as_ref()
+                            .map_or_else(
+                                || format!("Preset F{}", i + 1), // Default name
+                                |p| p.name.clone() // Current name
+                            );
+                        self.show_preset_save_modal = true;
+                    } else {
+                        // Recall logic
+                        if let Err(e) = self.shared_state.recall_preset(i, &self.audio_tx) {
+                            self.shared_state.add_midi_log(format!("ERROR recalling preset: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+
         // Update internal state (e.g., piano roll)
         if matches!(self.mode, GuiMode::MainApp) {
             self.shared_state.update_piano_roll_state();
@@ -157,6 +200,9 @@ impl App for EguiApp {
                 self.draw_main_app_ui(ctx);
             }
         }
+
+        // Draw preset save modal if needed
+        self.draw_preset_save_modal(ctx);
     }
 
     // Handle quit request (e.g., pressing 'X' on window)
@@ -286,8 +332,14 @@ impl EguiApp {
                 ui.label("Recall (F1-F12):");
                 egui::Grid::new("preset_recall_grid").num_columns(2).show(ui, |ui| {
                     for i in 0..12 {
-                        let text = format!("F{}", i + 1);
-                        let is_loaded = self.shared_state.presets[i].is_some();
+                        // Get name and state from Preset struct
+                        let (text, is_loaded) = self.shared_state.presets[i]
+                            .as_ref()
+                            .map_or_else(
+                                || (format!("F{}", i + 1), false), // No preset
+                                |p| (format!("F{}: {}", i + 1, p.name.clone()), true) // Preset loaded
+                            );
+
                         if ui.add_enabled(is_loaded, egui::Button::new(text)).clicked() {
                             if let Err(e) = self.shared_state.recall_preset(i, &self.audio_tx) {
                                 self.shared_state.add_midi_log(format!("ERROR recalling preset: {}", e));
@@ -304,7 +356,14 @@ impl EguiApp {
                     for i in 0..12 {
                         let text = format!("F{}", i + 1);
                         if ui.button(text).clicked() {
-                            self.shared_state.save_preset(i);
+                            self.preset_save_slot = i;
+                            self.preset_save_name = self.shared_state.presets[i]
+                                .as_ref()
+                                .map_or_else(
+                                    || format!("Preset F{}", i + 1), // Default name
+                                    |p| p.name.clone() // Current name
+                                );
+                            self.show_preset_save_modal = true;
                         }
                         if (i + 1) % 2 == 0 { ui.end_row(); }
                     }
@@ -312,7 +371,7 @@ impl EguiApp {
             });
         });
     }
-    
+
     fn draw_stop_controls(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label("Selected Stop:");
@@ -350,66 +409,87 @@ impl EguiApp {
             return;
         }
 
-        // Calculate how many stops go in each column
-        let items_per_column = (stops_count + num_cols - 1) / num_cols;
+        // We use BTreeMap to automatically sort the groups alphabetically (e.g., "I", "P", "SW")
+        let mut grouped_stops: BTreeMap<String, Vec<GroupedStop>> = BTreeMap::new();
+    
+        for (i, stop) in self.shared_state.organ.stops.iter().enumerate() {
+            // Try to split the name by the first space
+            let (key, display_name) = match stop.name.split_once(' ') {
+                // If "P Subbaß 16'", key="P", display_name="Subbaß 16'"
+                Some((first, rest)) => (first.to_string(), rest.to_string()),
+                // If "Contrabass" (no space), key="Misc", display_name="Contrabass"
+                None => ("Misc".to_string(), stop.name.clone()),
+            };
 
-        // Create 3 resizable layout columns
+            grouped_stops.entry(key).or_default().push(GroupedStop {
+                original_index: i,
+                display_name,
+            });
+        }
+
         ui.columns(num_cols, |cols| {
-            for (col_idx, ui) in cols.iter_mut().enumerate() {
-                // Calculate the range of stops for this specific column
-                let start_idx = col_idx * items_per_column;
-                let end_idx = (start_idx + items_per_column).min(stops_count);
+        
+            // We iterate over the sorted groups and assign each to a column
+            for (group_index, (group_key, stops_in_group)) in grouped_stops.iter().enumerate() {
+            
+                // Assign this group to a column (e.g., 0, 1, 2, 0, 1, 2, ...)
+                let col_idx = group_index % num_cols;
+                let ui = &mut cols[col_idx];
 
-                if start_idx >= end_idx { continue; } // Skip if this column is empty
+                egui::CollapsingHeader::new(group_key)
+                    .default_open(true) // Start with all groups open
+                    .show(ui, |ui| {
+                    
+                        // Render all stops *within* this group
+                        for stop_info in stops_in_group {
+                            // We MUST use the original_index for all state logic
+                            let i = stop_info.original_index; 
+                        
+                            let is_selected = self.selected_stop_index == Some(i);
+                            let active_channels = self
+                                .shared_state
+                                .stop_channels
+                                .get(&i)
+                                .cloned()
+                                .unwrap_or_default();
+                            let is_active = !active_channels.is_empty();
 
-                // Render all stops for this column
-                for i in start_idx..end_idx {
-                    let is_selected = self.selected_stop_index == Some(i);
-                    let active_channels = self
-                        .shared_state
-                        .stop_channels
-                        .get(&i)
-                        .cloned()
-                        .unwrap_or_default();
-                    let is_active = !active_channels.is_empty();
+                            // Use the same horizontal layout as before
+                            ui.horizontal(|ui| {
 
-                    // We use a horizontal layout, just like the TUI
-                    ui.horizontal(|ui| {
-                        // Channel Toggles
-                        // We group them so they have a faint background
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| { // Use horizontal, NOT wrapped
-                                for chan in 0..10u8 {
-                                    let is_on = active_channels.contains(&chan);
-                                    let display_char = if chan == 9 { '0' } else { (b'1' + chan) as char };
-                                
-                                    // Use a SelectableLabel for a compact toggle "button"
-                                    if ui.selectable_label(is_on, display_char.to_string()).clicked() {
-                                        if let Err(e) = self.shared_state.toggle_stop_channel(i, chan, &self.audio_tx) {
-                                            self.shared_state.add_midi_log(format!("ERROR: {}", e));
+                                // Toggles
+                                ui.group(|ui| {
+                                    ui.horizontal(|ui| {
+                                        for chan in 0..10u8 {
+                                            let is_on = active_channels.contains(&chan);
+                                            let display_char = if chan == 9 { '0' } else { (b'1' + chan) as char };
+
+                                            if ui.selectable_label(is_on, display_char.to_string()).clicked() {
+                                                if let Err(e) = self.shared_state.toggle_stop_channel(i, chan, &self.audio_tx) {
+                                                    self.shared_state.add_midi_log(format!("ERROR: {}", e));
+                                                }
+                                            }
                                         }
-                                    }
+                                    });
+                                }); // End toggle group
+
+                                let label_text = egui::RichText::new(&stop_info.display_name);
+                                let label_text = if is_active {
+                                    label_text.color(egui::Color32::from_rgb(100, 255, 100)) // Green
+                                } else {
+                                    label_text
+                                };
+
+                                if ui.selectable_label(is_selected, label_text).clicked() {
+                                    self.selected_stop_index = Some(i);
                                 }
-                            });
-                        }); // End toggle group
-
-                        // Stop Name
-                        let stop = &self.shared_state.organ.stops[i];
-                        let label_text = egui::RichText::new(&stop.name);
-                        let label_text = if is_active {
-                            label_text.color(egui::Color32::from_rgb(100, 255, 100)) // Green
-                        } else {
-                            label_text
-                        };
-
-                        // Make the name selectable to set the "Selected Stop"
-                        if ui.selectable_label(is_selected, label_text).clicked() {
-                            self.selected_stop_index = Some(i);
+                            }); // End horizontal layout for one stop
+                        
+                            ui.add_space(2.0); // Small gap between stops
                         }
-                    }); // End horizontal layout for one stop
-                
-                    ui.add_space(2.0); // Add a small gap between stops
-                }
+                    }); // End CollapsingHeader (group)
+            
+                ui.add_space(5.0); // Small gap between groups
             }
         });
     }
@@ -527,6 +607,69 @@ impl EguiApp {
                 egui::Stroke::NONE,
                 egui::StrokeKind::Inside,
             )));
+        }
+    }
+
+    /// Renders a modal window for saving a preset.
+    fn draw_preset_save_modal(&mut self, ctx: &egui::Context) {
+        if !self.show_preset_save_modal {
+            return;
+        }
+
+        let mut is_open = self.show_preset_save_modal;
+        let slot_display = self.preset_save_slot + 1;
+
+        egui::Window::new(format!("Save Preset F{}", slot_display))
+            .open(&mut is_open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.label("Enter a name for the preset:");
+                    
+                    let text_edit = egui::TextEdit::singleline(&mut self.preset_save_name)
+                        .desired_width(250.0);
+                    let response = ui.add(text_edit);
+
+                    // Auto-focus the text input when the window opens
+                    if !response.has_focus() {
+                        response.request_focus();
+                    }
+                    
+                    ui.add_space(10.0);
+                    
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel").clicked() {
+                            self.show_preset_save_modal = false;
+                        }
+                        
+                        // Check for 'Enter' key or button click
+                        let save_triggered = ui.button("Save").clicked() || 
+                                             (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+
+                        if save_triggered {
+                            if !self.preset_save_name.is_empty() {
+                                self.shared_state.save_preset(
+                                    self.preset_save_slot, 
+                                    self.preset_save_name.clone()
+                                );
+                                self.show_preset_save_modal = false;
+                            }
+                        }
+                    });
+
+                    // If 'Enter' was pressed, close the modal
+                    if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                         self.show_preset_save_modal = false;
+                    }
+
+                });
+            });
+        
+        // If the user clicked the 'X' button on the window
+        if !is_open {
+            self.show_preset_save_modal = false;
         }
     }
 }

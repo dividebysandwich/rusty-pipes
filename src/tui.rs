@@ -8,7 +8,7 @@ use crossterm::{
 use ratatui::{
     prelude::*,
     symbols::Marker,
-    widgets::{Block, Borders, canvas::{Canvas, Line as CanvasLine}, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, canvas::{Canvas, Line as CanvasLine}, Clear, List, ListItem, ListState, Paragraph},
 };
 use std::{
     io::{stdout, Stdout},
@@ -25,9 +25,11 @@ use crate::app_state::{AppState, connect_to_midi};
 
 const NUM_COLUMNS: usize = 3; // Number of columns for the stop list
 
+#[derive(Clone, PartialEq, Eq)]
 enum AppMode {
     MidiSelection,
     MainApp,
+    PresetSaveName(usize, String), // Holds (slot_index, current_name_buffer)
 }
 
 /// Holds the state specific to the TUI.
@@ -334,19 +336,50 @@ pub fn run_tui_loop(
                                     KeyCode::Char('n') => {
                                         app_state.select_none_channels_for_stop(&audio_tx)?;
                                     }
-                                    // Save (Shift+F1-F12)
                                     KeyCode::F(n) if (1..=12).contains(&n) && key.modifiers.contains(KeyModifiers::SHIFT) => {
-                                        app_state.shared_state.save_preset((n - 1) as usize); // Shift+F1 is slot 0
+                                        let slot = (n - 1) as usize;
+                                        // Get existing name or create default
+                                        let current_name = app_state.shared_state.presets[slot]
+                                            .as_ref()
+                                            .map_or_else(
+                                                || format!("Preset F{}", slot + 1),
+                                                |p| p.name.clone()
+                                            );
+                                        // Switch mode to ask for name
+                                        app_state.mode = AppMode::PresetSaveName(slot, current_name);
                                     }
                                     // Recall (F1-F12, no modifier)
                                     KeyCode::F(n) if (1..=12).contains(&n) && key.modifiers.is_empty() => {
-                                        // F1 is slot 0
                                         if let Err(e) = app_state.shared_state.recall_preset((n - 1) as usize, &audio_tx) {
                                             app_state.shared_state.add_midi_log(format!("ERROR recalling preset: {}", e));
                                         }
-                                    }
-                                    _ => {}
+                                    }                                    _ => {}
                                 }
+                            }
+                        },
+                        AppMode::PresetSaveName(slot, ref mut name_buffer) => {
+                            match key.code {
+                                KeyCode::Enter => {
+                                    // Save the preset
+                                    if !name_buffer.is_empty() {
+                                        app_state.shared_state.save_preset(slot, name_buffer.clone());
+                                    }
+                                    // Return to main app
+                                    app_state.mode = AppMode::MainApp;
+                                }
+                                KeyCode::Char(c) => {
+                                    // Add char to buffer
+                                    name_buffer.push(c);
+                                }
+                                KeyCode::Backspace => {
+                                    // Remove char from buffer
+                                    name_buffer.pop();
+                                }
+                                KeyCode::Esc => {
+                                    // Cancel
+                                    app_state.mode = AppMode::MainApp;
+                                }
+                                _ => {} // Ignore other keys
                             }
                         }
                     }
@@ -463,8 +496,9 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
         Paragraph::new(err.as_str())
             .style(Style::default().fg(Color::White).bg(Color::Red))
     } else {
-        let help_text = "Quit: q | Nav: ↑/k, ↓/j, ←/h, →/l | Toggle Chan: 1-0 | Panic: p | Assign All Ch: a | Assign No Ch: n";
-        Paragraph::new(help_text).alignment(Alignment::Center)    };
+        let help_text = "Q:Quit | Nav:↑↓←→/jkli | Ch:1-0 | A:All | N:None | P:Panic | F1-12:Recall | Shift+F1-12:Save";
+        Paragraph::new(help_text).alignment(Alignment::Center)
+    };
     frame.render_widget(footer_widget, main_layout[2]);
 
     // --- Stop List (Multi-column) ---
@@ -555,7 +589,7 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
                 })
                 .collect();
             
-            let title = if col_idx == 0 { state.shared_state.organ.name.as_str() } else if col_idx == 2 { "Stops (F1-F12: Recall, Shift+F1-F12: Save)" } else { "" };
+            let title = if col_idx == 0 { state.shared_state.organ.name.as_str() } else { "" };
             let list_widget = List::new(column_items)
                 .block(Block::default().borders(Borders::ALL).title(title));
             frame.render_widget(list_widget, *rect);
@@ -661,12 +695,74 @@ fn draw_main_app_ui(frame: &mut Frame, state: &mut TuiState) {
 
 /// Renders the UI frame.
 fn ui(frame: &mut Frame, state: &mut TuiState) {
-    match state.mode {
+    let mode = state.mode.clone();
+    match mode {
         AppMode::MidiSelection => draw_midi_selection_ui(frame, state),
         AppMode::MainApp => draw_main_app_ui(frame, state),
+        // Draw modal on top
+        AppMode::PresetSaveName(slot, name_buffer) => {
+            // Draw the main app in the background
+            draw_main_app_ui(frame, state);
+            // Draw the modal on top
+            draw_preset_save_modal(frame, slot, &name_buffer);
+        }
     }
 }
 
+/// Renders a modal window for saving a preset.
+fn draw_preset_save_modal(frame: &mut Frame, slot: usize, name_buffer: &str) {
+    // 60% width, 20% height
+    let area = centered_rect(frame.area(), 60, 20); 
+    let slot_display = slot + 1;
+    
+    let text = vec![
+        Line::from(Span::styled(
+            format!("Save Preset F{}", slot_display),
+            Style::default().add_modifier(Modifier::BOLD)
+        )),
+        Line::from(""),
+        Line::from("Enter a name:"),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!("{}▋", name_buffer), // Show buffer with a "cursor"
+            Style::default().fg(Color::Yellow)
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Press [Enter] to save, [Esc] to cancel",
+            Style::default().fg(Color::DarkGray)
+        )),
+    ];
+
+    let modal_block = Block::default().title("Save Preset").borders(Borders::ALL);
+    let modal_paragraph = Paragraph::new(text)
+        .block(modal_block)
+        .alignment(Alignment::Center);
+
+    frame.render_widget(Clear, area); // Clear the area behind the modal
+    frame.render_widget(modal_paragraph, area); // Render the modal
+}
+
+/// Helper to create a centered rectangle for the modal.
+fn centered_rect(r: Rect, percent_x: u16, percent_y: u16) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
 
 /// Helper to set up the terminal for TUI mode.
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {

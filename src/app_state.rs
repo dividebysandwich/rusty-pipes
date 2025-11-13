@@ -1,5 +1,6 @@
 use anyhow::Result;
 use midir::{MidiInput, MidiInputPort, MidiInputConnection, Ignore};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     fs::File,
@@ -17,7 +18,12 @@ use crate::{
 // --- Shared Constants & Types ---
 
 pub const PRESET_FILE_PATH: &str = "rusty-pipes.presets.json";
-pub type PresetBank = [Option<HashMap<usize, BTreeSet<u8>>>; 12];
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Preset {
+    pub name: String,
+    pub stop_channels: HashMap<usize, BTreeSet<u8>>,
+}
+pub type PresetBank = [Option<Preset>; 12];
 pub type PresetConfig = HashMap<String, PresetBank>;
 
 pub const MIDI_LOG_CAPACITY: usize = 10; // Max log lines
@@ -304,12 +310,18 @@ impl AppState {
         }
     }
 
-    /// Saves the current `stop_channels` and their mapped midi channel number to a preset slot.
-    pub fn save_preset(&mut self, slot: usize) {
+    /// Saves the current `stop_channels` to a preset slot with a given name.
+    pub fn save_preset(&mut self, slot: usize, name: String) {
         if slot >= 12 { return; }
-        self.presets[slot] = Some(self.stop_channels.clone());
+        
+        // Create the new Preset struct
+        let new_preset = Preset {
+            name: name.clone(),
+            stop_channels: self.stop_channels.clone(),
+        };
+        self.presets[slot] = Some(new_preset);
 
-        self.add_midi_log(format!("Preset slot F{} saved", slot + 1));
+        self.add_midi_log(format!("Preset slot F{} saved as '{}'", slot + 1, name));
         
         // After saving in memory, write the change to disk.
         if let Err(e) = self.save_all_presets_to_file() {
@@ -317,14 +329,18 @@ impl AppState {
         }
     }
 
-    /// Recalls a preset from a slot into `stop_channels` along with the midi channel mapping.
+    /// Recalls a preset from a slot into `stop_channels`.
     pub fn recall_preset(&mut self, slot: usize, audio_tx: &Sender<AppMessage>) -> Result<()> {
         if slot >= 12 { return Ok(()); }
-        if let Some(preset) = &self.presets[slot] {
-            let is_valid = preset.keys().all(|&stop_index| stop_index < self.organ.stops.len());
+        if let Some(preset_data) = &self.presets[slot] {
+            // Get the data from inside the struct
+            let stop_channels = &preset_data.stop_channels;
+            let _preset_name = &preset_data.name;
+
+            let is_valid = stop_channels.keys().all(|&stop_index| stop_index < self.organ.stops.len());
             if is_valid {
                 // First, update all stops to the preset
-                self.stop_channels = preset.clone();
+                self.stop_channels = stop_channels.clone();
 
                 // Iterate through all stops
                 for stop in self.organ.stops.iter() {
@@ -342,7 +358,8 @@ impl AppState {
                     for channel in 0..10 {
                         let active_notes_on_channel = self.channel_active_notes.get(&channel);
                         // Get active channels for this stop in the recalled preset
-                        let active_channels = preset.get(&stop.id_str.parse::<usize>()?).cloned().unwrap_or_default();
+                        // We must use `stop_channels` (the map) not `preset_data` (the struct)
+                        let active_channels = stop_channels.get(&stop.id_str.parse::<usize>()?).cloned().unwrap_or_default();
                         if !active_channels.contains(&channel) {
                             // Send NoteOff for all active notes on this channel for this stop
                             if let Some(notes_to_stop) = active_notes_on_channel {
@@ -360,7 +377,7 @@ impl AppState {
                 // This can happen if the organ definition file changed
                 let err_msg = format!(
                     "Failed to recall preset F{}: stop count mismatch (preset has {}, organ has {})",
-                    slot + 1, preset.len(), self.stop_channels.len()
+                    slot + 1, stop_channels.len(), self.stop_channels.len()
                 );
                 log::warn!("{}", err_msg);
                 self.add_midi_log(err_msg);
