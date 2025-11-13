@@ -18,7 +18,7 @@ use std::{
 };
 
 use midir::MidiInputConnection;
-use crate::app::{AppMessage, TuiMessage};
+use crate::app::{AppMessage, TuiMessage, PIPES, LOGO};
 use crate::app_state::{AppState, connect_to_midi};
 
 const NUM_COLUMNS: usize = 3; // Number of columns for the stop list
@@ -404,25 +404,6 @@ pub fn run_tui_loop(
     cleanup_terminal()?;
     Ok(())
 }
-
-const PIPES: &str = r"          ███          
-      ▐█▋ ███ ▐█▋      
-  ▐█▋ ▐█▋ ███ ▐█▋ ▐█▋  
-  ▐█▋ ▐█▋ ███ ▐█▋ ▐█▋  
-  ▐█▋ ▐█▋ ███ ▐█▋ ▐█▋  
-  ▐▅▋ ▐▅▋ ▐▄▋ ▐▅▋ ▐▅▋  
-    ▀   ▀   █   ▀   ▀   
-█████████████████████
-          ▀▀▀▀▀         
-";
-
-const LOGO: &str = r"██████╗ ██╗   ██╗███████╗████████╗██╗   ██╗    ██████╗ ██╗██████╗ ███████╗███████╗
-██╔══██╗██║   ██║██╔════╝╚══██╔══╝╚██╗ ██╔╝    ██╔══██╗██║██╔══██╗██╔════╝██╔════╝
-██████╔╝██║   ██║███████╗   ██║    ╚████╔╝     ██████╔╝██║██████╔╝█████╗  ███████╗
-██╔══██╗██║   ██║╚════██║   ██║     ╚██╔╝      ██╔═══╝ ██║██╔═══╝ ██╔══╝  ╚════██║
-██║  ██║╚██████╔╝███████║   ██║      ██║       ██║     ██║██║     ███████╗███████║
-╚═╝  ╚═╝ ╚═════╝ ╚══════╝   ╚═╝      ╚═╝       ╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝
-";
 
 // MIDI Selection UI function
 fn draw_midi_selection_ui(frame: &mut Frame, app_state: &AppState, port_list_state: &mut ListState) {

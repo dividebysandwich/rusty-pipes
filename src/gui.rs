@@ -12,7 +12,7 @@ use std::{
 };
 
 use crate::{
-    app::{AppMessage, TuiMessage},
+    app::{AppMessage, TuiMessage, PIPES, LOGO},
     app_state::{connect_to_midi, AppState},
     organ::Organ,
 };
@@ -211,10 +211,35 @@ impl App for EguiApp {
 
 impl EguiApp {
     fn draw_midi_selection_ui(&mut self, ctx: &egui::Context) {
-        let panel_frame = egui::Frame::default().fill(egui::Color32::TRANSPARENT);
+        let panel_frame = egui::Frame::default();
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() * 0.2);
+
+                // Set a font size for the ASCII art
+                let font_size = 10.0; 
+                let mono_font = egui::FontId::monospace(font_size);
+                let orange = egui::Color32::from_rgb(255, 165, 0);
+
+                // Draw the pipes (gray)
+                ui.label(
+                    egui::RichText::new(PIPES)
+                        .font(mono_font.clone())
+                        .color(egui::Color32::GRAY),
+                );
+                // Draw the main logo (orange)
+                ui.label(
+                    egui::RichText::new(LOGO)
+                        .font(mono_font.clone())
+                        .color(orange),
+                );
+                            // Draw the tagline from the TUI (orange)
+                ui.label(
+                    egui::RichText::new("Indicia MMXXV")
+                        .font(mono_font) // No clone needed on last use
+                        .color(orange),
+                );
+                ui.add_space(10.0); // Space between logo and text
+                
                 ui.heading("Rusty Pipes");
                 ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
                 ui.label(env!("CARGO_PKG_DESCRIPTION"));
@@ -291,7 +316,10 @@ impl EguiApp {
         self.draw_preset_panel(ctx);
         self.draw_log_and_piano_roll_panel(ctx);
 
-        let panel_frame = egui::Frame::default().fill(egui::Color32::TRANSPARENT);
+        let panel_frame = egui::Frame {
+            fill: egui::Color32::from_rgb(30, 30, 30),
+            ..Default::default()
+        };
 
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
             let organ_name = self.app_state.lock().unwrap().organ.name.clone();
