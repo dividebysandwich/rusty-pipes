@@ -1,5 +1,5 @@
 use anyhow::Result;
-use midir::{MidiInput, MidiInputPort, MidiInputConnection, Ignore};
+use midir::{MidiInput, MidiInputPort, MidiInputConnection};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -63,8 +63,6 @@ pub fn connect_to_midi(
 /// Holds the shared state for both TUI and GUI.
 pub struct AppState {
     pub organ: Arc<Organ>,
-    pub midi_input: Option<MidiInput>,
-    pub available_ports: Vec<(MidiInputPort, String)>,
     /// Maps stop_index -> set of active MIDI channels (0-9)
     pub stop_channels: HashMap<usize, BTreeSet<u8>>,
     pub midi_log: VecDeque<String>,
@@ -82,26 +80,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(organ: Arc<Organ>, is_file_playback: bool) -> Result<Self> {
-        let (midi_input, available_ports) = if is_file_playback {
-            (None, Vec::new())
-        } else {
-            let mut midi_in = MidiInput::new("rusty-pipes-input")?;
-            midi_in.ignore(Ignore::ActiveSense);
-            let mut ports = Vec::new();
-            for port in midi_in.ports() {
-                let port_name = midi_in.port_name(&port)?;
-                ports.push((port, port_name));
-            }
-            (Some(midi_in), ports)
-        };
+    pub fn new(organ: Arc<Organ>) -> Result<Self> {
 
         let presets = Self::load_presets(&organ.name);
 
         Ok(Self {
             organ,
-            midi_input,
-            available_ports,
             stop_channels: HashMap::new(),
             midi_log: VecDeque::with_capacity(MIDI_LOG_CAPACITY),
             error_msg: None,

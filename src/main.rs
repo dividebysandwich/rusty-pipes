@@ -1,5 +1,3 @@
-// src/main.rs
-
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use std::sync::mpsc;
@@ -9,6 +7,7 @@ use simplelog::{Config, LevelFilter, WriteLogger};
 use std::fs::File;
 use std::thread::{self, JoinHandle};
 use std::sync::Mutex;
+use midir::{MidiInput, MidiInputConnection};
 
 mod app;
 mod audio;
@@ -19,14 +18,16 @@ mod wav;
 mod wav_converter;
 mod app_state;
 mod gui;
-mod tui_filepicker;
 mod gui_filepicker;
+mod tui_filepicker;
+mod config;
+mod tui_config;
+mod gui_config;
 
 use app::{AppMessage, TuiMessage};
-use app_state::AppState;
+use app_state::{AppState, connect_to_midi};
 use organ::Organ;
-use tui_filepicker::run_tui_file_picker_loop;
-use gui_filepicker::run_gui_file_picker_loop;
+use config::{AppSettings, RuntimeConfig};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 #[value(rename_all = "lower")]
@@ -51,11 +52,11 @@ struct Args {
 
     /// Pre-cache all samples on startup (uses more memory, reduces latency)
     #[arg(long)]
-    precache: bool,
+    precache: Option<bool>, // Made Option to allow overriding
 
     /// Convert all samples to 16-bit PCM on load (saves memory, may reduce quality)
     #[arg(long)]
-    convert_to_16bit: bool,
+    convert_to_16bit: Option<bool>, // Made Option
 
     /// Set the application log level
     #[arg(long, value_name = "LEVEL", default_value = "info")]
@@ -66,12 +67,12 @@ struct Args {
     ir_file: Option<PathBuf>,
 
     /// Reverb mix level (0.0 = dry, 1.0 = fully wet)
-    #[arg(long, value_name = "REVERB_MIX", default_value_t = 0.5)]
-    reverb_mix: f32,
+    #[arg(long, value_name = "REVERB_MIX")]
+    reverb_mix: Option<f32>,
 
     /// Preserve original (de)tuning of recorded samples up to +/- 20 cents to preserve organ character
     #[arg(long)]
-    original_tuning: bool,
+    original_tuning: Option<bool>,
 
     /// List all available MIDI input devices and exit
     #[arg(long)]
@@ -82,8 +83,8 @@ struct Args {
     midi_device: Option<String>,
 
     /// Audio buffer size in frames (lower values reduce latency but may cause glitches)
-    #[arg(long, value_name = "NUM_FRAMES", default_value_t = 512)]
-    audio_buffer_frames: usize,
+    #[arg(long, value_name = "NUM_FRAMES")]
+    audio_buffer_frames: Option<usize>,
     
     /// Run in terminal UI (TUI) mode as a fallback
     #[arg(long)]
@@ -102,97 +103,99 @@ fn main() -> Result<()> {
         LogLevel::Debug => LevelFilter::Debug,
         LogLevel::Trace => LevelFilter::Trace,
     };
-    WriteLogger::init(
-        log_level,
-        Config::default(),
-        File::create("rusty-pipes.log")?
-    )?;
+    WriteLogger::init(log_level, Config::default(), File::create("rusty-pipes.log")?)?;
 
-    // This runs before any other setup and exits.
+    // --- List MIDI devices and exit ---
     if args.list_midi_devices {
         println!("Available MIDI Input Devices:");
         match midi::get_midi_device_names() {
             Ok(names) => {
-                if names.is_empty() {
-                    println!("  No MIDI devices found.");
-                } else {
-                    for (i, name) in names.iter().enumerate() {
-                        println!("  {}: {}", i, name);
-                    }
-                }
+                if names.is_empty() { println!("  No MIDI devices found."); }
+                else { for (i, name) in names.iter().enumerate() { println!("  {}: {}", i, name); } }
             }
-            Err(e) => {
-                eprintln!("Error fetching MIDI devices: {}", e);
-            }
+            Err(e) => { eprintln!("Error fetching MIDI devices: {}", e); }
         }
-        return Ok(()); // Exit after listing
+        return Ok(());
     }
+
+    let midi_input_arc = Arc::new(Mutex::new(match MidiInput::new("Rusty Pipes MIDI Input") {
+        Ok(mi) => Some(mi),
+        Err(e) => {
+            log::error!("Failed to initialize MIDI: {}", e);
+            None
+        }
+    }));
+
+    // --- Load Config and Merge CLI Args ---
+    let mut settings = config::load_settings().unwrap_or_default();
     
-    // --- Print version info only if not listing devices ---
-    // (And not in GUI mode, as stdout is not visible)
-    if args.tui && args.organ_file.is_some() {
+    // Command-line arguments override saved config
+    if let Some(f) = args.organ_file { settings.organ_file = Some(f); }
+    if let Some(f) = args.ir_file { settings.ir_file = Some(f); }
+    if let Some(m) = args.reverb_mix { settings.reverb_mix = m; }
+    if let Some(b) = args.audio_buffer_frames { settings.audio_buffer_frames = b; }
+    if let Some(p) = args.precache { settings.precache = p; }
+    if let Some(c) = args.convert_to_16bit { settings.convert_to_16bit = c; }
+    if let Some(o) = args.original_tuning { settings.original_tuning = o; }
+    if args.tui { settings.tui_mode = true; } // `--tui` flag forces TUI mode
+
+    // --- Run Configuration UI ---
+    let config_result = if settings.tui_mode {
+        tui_config::run_config_ui(settings, Arc::clone(&midi_input_arc))
+    } else {
+        gui_config::run_config_ui(settings, Arc::clone(&midi_input_arc))
+    };
+    
+    // `config` is the final, user-approved configuration
+    let config: RuntimeConfig = match config_result {
+        Ok(Some(config)) => config,
+        Ok(None) => {
+            // User quit the config screen
+            println!("Configuration cancelled. Exiting.");
+            return Ok(());
+        }
+        Err(e) => {
+            // Need to make sure TUI is cleaned up if it failed
+            if args.tui {
+                let _ = tui::cleanup_terminal();
+            }
+            log::error!("Error in config UI: {}", e);
+            return Err(e);
+        }
+    };
+    
+    // --- Save Final Settings (excluding runtime options) ---
+    let settings_to_save = AppSettings {
+        organ_file: Some(config.organ_file.clone()), // Now required
+        ir_file: config.ir_file.clone(),
+        reverb_mix: config.reverb_mix,
+        audio_buffer_frames: config.audio_buffer_frames,
+        precache: config.precache,
+        convert_to_16bit: config.convert_to_16bit,
+        original_tuning: config.original_tuning,
+        tui_mode: config.tui_mode,
+    };
+    if let Err(e) = config::save_settings(&settings_to_save) {
+        log::warn!("Failed to save settings: {}", e);
+    }
+
+    // --- APPLICATION STARTUP ---
+    // All setup logic now lives in main.
+    
+    let is_tui = config.tui_mode;
+    if is_tui {
         println!("\nRusty Pipes - Virtual Pipe Organ Simulator v{}\n", env!("CARGO_PKG_VERSION"));
     }
 
-let organ_path: PathBuf = match args.organ_file {
-        Some(path) => {
-            if !path.exists() {
-                return Err(anyhow::anyhow!("File not found: {}", path.display()));
-            }
-            log::info!("Organ file provided via argument: {}", path.display());
-            path
-        },
-        None => {
-            // No path provided, launch the appropriate file picker
-            if args.tui {
-                log::info!("No organ file provided. Starting TUI file picker.");
-                match run_tui_file_picker_loop() {
-                    Ok(Some(path)) => path,
-                    Ok(None) => {
-                        println!("No file selected. Exiting.");
-                        return Ok(()); // User quit the picker
-                    }
-                    Err(e) => {
-                        // TUI cleanup should have happened, but print error
-                        eprintln!("Error in TUI file picker: {}", e);
-                        return Err(e);
-                    }
-                }
-            } else {
-                log::info!("No organ file provided. Starting GUI file picker.");
-                match run_gui_file_picker_loop() {
-                    Ok(Some(path)) => path,
-                    Ok(None) => {
-                        log::info!("No file selected. Exiting.");
-                        return Ok(()); // User quit the picker
-                    }
-                    Err(e) => {
-                        log::error!("Error in GUI file picker: {}", e);
-                        return Err(e);
-                    }
-                }
-            }
-        }
-    };
-
-    let convert_to_16_bit = args.convert_to_16bit;
-    let precache = args.precache;
-    let midi_file_path = args.midi_file;
-    let ir_file_path = args.ir_file;
-    let reverb_mix = args.reverb_mix;
-    let original_tuning = args.original_tuning;
-    let preselected_midi_device = args.midi_device;
-    let audio_buffer_frames = args.audio_buffer_frames;
-    let is_file_playback = midi_file_path.is_some();
-
-    if !organ_path.exists() {
-        return Err(anyhow::anyhow!("File not found: {}", organ_path.display()));
-    }
-
     // --- Parse the organ definition ---
-    if args.tui { println!("Loading organ definition..."); }
-    let organ = Arc::new(Organ::load(&organ_path, convert_to_16_bit, precache, original_tuning)?);
-    if args.tui {
+    if is_tui { println!("Loading organ definition..."); }
+    let organ = Arc::new(Organ::load(
+        &config.organ_file, 
+        config.convert_to_16bit, 
+        config.precache, 
+        config.original_tuning
+    )?);
+    if is_tui {
         println!("Successfully loaded organ: {}", organ.name);
         println!("Found {} stops.", organ.stops.len());
     }
@@ -202,12 +205,27 @@ let organ_path: PathBuf = match args.organ_file {
     let (tui_tx, tui_rx) = mpsc::channel::<TuiMessage>();
 
     // --- Start the Audio thread ---
-    if args.tui { println!("Starting audio engine..."); }
-    let _stream = audio::start_audio_playback(audio_rx, Arc::clone(&organ), audio_buffer_frames)?;
-    if args.tui { println!("Audio engine running."); }
+    if is_tui { println!("Starting audio engine..."); }
+    let _stream = audio::start_audio_playback(
+        audio_rx, 
+        Arc::clone(&organ), 
+        config.audio_buffer_frames
+    )?;
+    if is_tui { println!("Audio engine running."); }
+    
+    // --- Load IR file ---
+    if let Some(path) = config.ir_file {
+        if path.exists() {
+            log::info!("Loading IR file: {}", path.display());
+            audio_tx.send(AppMessage::SetReverbIr(path))?;
+            audio_tx.send(AppMessage::SetReverbWetDry(config.reverb_mix))?;
+        } else {
+            log::warn!("IR file not found: {}", path.display());
+        }
+    }
 
     // --- Create thread-safe AppState ---
-    let app_state = Arc::new(Mutex::new(AppState::new(organ.clone(), is_file_playback)?));
+    let app_state = Arc::new(Mutex::new(AppState::new(organ.clone())?));
 
     // --- Spawn the dedicated MIDI logic thread ---
     let logic_app_state = Arc::clone(&app_state);
@@ -231,57 +249,52 @@ let organ_path: PathBuf = match args.organ_file {
 
     // --- Start MIDI input ---
     let _midi_file_thread: Option<JoinHandle<()>>;
-    let is_file_playback = midi_file_path.is_some();
+    let mut _midi_connection: Option<MidiInputConnection<()>> = None;
 
-    if let Some(path) = midi_file_path {
+    // We take the MidiInput object back from the Arc *after* the config UI is closed.
+    let mut midi_input_opt = midi_input_arc.lock().unwrap().take();
+
+    if let Some(path) = config.midi_file {
         // --- Play from MIDI file ---
-        if !path.exists() {
-            return Err(anyhow::anyhow!("MIDI file not found: {}", path.display()));
-        }
-        if args.tui { println!("Starting MIDI file playback: {}", path.display()); }
-        _midi_file_thread = Some(midi::play_midi_file(
-            path,
-            tui_tx.clone()
-        )?);
-    } else {
+        if is_tui { println!("Starting MIDI file playback: {}", path.display()); }
+        _midi_file_thread = Some(midi::play_midi_file(path, tui_tx.clone())?);
+    } else if let (Some(port), Some(name), Some(midi_input)) = (
+        config.midi_port,
+        config.midi_port_name,
+        midi_input_opt.take() // Use the MidiInput we just took from the Arc
+    ) {
         // --- Use live MIDI input ---
+        if is_tui { println!("Connecting to MIDI device: {}", name); }
+        // The `midi_input` and `port` are now guaranteed to be from the same instance.
+        _midi_connection = Some(connect_to_midi(midi_input, &port, &name, &tui_tx)?);
+        app_state.lock().unwrap().add_midi_log(format!("Connected to: {}", name));
         _midi_file_thread = None;
-        if args.tui { println!("Initializing UI for MIDI device selection..."); }
+    } else {
+        // --- No MIDI file or device ---
+        if is_tui { println!("No MIDI file or device selected. Running without MIDI input."); }
+        _midi_file_thread = None;
     }
 
     // --- Run the TUI or GUI on the main thread ---
-    // This function will block until the user quits.
-    
-    if args.tui {
-        // --- Run TUI ---
-        if args.tui { println!("Starting TUI... Press 'q' to quit."); }
+    if is_tui {
+        if is_tui { println!("Starting TUI... Press 'q' to quit."); }
         tui::run_tui_loop(
             audio_tx,
-            tui_tx,
             Arc::clone(&app_state),
-            ir_file_path,
-            reverb_mix,
-            is_file_playback,
-            preselected_midi_device,
         )?;
     } else {
-        // --- Run GUI (default) ---
-        log::info!("Starting GUI..."); // Log to file
+        log::info!("Starting GUI...");
         gui::run_gui_loop(
             audio_tx,
             Arc::clone(&app_state),
             tui_tx,
             organ,
-            ir_file_path,
-            reverb_mix,
-            is_file_playback,
-            preselected_midi_device,
+            _midi_connection, // Pass the connection to the GUI
         )?;
     }
 
-
     // --- Shutdown ---
-    if args.tui { println!("Shutting down..."); }
+    if is_tui { println!("Shutting down..."); }
     log::info!("Shutting down...");
     Ok(())
 }

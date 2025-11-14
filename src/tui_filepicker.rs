@@ -1,69 +1,66 @@
 use anyhow::Result;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-
-};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     prelude::*,
-
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Clear},
 };
 use std::{
-
     time::Duration,
-    fs, // <-- ADDED
+    fs,
     path::{Path, PathBuf},
+    io::Stdout,
 };
 
-use crate::tui::{setup_terminal, cleanup_terminal};
+// Define the terminal type alias for convenience
+type TuiTerminal = Terminal<CrosstermBackend<Stdout>>;
 
 /// Holds state for the TUI file picker.
-struct TuiFilePickerState {
+struct TuiFilePickerState<'a> {
     current_path: PathBuf,
-    entries: Vec<PathBuf>, // Just store the paths
+    entries: Vec<PathBuf>,
     list_state: ListState,
     error_msg: Option<String>,
+    allowed_extensions: &'a [&'a str],
 }
 
-impl TuiFilePickerState {
-    fn new() -> Result<Self> {
+impl<'a> TuiFilePickerState<'a> {
+    fn new(allowed_extensions: &'a [&'a str]) -> Result<Self> {
         let current_path = std::env::current_dir()?;
         let mut state = Self {
             current_path,
             entries: Vec::new(),
             list_state: ListState::default(),
             error_msg: None,
+            allowed_extensions,
         };
-        state.load_entries()?; // Load initial entries
+        state.load_entries()?;
         Ok(state)
     }
     
-    /// Helper to check for allowed extensions
-    fn is_allowed_file(path: &Path) -> bool {
+    fn is_allowed_file(&self, path: &Path) -> bool {
         if !path.is_file() { return false; }
+        if self.allowed_extensions.is_empty() { return true; } 
+        
         let ext = path.extension().and_then(|s| s.to_str());
-        matches!(ext, Some("organ") | Some("Organ_Hauptwerk_xml"))
+        if let Some(ext) = ext {
+            return self.allowed_extensions.contains(&ext);
+        }
+        false
     }
 
-    /// Read the current directory and fill the entries list
     fn load_entries(&mut self) -> Result<()> {
         self.entries.clear();
-        self.list_state.select(None); // Deselect
+        self.list_state.select(None);
         self.error_msg = None;
 
         match fs::read_dir(&self.current_path) {
             Ok(entries) => {
-                // 1. Collect all valid paths
                 let mut paths: Vec<PathBuf> = entries
-                    .filter_map(Result::ok) // Ignore read errors on individual entries
+                    .filter_map(Result::ok)
                     .map(|e| e.path())
-                    .filter(|p| {
-                        // Show directories and allowed files
-                        p.is_dir() || Self::is_allowed_file(p)
-                    })
+                    .filter(|p| p.is_dir() || self.is_allowed_file(p))
                     .collect();
 
-                // 2. Sort them: directories first, then files
                 paths.sort_by(|a, b| {
                     if a.is_dir() && !b.is_dir() {
                         std::cmp::Ordering::Less
@@ -87,19 +84,16 @@ impl TuiFilePickerState {
         Ok(())
     }
 
-    /// Get the currently selected path, if any
     fn get_selected_path(&self) -> Option<&PathBuf> {
         self.list_state.selected().and_then(|i| self.entries.get(i))
     }
 
-    /// Move selection to the next item
     fn next_item(&mut self) {
         if self.entries.is_empty() { return; }
         let i = self.list_state.selected().map_or(0, |i| (i + 1) % self.entries.len());
         self.list_state.select(Some(i));
     }
 
-    /// Move selection to the previous item
     fn prev_item(&mut self) {
         if self.entries.is_empty() { return; }
         let len = self.entries.len();
@@ -107,21 +101,18 @@ impl TuiFilePickerState {
         self.list_state.select(Some(i));
     }
     
-    /// Called on 'Enter'. If a file, returns it. If a dir, navigates into it.
     fn activate_selected(&mut self) -> Result<Option<PathBuf>> {
         if let Some(path) = self.get_selected_path().cloned() {
             if path.is_dir() {
                 self.current_path = path;
                 self.load_entries()?;
-            } else if Self::is_allowed_file(&path) {
-                // Found it!
+            } else if self.is_allowed_file(&path) {
                 return Ok(Some(path));
             }
         }
         Ok(None)
     }
     
-    /// Navigates up to the parent directory
     fn go_up(&mut self) -> Result<()> {
         if let Some(parent) = self.current_path.parent() {
             self.current_path = parent.to_path_buf();
@@ -131,30 +122,28 @@ impl TuiFilePickerState {
     }
 }
 
-/// Runs a TUI loop to browse for an organ file.
+
+/// Runs a TUI loop to browse for a file.
 /// Returns the path if selected, or None if the user quits.
-pub fn run_tui_file_picker_loop() -> Result<Option<PathBuf>> {
-    let mut terminal = setup_terminal()?;
-    let mut state = TuiFilePickerState::new()?;
+pub fn run_file_picker(
+    terminal: &mut TuiTerminal,
+    title: &str,
+    allowed_extensions: &[&str],
+) -> Result<Option<PathBuf>> {
+    let mut state = TuiFilePickerState::new(allowed_extensions)?;
     
-    let result: Option<PathBuf> = loop { // Assign loop result to a variable
-        terminal.draw(|f| draw_file_picker_ui(f, &mut state))?;
+    let result: Option<PathBuf> = loop {
+        terminal.draw(|f| draw_file_picker_ui(f, &mut state, title))?; 
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
                     match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => {
-                            break None; // Quit
-                        }
+                        KeyCode::Char('q') | KeyCode::Esc => break None,
                         KeyCode::Down | KeyCode::Char('j') => state.next_item(),
                         KeyCode::Up | KeyCode::Char('k') => state.prev_item(),
-                        KeyCode::PageDown => {
-                            for _ in 0..5 { state.next_item(); }
-                        }
-                        KeyCode::PageUp => {
-                            for _ in 0..5 { state.prev_item(); }
-                        }
+                        KeyCode::PageDown => for _ in 0..5 { state.next_item(); },
+                        KeyCode::PageUp => for _ in 0..5 { state.prev_item(); },
                         KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h') => {
                             if let Err(e) = state.go_up() {
                                 state.error_msg = Some(format!("Error: {}", e));
@@ -162,8 +151,8 @@ pub fn run_tui_file_picker_loop() -> Result<Option<PathBuf>> {
                         },
                         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
                             match state.activate_selected() {
-                                Ok(Some(file_path)) => break Some(file_path), // File selected!
-                                Ok(None) => {}, // Was a directory, state updated
+                                Ok(Some(file_path)) => break Some(file_path),
+                                Ok(None) => {},
                                 Err(e) => state.error_msg = Some(format!("Error: {}", e)),
                             }
                         }
@@ -172,14 +161,16 @@ pub fn run_tui_file_picker_loop() -> Result<Option<PathBuf>> {
                 }
             }
         }
-    }; // Loop ends, `result` is set
+    };
 
-    cleanup_terminal()?; // Clean up *before* returning
-    Ok(result) // Return the result
+    Ok(result)
 }
 
 /// Renders the File Picker UI.
-fn draw_file_picker_ui(frame: &mut Frame, state: &mut TuiFilePickerState) {
+fn draw_file_picker_ui(frame: &mut Frame, state: &mut TuiFilePickerState, title: &str) {
+    // This clears the screen, removing the config menu from underneath
+    frame.render_widget(Clear, frame.area());
+
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -192,7 +183,7 @@ fn draw_file_picker_ui(frame: &mut Frame, state: &mut TuiFilePickerState) {
 
     // Header
     let header_block = Block::default().borders(Borders::ALL)
-        .title("Select Organ File (q to quit)");
+        .title(format!("{} (q to quit)", title));
     let header_text = Paragraph::new(format!("Current Path: {}", state.current_path.display()))
         .block(header_block);
     frame.render_widget(header_text, layout[0]);

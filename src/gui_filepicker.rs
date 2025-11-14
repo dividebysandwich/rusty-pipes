@@ -2,17 +2,17 @@ use anyhow::Result;
 use rfd::FileDialog;
 use std::path::PathBuf;
 
-/// Shows a native file picker dialog to select an organ file.
-/// This runs *before* the main eframe loop.
-pub fn run_gui_file_picker_loop() -> Result<Option<PathBuf>> {
-    log::info!("No organ file provided. Opening file picker...");
+/// Shows a native file picker dialog.
+pub fn pick_file(title: &str, filters: &[(&str, &[&str])]) -> Result<Option<PathBuf>> {
+    log::info!("Opening file picker with title: {}", title);
     
-    // This creates a native OS file dialog, not an egui window.
-    let file = FileDialog::new()
-        .set_title("Select an Organ Definition File")
-        .add_filter("Organ Files", &["organ", "Organ_Hauptwerk_xml"])
-        .set_directory("/")
-        .pick_file(); // This is a blocking call
+    let mut dialog = FileDialog::new().set_title(title).set_directory("/");
+    
+    for (name, extensions) in filters {
+        dialog = dialog.add_filter(*name, *extensions);
+    }
+
+    let file = dialog.pick_file(); // This is a blocking call
 
     match file {
         Some(path) => {

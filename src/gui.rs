@@ -1,9 +1,10 @@
+// src/gui.rs
+
 use anyhow::Result;
 use eframe::{egui, App, Frame};
 use egui::{Stroke, UiBuilder};
 use midir::MidiInputConnection;
 use std::{
-    path::PathBuf,
     sync::{
         mpsc::Sender,
         Arc, Mutex
@@ -13,27 +14,21 @@ use std::{
 };
 
 use crate::{
-    app::{AppMessage, TuiMessage, LOGO, PIPES},
-    app_state::{connect_to_midi, AppState, Preset},
+    app::{AppMessage, TuiMessage},
+    app_state::{AppState, Preset},
     organ::Organ,
 };
 
-enum GuiMode {
-    MidiSelection,
-    MainApp,
-}
-
+#[allow(dead_code)]
 pub struct EguiApp {
     app_state: Arc<Mutex<AppState>>,
     audio_tx: Sender<AppMessage>,
     tui_tx: Sender<TuiMessage>,
-    mode: GuiMode,
 
     // Need to hold the connection to keep it alive
-    midi_connection: Option<MidiInputConnection<()>>,
+    _midi_connection: Option<MidiInputConnection<()>>,
 
     // --- GUI-specific state ---
-    selected_midi_port_index: Option<usize>,
     selected_stop_index: Option<usize>,
     stop_list_scroll_offset: f32,
 
@@ -48,63 +43,8 @@ pub fn run_gui_loop(
     app_state: Arc<Mutex<AppState>>,
     tui_tx: Sender<TuiMessage>,
     organ: Arc<Organ>,
-    ir_file_path: Option<PathBuf>,
-    reverb_mix: f32,
-    is_file_playback: bool,
-    preselected_device_name: Option<String>,
+    midi_connection: Option<MidiInputConnection<()>>,
 ) -> Result<()> {
-
-    let mut gui_mode = GuiMode::MidiSelection;
-    let mut connection: Option<MidiInputConnection<()>> = None;
-    let mut selected_midi_port_index: Option<usize> = None;
-
-    // Scope to limit the lock duration
-    {
-        let mut app_state_locked = app_state.lock().unwrap();
-        // Handle preselected MIDI device (same logic as TUI)
-        if !is_file_playback {
-            if let Some(device_name) = preselected_device_name {
-                let found_port = app_state_locked
-                    .available_ports
-                    .iter()
-                    .find(|(_, name)| *name == device_name)
-                    .map(|(port, _)| port.clone());
-
-                if let Some(port) = found_port {
-                    if let Some(midi_input) = app_state_locked.midi_input.take() {
-                        let conn = connect_to_midi(midi_input, &port, &device_name, &tui_tx)?;
-                        connection = Some(conn);
-                        gui_mode = GuiMode::MainApp;
-                        app_state_locked.add_midi_log(format!("Connected to: {}", device_name));
-                        app_state_locked.available_ports.clear();
-                    }
-                } else {
-                    app_state_locked.error_msg =
-                        Some(format!("ERROR: MIDI device not found: '{}'", device_name));
-                }
-            }
-            
-            if !app_state_locked.available_ports.is_empty() {
-                selected_midi_port_index = Some(0);
-            }
-
-        } else {
-            gui_mode = GuiMode::MainApp; // Skip selection if playing file
-        }
-
-        // Handle IR file (same logic as TUI)
-        if let Some(path) = ir_file_path {
-            if path.exists() {
-                let log_msg = format!("Loading IR file: {:?}", path.file_name().unwrap());
-                app_state_locked.add_midi_log(log_msg);
-                audio_tx.send(AppMessage::SetReverbIr(path))?;
-                audio_tx.send(AppMessage::SetReverbWetDry(reverb_mix))?;
-            } else {
-                let log_msg = format!("ERROR: IR file not found: {}", path.display());
-                app_state_locked.add_midi_log(log_msg);
-            }
-        }
-    } // Scope ends, unlock app_state
 
     let selected_stop_index = if !organ.stops.is_empty() { Some(0) } else { None };
 
@@ -112,9 +52,7 @@ pub fn run_gui_loop(
         app_state,
         audio_tx,
         tui_tx,
-        mode: gui_mode,
-        midi_connection: connection,
-        selected_midi_port_index,
+        _midi_connection: midi_connection, // Store the connection
         selected_stop_index,
         stop_list_scroll_offset: 0.0,
         show_preset_save_modal: false,
@@ -155,8 +93,8 @@ impl App for EguiApp {
             let app_state = self.app_state.lock().unwrap();
             (
                 app_state.organ.clone(),
-                app_state.stop_channels.clone(), // Clone the map
-                app_state.midi_log.clone(),      // Clone the deque
+                app_state.stop_channels.clone(),
+                app_state.midi_log.clone(),
                 app_state.presets.clone(),
                 app_state.currently_playing_notes.clone(),
                 app_state.finished_notes_display.clone(),
@@ -164,9 +102,8 @@ impl App for EguiApp {
             )
         };
 
-        if !self.show_preset_save_modal { // Don't process keys if modal is open
-            let input = ctx.input(|i| i.clone()); // Get a snapshot of the input state
-
+        if !self.show_preset_save_modal {
+            let input = ctx.input(|i| i.clone());
             let function_keys = [
                 egui::Key::F1, egui::Key::F2, egui::Key::F3, egui::Key::F4,
                 egui::Key::F5, egui::Key::F6, egui::Key::F7, egui::Key::F8,
@@ -176,17 +113,15 @@ impl App for EguiApp {
                 if input.key_pressed(key) {
                     if input.modifiers.shift {
                         self.preset_save_slot = i;
-                        // Pre-fill name if it exists, otherwise "Preset F{}"
                         self.preset_save_name = presets[i]
                             .as_ref()
                             .map_or_else(
-                                || format!("Preset F{}", i + 1), // Default name
-                                |p| p.name.clone() // Current name
+                                || format!("Preset F{}", i + 1),
+                                |p| p.name.clone()
                             );
                         self.show_preset_save_modal = true;
                     } else {
                         let mut app_state = self.app_state.lock().unwrap();
-                        // Recall logic
                         if let Err(e) = app_state.recall_preset(i, &self.audio_tx) {
                             app_state.add_midi_log(format!("ERROR recalling preset: {}", e));
                         }
@@ -200,30 +135,20 @@ impl App for EguiApp {
             }
         }
 
-        // Update internal state (e.g., piano roll)
-        if matches!(self.mode, GuiMode::MainApp) {
-            // Request continuous repaints for the piano roll
-            ctx.request_repaint_after(Duration::from_millis(100));
-        }
-
-        // Draw the UI based on mode
-        match self.mode {
-            GuiMode::MidiSelection => {
-                self.draw_midi_selection_ui(ctx);
-            }
-            GuiMode::MainApp => {
-                self.draw_main_app_ui(
-                    ctx,
-                    &midi_log,
-                    &active_notes,
-                    &finished_notes,
-                    piano_roll_duration,
-                    organ.clone(),
-                    stop_channels.clone(),
-                    &presets
-                );
-            }
-        }
+        // Request continuous repaints for the piano roll
+        ctx.request_repaint_after(Duration::from_millis(100));
+        
+        // Draw the UI (no more mode switching)
+        self.draw_main_app_ui(
+            ctx,
+            &midi_log,
+            &active_notes,
+            &finished_notes,
+            piano_roll_duration,
+            organ.clone(),
+            stop_channels.clone(),
+            &presets
+        );
 
         // Draw preset save modal if needed
         self.draw_preset_save_modal(ctx);
@@ -232,7 +157,6 @@ impl App for EguiApp {
     // Handle quit request (e.g., pressing 'X' on window)
     fn on_exit(&mut self, _glow_ctx: Option<&eframe::glow::Context>) {
         if let Err(e) = self.audio_tx.send(AppMessage::Quit) {
-            // Log to terminal, as GUI is closing
             eprintln!("Failed to send Quit message on close: {}", e);
         }
     }
@@ -241,108 +165,7 @@ impl App for EguiApp {
 // --- UI Drawing Implementations ---
 
 impl EguiApp {
-    #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    fn draw_midi_selection_ui(&mut self, ctx: &egui::Context) {
-        let panel_frame = egui::Frame::default();
-        egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
-            ui.vertical_centered(|ui| {
-
-                // Set a font size for the ASCII art
-                let font_size = 10.0; 
-                let mono_font = egui::FontId::monospace(font_size);
-                let orange = egui::Color32::from_rgb(255, 165, 0);
-
-                // Draw the pipes (gray)
-                ui.label(
-                    egui::RichText::new(PIPES)
-                        .font(mono_font.clone())
-                        .color(egui::Color32::GRAY),
-                );
-                // Draw the main logo (orange)
-                ui.label(
-                    egui::RichText::new(LOGO)
-                        .font(mono_font.clone())
-                        .color(orange),
-                );
-                            // Draw the tagline from the TUI (orange)
-                ui.label(
-                    egui::RichText::new("Indicia MMXXV")
-                        .font(mono_font) // No clone needed on last use
-                        .color(orange),
-                );
-                ui.add_space(10.0); // Space between logo and text
-                
-                ui.heading("Rusty Pipes");
-                ui.label(format!("Version {}", env!("CARGO_PKG_VERSION")));
-                ui.label(env!("CARGO_PKG_DESCRIPTION"));
-                ui.add_space(30.0);
-
-                // --- Lock Scope for reading state ---
-                {
-                    let mut app_state = self.app_state.lock().unwrap();
-                    if let Some(err) = &app_state.error_msg {
-                        ui.label(egui::RichText::new(err).color(egui::Color32::RED));
-                    }
-
-                    if app_state.available_ports.is_empty() {
-                        ui.label("No MIDI Input Devices Found!");
-                    } else {
-                        ui.label("Select a MIDI Input Device:");
-                    }
-
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.group(|ui| {
-                            for (i, (_, name)) in app_state.available_ports.iter().enumerate() {
-                                if ui.selectable_label(self.selected_midi_port_index == Some(i), name).clicked() {
-                                    self.selected_midi_port_index = Some(i);
-                                }
-                            }
-                        });
-                    });
-                    
-                    ui.add_space(10.0);
-
-                    let connect_clicked = ui.button("Connect").clicked();
-
-                    if connect_clicked {
-                        if let Some(selected_idx) = self.selected_midi_port_index {
-                            if let Some((port_to_connect, port_name)) = app_state
-                                .available_ports
-                                .get(selected_idx)
-                                .map(|(p, n)| (p.clone(), n.clone()))
-                            {
-                                app_state
-                                    .add_midi_log(format!("Connecting to: {}", port_name));
-
-                                if let Some(midi_input) = app_state.midi_input.take() {
-                                    match connect_to_midi(
-                                        midi_input,
-                                        &port_to_connect,
-                                        &port_name,
-                                        &self.tui_tx,
-                                    ) {
-                                        Ok(conn) => {
-                                            self.midi_connection = Some(conn);
-                                            self.mode = GuiMode::MainApp;
-                                            app_state.available_ports.clear();
-                                        }
-                                        Err(e) => {
-                                                app_state.error_msg = Some(format!("Failed to connect: {}", e));
-                                            // Put the midi_input back if it failed
-                                            // Note: This is tricky as midir::Input consumes itself.
-                                            // A better way would be to re-initialize it.
-                                            // For now, we'll just show the error.
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } // End lock scope
-            });
-        });
-    }
-
+    
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn draw_main_app_ui(
         &mut self, 
@@ -382,7 +205,7 @@ impl EguiApp {
             self.stop_list_scroll_offset = scroll_out.state.offset.y;
         });
     }
-
+    
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn draw_footer(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
@@ -403,8 +226,8 @@ impl EguiApp {
                         let (text, is_loaded) = presets[i]
                             .as_ref()
                             .map_or_else(
-                                || (format!("F{}", i + 1), false), // No preset
-                                |p| (format!("F{}: {}", i + 1, p.name.clone()), true) // Preset loaded
+                                || (format!("F{}", i + 1), false),
+                                |p| (format!("F{}: {}", i + 1, p.name.clone()), true)
                             );
 
                         if ui.add_enabled(is_loaded, egui::Button::new(text)).clicked() {
@@ -428,8 +251,8 @@ impl EguiApp {
                             self.preset_save_name = presets[i]
                                 .as_ref()
                                 .map_or_else(
-                                    || format!("Preset F{}", i + 1), // Default name
-                                    |p| p.name.clone() // Current name
+                                    || format!("Preset F{}", i + 1),
+                                    |p| p.name.clone()
                                 );
                             self.show_preset_save_modal = true;
                         }
@@ -493,7 +316,7 @@ impl EguiApp {
                 let start_idx = col_idx * items_per_column;
                 let end_idx = (start_idx + items_per_column).min(stops_count);
 
-                if start_idx >= end_idx { continue; } // Skip if this column is empty
+                if start_idx >= end_idx { continue; }
 
                 // Render all stops for this column
                 for i in start_idx..end_idx {
@@ -576,10 +399,9 @@ impl EguiApp {
                 ui.heading("MIDI Log");
                 
                 egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
-                    // 4. (Optional but recommended) Tell labels to wrap
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap); 
                     for msg in midi_log {
-                        ui.label(msg); // This will now wrap
+                        ui.label(msg);
                     }
                 });
             });
@@ -680,9 +502,9 @@ impl EguiApp {
             let y2 = map_time_to_y(note.end_time.unwrap_or(now));
             
             painter.add(egui::Shape::Rect(egui::epaint::RectShape::new(
-                egui::Rect::from_x_y_ranges(x1..=x2, y2..=y1), // y2 is "higher" (older)
+                egui::Rect::from_x_y_ranges(x1..=x2, y2..=y1),
                 egui::CornerRadius::ZERO,
-                egui::Color32::from_rgb(255, 0, 255), // Magenta
+                egui::Color32::from_rgb(255, 0, 255),
                 egui::Stroke::NONE,
                 egui::StrokeKind::Inside,
             )));
@@ -697,7 +519,7 @@ impl EguiApp {
             painter.add(egui::Shape::Rect(egui::epaint::RectShape::new(
                 egui::Rect::from_x_y_ranges(x1..=x2, y2..=y1),
                 egui::CornerRadius::ZERO,
-                egui::Color32::from_rgb(0, 255, 0), // Green
+                egui::Color32::from_rgb(0, 255, 0),
                 egui::Stroke::NONE,
                 egui::StrokeKind::Inside,
             )));
@@ -740,7 +562,7 @@ impl EguiApp {
                         
                         // Check for 'Enter' key or button click
                         let save_triggered = ui.button("Save").clicked() || 
-                                             (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                                         (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
 
                         if save_triggered {
                             if !self.preset_save_name.is_empty() {
