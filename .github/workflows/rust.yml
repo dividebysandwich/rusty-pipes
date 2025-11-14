@@ -104,14 +104,26 @@ jobs:
               zip ./artifacts/$NAME-$TARGET-$TAG.zip $EXEC readme.md LICENSE
           
           elif [[ $OS =~ ^macos.*$ ]]; then
-              # Get the app name from Cargo.toml metadata
-              APP_NAME="Rusty Pipes" 
-              APP_PATH="./target/$TARGET/release/bundle/osx/$APP_NAME.app"
+              APP_DIR="./target/$TARGET/release/bundle/osx"
               
-              echo "Zipping $APP_PATH"
+              echo "--- Listing bundle directory contents ---"
+              ls -l "$APP_DIR"
+              echo "-------------------------------------------"
+
+              # Find the .app directory name automatically
+              # This avoids hardcoding "Rusty Pipes.app"
+              APP_NAME_WITH_EXT=$(find "$APP_DIR" -name "*.app" -maxdepth 1 -exec basename {} \;)
+
+              if [ -z "$APP_NAME_WITH_EXT" ]; then
+                  echo "Error: No .app directory found in $APP_DIR"
+                  exit 1
+              fi
+
+              echo "Found app: $APP_NAME_WITH_EXT"
+              echo "Zipping app from $APP_DIR"
+              
               # cd into the directory containing the .app so it's at the zip root
-              # Use relative paths to add readme/license to the root of the zip
-              (cd "$APP_DIR" && zip -r -q "../../../../../artifacts/$NAME-$TARGET-$TAG.zip" "$APP_NAME.app" ../../../../../readme.md ../../../../../LICENSE)
+              (cd "$APP_DIR" && zip -r -q "../../../../../artifacts/$NAME-$TARGET-$TAG.zip" "$APP_NAME_WITH_EXT" ../../../../../readme.md ../../../../../LICENSE)
 
           else
               EXEC=$NAME
