@@ -111,7 +111,6 @@ jobs:
               echo "-------------------------------------------"
 
               # Find the .app directory name automatically
-              # This avoids hardcoding "Rusty Pipes.app"
               APP_NAME_WITH_EXT=$(find "$APP_DIR" -name "*.app" -maxdepth 1 -exec basename {} \;)
 
               if [ -z "$APP_NAME_WITH_EXT" ]; then
@@ -120,10 +119,17 @@ jobs:
               fi
 
               echo "Found app: $APP_NAME_WITH_EXT"
+              
+              # Copy readme and license into the directory to get clean paths
+              echo "Copying auxiliary files into bundle directory..."
+              cp ./readme.md "$APP_DIR/"
+              cp ./LICENSE "$APP_DIR/"
+              
               echo "Zipping app from $APP_DIR"
               
               # cd into the directory containing the .app so it's at the zip root
-              (cd "$APP_DIR" && zip -r -q "../../../../../artifacts/$NAME-$TARGET-$TAG.zip" "$APP_NAME_WITH_EXT" ../../../../../readme.md ../../../../../LICENSE)
+              # Now zip the app and the local copies of the readme/license
+              (cd "$APP_DIR" && zip -r -q "../../../../../artifacts/$NAME-$TARGET-$TAG.zip" "$APP_NAME_WITH_EXT" readme.md LICENSE)
 
           else
               EXEC=$NAME
