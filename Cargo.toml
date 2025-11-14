@@ -53,3 +53,16 @@ assets = [
     ["assets/rusty-pipes.desktop", "/usr/share/applications/rusty-pipes.desktop", "644"],
     ["assets/rusty-pipes.png", "/usr/share/pixmaps/rusty-pipes.png", "644"]
 ]
+
+[package.metadata.bundle]
+name = "Rusty Pipes"
+identifier = "com.dividebysandwich.rustypipes"
+icon = ["assets/rusty-pipes.icns"]
+version = "0.5.0" 
+copyright = "Copyright 2025 Dividebysandwich"
+category = "Music"
+short_description = "Virtual pipe organ simulator"
+long_description = """
+A MIDI-controlled virtual pipe organ simulator compatible with 
+GrandOrgue and Hauptwerk sample sets.
+"""

@@ -69,8 +69,17 @@ jobs:
       - name: Install rust target
         run: rustup target add $TARGET
         
-      - name: Run build
+      - name: Install cargo-bundle
+        if: runner.os == 'macOS'
+        run: cargo install cargo-bundle
+
+      - name: Run build (Linux/Windows)
+        if: runner.os != 'macOS'
         run: cargo build --release --verbose --target $TARGET
+
+      - name: Run bundle (macOS)
+        if: runner.os == 'macOS'
+        run: cargo bundle --release --target $TARGET
 
       - name: Install zip
         if: runner.os == 'Windows'
@@ -87,15 +96,27 @@ jobs:
           else
             TAG=$GITHUB_SHA
           fi
+
           if [[ $OS =~ ^windows.*$ ]]; then
               EXEC=$NAME.exe
               mv ./target/$TARGET/release/$EXEC ./$EXEC
               # Use 'zip' for Windows
               zip ./artifacts/$NAME-$TARGET-$TAG.zip $EXEC readme.md LICENSE
+          
+          elif [[ $OS =~ ^macos.*$ ]]; then
+              # Get the app name from Cargo.toml metadata
+              APP_NAME="Rusty Pipes" 
+              APP_PATH="./target/$TARGET/release/bundle/osx/$APP_NAME.app"
+              
+              echo "Zipping $APP_PATH"
+              # Use 'zip' to package the .app directory
+              # -r to recurse, -q for quiet
+              zip -r -q ./artifacts/$NAME-$TARGET-$TAG.zip "$APP_PATH" readme.md LICENSE
+
           else
               EXEC=$NAME
               mv ./target/$TARGET/release/$EXEC ./$EXEC
-              # Use 'tar' for Linux/macOS
+              # Use 'tar' for Linux
               tar -czf ./artifacts/$NAME-$TARGET-$TAG.tar.gz $EXEC readme.md LICENSE
           fi
           
