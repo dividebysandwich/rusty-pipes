@@ -165,6 +165,9 @@ jobs:
       - name: Install cargo-deb
         run: cargo install cargo-deb
 
+      - name: Build the binary
+        run: cargo build --release --verbose
+
       - name: Build Debian package
         run: cargo deb
 
