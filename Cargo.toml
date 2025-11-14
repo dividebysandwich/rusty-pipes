@@ -48,4 +48,8 @@ hotpath-off = ["hotpath/hotpath-off"]
 lto = true
 
 [package.metadata.deb]
-depends = "libasound2, libjack-jackd2-0, libx11-6, libxkbcommon0, libwayland-client0, libegl1, libgl1"
+depends = "libasound2, libjack-jackd2-0, libx11-6, libxkbcommon0, libwayland-client0, libegl1, libgl1, desktop-file-utils"
+assets = [
+    ["assets/rusty-pipes.desktop", "/usr/share/applications/rusty-pipes.desktop", "644"],
+    ["assets/rusty-pipes.png", "/usr/share/pixmaps/rusty-pipes.png", "644"]
+]

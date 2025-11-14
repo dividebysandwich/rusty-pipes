@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Name=Rusty Pipes
+GenericName=Virtual Pipe Organ
+Comment=Virtual pipe organ simulator compatible with GrandOrgue and Hauptwerk sample sets.
+Exec=rusty-pipes
+Icon=rusty-pipes
+Terminal=false
+Type=Application
+Categories=AudioVideo;Audio;Music;
