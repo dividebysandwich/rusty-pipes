@@ -106,9 +106,38 @@ jobs:
           path: |
             ./artifacts
 
+  build-deb:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libjack-jackd2-dev
+
+      - name: Cargo cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ./target
+          key: deb-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Build Debian package
+        run: cargo deb
+
+      - name: Archive Debian package
+        uses: actions/upload-artifact@v4
+        with:
+          name: result-deb
+          path: target/debian/*.deb
+
   deploy:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: build
+    needs: [build, build-deb]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -125,3 +154,4 @@ jobs:
            files: |
             ./artifacts/*/*.tar.gz
             ./artifacts/*/*.zip
+            ./artifacts/*/*.deb

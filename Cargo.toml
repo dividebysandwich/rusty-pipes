@@ -2,6 +2,9 @@
 name = "rusty-pipes"
 description = "Virtual pipe organ simulator"
 version = "0.4.2"
+license = "GPL-2.0-or-later"
+authors = ["dividebysandwich"]
+repository = "https://github.com/dividebysandwich/rusty-pipes"
 edition = "2024"
 
 [dependencies]
@@ -32,3 +35,6 @@ egui = "0.33"
 
 [profile.release]
 lto = true
+
+[package.metadata.deb]
+depends = "libasound2, libjack-jackd2-0, libx11-6, libxkbcommon0, libwayland-client0, libegl1, libgl1"
