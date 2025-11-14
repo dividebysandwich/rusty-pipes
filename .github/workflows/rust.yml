@@ -109,9 +109,9 @@ jobs:
               APP_PATH="./target/$TARGET/release/bundle/osx/$APP_NAME.app"
               
               echo "Zipping $APP_PATH"
-              # Use 'zip' to package the .app directory
-              # -r to recurse, -q for quiet
-              zip -r -q ./artifacts/$NAME-$TARGET-$TAG.zip "$APP_PATH" readme.md LICENSE
+              # cd into the directory containing the .app so it's at the zip root
+              # Use relative paths to add readme/license to the root of the zip
+              (cd "$APP_DIR" && zip -r -q "../../../../../artifacts/$NAME-$TARGET-$TAG.zip" "$APP_NAME.app" ../../../../../readme.md ../../../../../LICENSE)
 
           else
               EXEC=$NAME
