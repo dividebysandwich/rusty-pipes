@@ -45,25 +45,38 @@ On Arch linux, just run ```yay -S rusty-pipes``` or ```paru -S rusty-pipes```
 Note: RustyPipes will create pitch-corrected samples of all pipes that have a pitch factor configured on startup. It will not overwrite the original files, but create new files with the pitch shift in the filename. This step is done automatically and only done the first time a particular organ is loaded.
 
 ```bash
-Usage: rusty-pipes [OPTIONS] <ORGAN_DEFINITION> [MIDI_FILE]
+Usage: rusty-pipes [OPTIONS] [ORGAN_DEFINITION]
 
 Arguments:
-  <ORGAN_DEFINITION>  Path to organ definition file (e.g., friesach/friesach.organ or friesach/OrganDefinitions/Friesach.Organ_Hauptwerk_xml)
-  [MIDI_FILE]         Optional path to a MIDI file to play
+  [ORGAN_DEFINITION]  Path to organ definition file (e.g., friesach/friesach.organ or friesach/OrganDefinitions/Friesach.Organ_Hauptwerk_xml)
 
 Options:
-      --precache           Pre-cache all samples on startup (uses more memory, reduces latency)
-      --convert-to-16bit   
-      --log-level <LEVEL>  Set the application log level [default: info] [possible values: error, warn, info, debug, trace]
-      --ir-file <IR_FILE>        Optional path to a convolution reverb Impulse Response (IR) file
-      --reverb-mix <REVERB_MIX>  Reverb mix level (0.0 = dry, 1.0 = fully wet) [default: 0.5]
-      --original-tuning            Preserve original (de)tuning of recorded samples up to +/- 20 cents to preserve organ character
-      --list-midi-devices          List all available MIDI input devices and exit
-      --midi-device <DEVICE_NAME>  Select a MIDI device by name
-      --audio-buffer-frames <NUM_FRAMES>  Audio buffer size (lower values reduce latency, increase in case of glitches) [default: 512]
-      --tui           Run in terminal UI (TUI) mode as a fallback
-  -h, --help               Print help
-  -V, --version            Print version
+      --midi-file <MIDI_FILE>
+          Optional path to a MIDI file to play
+      --precache
+          Pre-cache all samples on startup (uses more memory, reduces latency)
+      --convert-to-16bit
+          Convert all samples to 16-bit PCM on load (saves memory, may reduce quality)
+      --log-level <LEVEL>
+          Set the application log level [default: info] [possible values: error, warn, info, debug, trace]
+      --ir-file <IR_FILE>
+          Optional path to a convolution reverb Impulse Response (IR) file
+      --reverb-mix <REVERB_MIX>
+          Reverb mix level (0.0 = dry, 1.0 = fully wet) [default: 0.5]
+      --original-tuning
+          Preserve original (de)tuning of recorded samples up to +/- 20 cents to preserve organ character
+      --list-midi-devices
+          List all available MIDI input devices and exit
+      --midi-device <DEVICE_NAME>
+          Select a MIDI device by name
+      --audio-buffer-frames <NUM_FRAMES>
+          Audio buffer size in frames (lower values reduce latency but may cause glitches) [default: 512]
+      --tui
+          Run in terminal UI (TUI) mode as a fallback
+  -h, --help
+          Print help
+  -V, --version
+          Print version
 ```
 
 ### Precaching
