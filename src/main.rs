@@ -128,6 +128,8 @@ fn main() -> Result<()> {
 
     // --- Load Config and Merge CLI Args ---
     let mut settings = config::load_settings().unwrap_or_default();
+    let tui_mode = args.tui;
+
     
     // Command-line arguments override saved config
     if let Some(f) = args.organ_file { settings.organ_file = Some(f); }
@@ -137,10 +139,9 @@ fn main() -> Result<()> {
     if let Some(p) = args.precache { settings.precache = p; }
     if let Some(c) = args.convert_to_16bit { settings.convert_to_16bit = c; }
     if let Some(o) = args.original_tuning { settings.original_tuning = o; }
-    if args.tui { settings.tui_mode = true; } // `--tui` flag forces TUI mode
 
     // --- Run Configuration UI ---
-    let config_result = if settings.tui_mode {
+    let config_result = if tui_mode {
         tui_config::run_config_ui(settings, Arc::clone(&midi_input_arc))
     } else {
         gui_config::run_config_ui(settings, Arc::clone(&midi_input_arc))
@@ -173,29 +174,26 @@ fn main() -> Result<()> {
         precache: config.precache,
         convert_to_16bit: config.convert_to_16bit,
         original_tuning: config.original_tuning,
-        tui_mode: config.tui_mode,
     };
     if let Err(e) = config::save_settings(&settings_to_save) {
         log::warn!("Failed to save settings: {}", e);
     }
 
     // --- APPLICATION STARTUP ---
-    // All setup logic now lives in main.
     
-    let is_tui = config.tui_mode;
-    if is_tui {
+    if tui_mode {
         println!("\nRusty Pipes - Virtual Pipe Organ Simulator v{}\n", env!("CARGO_PKG_VERSION"));
     }
 
     // --- Parse the organ definition ---
-    if is_tui { println!("Loading organ definition..."); }
+    if tui_mode { println!("Loading organ definition..."); }
     let organ = Arc::new(Organ::load(
         &config.organ_file, 
         config.convert_to_16bit, 
         config.precache, 
         config.original_tuning
     )?);
-    if is_tui {
+    if tui_mode {
         println!("Successfully loaded organ: {}", organ.name);
         println!("Found {} stops.", organ.stops.len());
     }
@@ -205,13 +203,13 @@ fn main() -> Result<()> {
     let (tui_tx, tui_rx) = mpsc::channel::<TuiMessage>();
 
     // --- Start the Audio thread ---
-    if is_tui { println!("Starting audio engine..."); }
+    if tui_mode { println!("Starting audio engine..."); }
     let _stream = audio::start_audio_playback(
         audio_rx, 
         Arc::clone(&organ), 
         config.audio_buffer_frames
     )?;
-    if is_tui { println!("Audio engine running."); }
+    if tui_mode { println!("Audio engine running."); }
     
     // --- Load IR file ---
     if let Some(path) = config.ir_file {
@@ -256,7 +254,7 @@ fn main() -> Result<()> {
 
     if let Some(path) = config.midi_file {
         // --- Play from MIDI file ---
-        if is_tui { println!("Starting MIDI file playback: {}", path.display()); }
+        if tui_mode { println!("Starting MIDI file playback: {}", path.display()); }
         _midi_file_thread = Some(midi::play_midi_file(path, tui_tx.clone())?);
     } else if let (Some(port), Some(name), Some(midi_input)) = (
         config.midi_port,
@@ -264,20 +262,19 @@ fn main() -> Result<()> {
         midi_input_opt.take() // Use the MidiInput we just took from the Arc
     ) {
         // --- Use live MIDI input ---
-        if is_tui { println!("Connecting to MIDI device: {}", name); }
+        if tui_mode { println!("Connecting to MIDI device: {}", name); }
         // The `midi_input` and `port` are now guaranteed to be from the same instance.
         _midi_connection = Some(connect_to_midi(midi_input, &port, &name, &tui_tx)?);
         app_state.lock().unwrap().add_midi_log(format!("Connected to: {}", name));
         _midi_file_thread = None;
     } else {
         // --- No MIDI file or device ---
-        if is_tui { println!("No MIDI file or device selected. Running without MIDI input."); }
+        if tui_mode { println!("No MIDI file or device selected. Running without MIDI input."); }
         _midi_file_thread = None;
     }
 
     // --- Run the TUI or GUI on the main thread ---
-    if is_tui {
-        if is_tui { println!("Starting TUI... Press 'q' to quit."); }
+    if tui_mode {
         tui::run_tui_loop(
             audio_tx,
             Arc::clone(&app_state),
@@ -294,7 +291,7 @@ fn main() -> Result<()> {
     }
 
     // --- Shutdown ---
-    if is_tui { println!("Shutting down..."); }
+    if tui_mode { println!("Shutting down..."); }
     log::info!("Shutting down...");
     Ok(())
 }

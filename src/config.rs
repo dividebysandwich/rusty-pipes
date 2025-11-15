@@ -14,7 +14,6 @@ pub struct AppSettings {
     pub precache: bool,
     pub convert_to_16bit: bool,
     pub original_tuning: bool,
-    pub tui_mode: bool,
 }
 
 /// Default settings for a new installation.
@@ -28,7 +27,6 @@ impl Default for AppSettings {
             precache: false,
             convert_to_16bit: false,
             original_tuning: false,
-            tui_mode: false, // Default to GUI
         }
     }
 }
@@ -45,7 +43,6 @@ pub struct RuntimeConfig {
     pub precache: bool,
     pub convert_to_16bit: bool,
     pub original_tuning: bool,
-    pub tui_mode: bool,
 
     // --- Runtime-Only Settings ---
     pub midi_file: Option<PathBuf>,

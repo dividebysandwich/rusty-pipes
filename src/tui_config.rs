@@ -41,9 +41,8 @@ fn get_item_display(idx: usize, state: &ConfigState) -> String {
         6 => format!("7. Pre-cache:        {}", bool_to_str(settings.precache)),
         7 => format!("8. Convert to 16-bit:{}", bool_to_str(settings.convert_to_16bit)),
         8 => format!("9. Original Tuning:  {}", bool_to_str(settings.original_tuning)),
-        9 => format!("0. UI Mode:          {}", if settings.tui_mode { "Text Mode" } else { "Graphics Mode" }),
-        10 => "S. Start Rusty Pipes".to_string(),
-        11 => "Q. Quit".to_string(),
+        9 => "S. Start Rusty Pipes".to_string(),
+        10 => "Q. Quit".to_string(),
         _ => unreachable!(),
     }
 }
@@ -146,8 +145,7 @@ pub fn run_config_ui(
                                     6 => state.config_state.settings.precache = !state.config_state.settings.precache,
                                     7 => state.config_state.settings.convert_to_16bit = !state.config_state.settings.convert_to_16bit,
                                     8 => state.config_state.settings.original_tuning = !state.config_state.settings.original_tuning,
-                                    9 => state.config_state.settings.tui_mode = !state.config_state.settings.tui_mode,
-                                    10 => { // Start
+                                    9 => { // Start
                                         if state.config_state.settings.organ_file.is_none() {
                                             state.config_state.error_msg = Some("Please select an Organ File to start.".to_string());
                                         } else {
@@ -160,7 +158,6 @@ pub fn run_config_ui(
                                                 precache: s.precache,
                                                 convert_to_16bit: s.convert_to_16bit,
                                                 original_tuning: s.original_tuning,
-                                                tui_mode: s.tui_mode,
                                                 midi_file: state.config_state.midi_file.clone(),
                                                 midi_port: state.config_state.selected_midi_port.as_ref().map(|(p, _)| p.clone()),
                                                 midi_port_name: state.config_state.selected_midi_port.as_ref().map(|(_, n)| n.clone()),
@@ -168,7 +165,7 @@ pub fn run_config_ui(
                                             break 'config_loop;
                                         }
                                     }
-                                    11 => break 'config_loop, // Quit
+                                    10 => break 'config_loop, // Quit
                                     _ => {}
                                 }
                             }
@@ -278,8 +275,10 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
     
     frame.render_widget(title_widget, main_layout[0]);
 
+
     // Build config items
-    let items: Vec<ListItem> = (0..12)
+    let num_config_items = 11;
+    let items: Vec<ListItem> = (0..num_config_items)
         .map(|i| {
             let text = get_item_display(i, &state.config_state);
             let mut list_item = ListItem::new(text.clone());

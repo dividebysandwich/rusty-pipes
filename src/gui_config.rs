@@ -149,7 +149,6 @@ impl App for ConfigApp {
                     ui.checkbox(&mut self.state.settings.precache, "Pre-cache Samples");
                     ui.checkbox(&mut self.state.settings.convert_to_16bit, "Convert to 16-bit");
                     ui.checkbox(&mut self.state.settings.original_tuning, "Use Original Tuning");
-                    ui.checkbox(&mut self.state.settings.tui_mode, "Run in TUI Mode (next launch)");
                 });
 
                 ui.separator();
@@ -190,7 +189,6 @@ impl App for ConfigApp {
                             precache: self.state.settings.precache,
                             convert_to_16bit: self.state.settings.convert_to_16bit,
                             original_tuning: self.state.settings.original_tuning,
-                            tui_mode: self.state.settings.tui_mode,
                             midi_file: self.state.midi_file.clone(),
                             midi_port: port,
                             midi_port_name: name,
