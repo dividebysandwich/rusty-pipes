@@ -1016,10 +1016,22 @@ pub fn start_audio_playback(rx: mpsc::Receiver<AppMessage>, organ: Arc<Organ>, b
         );
     }
 
-    let config = supported_configs
-        .find(|c| c.channels() >= 2 && c.sample_format() == SampleFormat::F32)
-        .ok_or_else(|| anyhow!("No supported F32 stereo config found"))?
-        .with_sample_rate(SampleRate(AUDIO_SAMPLE_RATE));
+    let target_sample_rate = SampleRate(AUDIO_SAMPLE_RATE);
+    let config_range = supported_configs
+        .filter(|c| c.sample_format() == SampleFormat::F32 && c.channels() >= 2)
+        .find(|c| {
+            // Check if our target rate is within the config's range
+            c.min_sample_rate() <= target_sample_rate 
+            && c.max_sample_rate() >= target_sample_rate
+        })
+        .ok_or_else(|| {
+            anyhow!(
+                "No supported F32 config found for sample rate {}Hz",
+                target_sample_rate.0
+            )
+        })?;
+    
+    let config = config_range.with_sample_rate(target_sample_rate);
 
     let sample_format = config.sample_format();
     let stream_config: StreamConfig = config.into();
