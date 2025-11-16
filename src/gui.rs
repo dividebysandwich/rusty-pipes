@@ -1,5 +1,3 @@
-// src/gui.rs
-
 use anyhow::Result;
 use eframe::{egui, App, Frame};
 use egui::{Stroke, UiBuilder};
@@ -194,7 +192,7 @@ impl App for EguiApp {
         }
 
         // Request continuous repaints for the piano roll
-        ctx.request_repaint_after(Duration::from_millis(100));
+        ctx.request_repaint_after(Duration::from_millis(16));
         
         // Draw the UI (no more mode switching)
         self.draw_main_app_ui(
