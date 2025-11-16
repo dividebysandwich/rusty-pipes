@@ -4,7 +4,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::path::PathBuf;
 use simplelog::{Config, LevelFilter, WriteLogger};
-use std::fs::File;
+use std::fs::{self, File};
 use std::thread::{self, JoinHandle};
 use std::sync::Mutex;
 use midir::{MidiInput, MidiInputConnection};
@@ -107,8 +107,22 @@ fn main() -> Result<()> {
         LogLevel::Debug => LevelFilter::Debug,
         LogLevel::Trace => LevelFilter::Trace,
     };
-    WriteLogger::init(log_level, Config::default(), File::create("rusty-pipes.log")?)?;
 
+    let settings_path = confy::get_configuration_file_path("rusty-pipes", "settings")?;
+
+    // Get the parent directory (e.g., .../Application Support/rusty-pipes/)
+    let log_dir = settings_path.parent().ok_or_else(|| anyhow::anyhow!("Could not get log directory"))?;
+
+    // Ensure this directory exists
+    if !log_dir.exists() {
+        fs::create_dir_all(log_dir)?;
+    }
+
+    // Create the log file inside that directory
+    let log_path = log_dir.join("rusty-pipes.log");
+
+    WriteLogger::init(log_level, Config::default(), File::create(log_path)?)?;
+    
     // --- List MIDI devices and exit ---
     if args.list_midi_devices {
         println!("Available MIDI Input Devices:");
