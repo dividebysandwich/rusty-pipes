@@ -3,9 +3,11 @@ use ini::inistr;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use serde::Deserialize;
 use quick_xml::de::from_str;
 use itertools::Itertools;
+use rayon::prelude::*;
 
 use crate::wav_converter;
 use crate::wav_converter::SampleMetadata;
@@ -248,15 +250,97 @@ impl Organ {
     ) -> Result<Self> {
         let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
         
-        if extension == "organ" {
-            // Call the original INI loader
-            Self::load_grandorgue(path, convert_to_16_bit, pre_cache, original_tuning, progress_tx)
+        // Parse the organ definition and build the struct
+        let mut organ = if extension == "organ" {
+            Self::load_grandorgue(path, convert_to_16_bit, false, original_tuning)?
         } else if extension == "Organ_Hauptwerk_xml" {
-            // Call the new XML loader
-            Self::load_hauptwerk(path, convert_to_16_bit, pre_cache, original_tuning, progress_tx)
+            Self::load_hauptwerk(path, convert_to_16_bit, false, original_tuning)?
         } else {
-            Err(anyhow!("Unsupported organ file format: {:?}", path))
+            return Err(anyhow!("Unsupported organ file format: {:?}", path));
+        };
+
+        if pre_cache {
+            log::info!("[Organ] Pre-caching mode enabled. This may take a moment...");
+            
+            // Initialize the caches
+            organ.sample_cache = Some(HashMap::new());
+            organ.metadata_cache = Some(HashMap::new());
+            
+            // Run the parallel loader
+            organ.run_parallel_precache(progress_tx)?;
         }
+        Ok(organ)
+
+    }
+
+    /// Collects all unique sample paths from all pipes in the organ.
+    fn get_all_unique_sample_paths(&self) -> HashSet<PathBuf> {
+        let mut paths = HashSet::new();
+        for rank in self.ranks.values() {
+            for pipe in rank.pipes.values() {
+                paths.insert(pipe.attack_sample_path.clone());
+                for release in &pipe.releases {
+                    paths.insert(release.path.clone());
+                }
+            }
+        }
+        paths
+    }
+
+    /// Runs the pre-caching in parallel after the organ struct is built.
+    fn run_parallel_precache(&mut self, progress_tx: Option<mpsc::Sender<(f32, String)>>) -> Result<()> {
+        
+        let paths_to_load: Vec<PathBuf> = self.get_all_unique_sample_paths().into_iter().collect();
+        let total_samples = paths_to_load.len();
+        if total_samples == 0 {
+            log::warn!("[Cache] Pre-cache enabled, but no sample paths were found.");
+            return Ok(());
+        }
+
+        let loaded_sample_count = AtomicUsize::new(0);
+        let tx_clone = progress_tx.clone(); // Clone sender for parallel use
+
+        log::info!("[Cache] Loading {} unique samples using all available CPU cores...", total_samples);
+
+        // Use Rayon to load samples in parallel and collect the results
+        let results: Vec<Result<(PathBuf, Arc<Vec<f32>>, Arc<SampleMetadata>)>> = paths_to_load
+            .par_iter()
+            .map(|path| {
+                // This closure runs on a different thread
+                let (samples, metadata) = wav_converter::load_sample_as_f32(path)
+                    .with_context(|| format!("Failed to load sample {:?}", path))?;
+
+                // Report progress atomically
+                let count = loaded_sample_count.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Some(tx) = &tx_clone {
+                    let progress = count as f32 / total_samples as f32;
+                    let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                    let _ = tx.send((progress, file_name)); // Send can fail if UI is closed
+                }
+                
+                Ok((path.clone(), Arc::new(samples), Arc::new(metadata)))
+            })
+            .collect(); // Collect all results
+
+        // Now, serially insert the results back into the main struct's hashmaps
+        let sample_cache = self.sample_cache.as_mut().unwrap();
+        let metadata_cache = self.metadata_cache.as_mut().unwrap();
+
+        for result in results {
+            match result {
+                Ok((path, samples, metadata)) => {
+                    sample_cache.insert(path.clone(), samples);
+                    metadata_cache.insert(path, metadata);
+                }
+                Err(e) => {
+                    // Log the error but continue. One failed sample shouldn't stop the app.
+                    log::error!("[Cache] {}", e);
+                }
+            }
+        }
+        
+        log::info!("Pre-caching complete. Loaded {}/{} samples.", sample_cache.len(), total_samples);
+        Ok(())
     }
 
     fn try_infer_midi_note_from_filename(path_str: &str) -> Option<f32> {
@@ -281,17 +365,12 @@ impl Organ {
         convert_to_16_bit: bool, 
         pre_cache: bool, 
         _original_tuning: bool,
-        progress_tx: Option<mpsc::Sender<(f32, String)>>,
     ) -> Result<Self> {
         println!("Loading Hauptwerk organ from: {:?}", path);
         
         let organ_root_path = path.parent()
             .and_then(|p| p.parent())
             .ok_or_else(|| anyhow!("Invalid Hauptwerk file path structure. Expected .../OrganDefinitions/*.Organ_Hauptwerk_xml"))?;
-
-        if pre_cache {
-            println!("[Organ] Pre-caching mode enabled. This may take a moment...");
-        }
         
         let file_content = std::fs::read_to_string(path)
             .map_err(|e| anyhow!("Failed to read Hauptwerk XML file {:?}: {}", path, e))?;
@@ -303,6 +382,11 @@ impl Organ {
             metadata_cache: if pre_cache { Some(HashMap::new()) } else { None },
             ..Default::default()
         };
+
+        if pre_cache {
+            organ.sample_cache = Some(HashMap::new());
+            organ.metadata_cache = Some(HashMap::new());
+        }
 
         // Deserialize the XML
         log::debug!("Parsing XML file...");
@@ -395,32 +479,6 @@ impl Organ {
         }
 
         log::debug!("Built Sample map ({} entries), Attack map ({} entries).", sample_map.len(), attack_map.len());
-
-        let mut total_samples_to_load = 0;
-        let mut unique_paths_to_load = HashSet::new();
-        if pre_cache {
-            log::info!("Pre-scanning samples for loading...");
-            for layer in &xml_layers {
-                let Some(pipe_info) = pipe_map.get(&layer.pipe_id) else { continue; };
-                if !ranks_map.contains_key(&pipe_info.rank_id) { continue; };
-                let Some(attack_link) = attack_map.get(&layer.id) else { continue; };
-                let Some(attack_sample_info) = sample_map.get(&attack_link.sample_id) else { continue; };
-                
-                let attack_path_str = format!("OrganInstallationPackages/{:0>6}/{}", attack_sample_info.installation_package_id, attack_sample_info.path.replace('\\', "/"));
-                unique_paths_to_load.insert(PathBuf::from(&attack_path_str));
-
-                if let Some(xml_release_links) = release_map.get(&layer.id) {
-                    for release_link in xml_release_links {
-                        let Some(release_sample_info) = sample_map.get(&release_link.sample_id) else { continue; };
-                        let rel_path_str = format!("OrganInstallationPackages/{:0>6}/{}", release_sample_info.installation_package_id, release_sample_info.path.replace('\\', "/"));
-                        unique_paths_to_load.insert(PathBuf::from(&rel_path_str));
-                    }
-                }
-            }
-            total_samples_to_load = unique_paths_to_load.len();
-            log::info!("Found {} unique samples to pre-cache.", total_samples_to_load);
-        }
-        let mut loaded_sample_count = 0;
 
         log::debug!("Assembling pipes from {} layers...", xml_layers.len());
         let mut pipes_assembled = 0;
@@ -524,29 +582,6 @@ impl Organ {
 
             let attack_sample_path = organ.base_path.join(attack_sample_path_relative);
 
-            // Pre-cache Attack (if enabled)
-            if let Some(audio_cache) = &mut organ.sample_cache {
-                if !audio_cache.contains_key(&attack_sample_path) {
-                    match wav_converter::load_sample_as_f32(&attack_sample_path) {
-                        Ok((samples, metadata)) => {
-                            audio_cache.insert(attack_sample_path.clone(), Arc::new(samples));
-                            organ.metadata_cache.as_mut().unwrap().insert(attack_sample_path.clone(), Arc::new(metadata));
-
-                            // --- ADDED: Progress reporting ---
-                            loaded_sample_count += 1;
-                            if let Some(tx) = &progress_tx {
-                                let progress = loaded_sample_count as f32 / total_samples_to_load as f32;
-                                let file_name = attack_sample_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                let _ = tx.send((progress, file_name));
-                            }
-                            // --- END ADDED ---
-
-                        }
-                        Err(e) => eprintln!("[ERROR] [Cache] Failed to load sample {:?}: {}", attack_sample_path, e),
-                    }
-                }
-            }
-
             // Process Release Samples (needs double-lookup too)
             let mut releases = Vec::new();
             if let Some(xml_release_links) = release_map.get(&layer.id) {
@@ -570,26 +605,6 @@ impl Organ {
                         )?;
                     }
                     let rel_path = organ.base_path.join(rel_path_relative);
-
-                    // Pre-cache Release (if enabled)
-                    if let Some(audio_cache) = &mut organ.sample_cache {
-                        if !audio_cache.contains_key(&rel_path) {
-                            match wav_converter::load_sample_as_f32(&rel_path) {
-                                Ok((samples, metadata)) => {
-                                    audio_cache.insert(rel_path.clone(), Arc::new(samples));
-                                    organ.metadata_cache.as_mut().unwrap().insert(rel_path.clone(), Arc::new(metadata));
-
-                                    loaded_sample_count += 1;
-                                    if let Some(tx) = &progress_tx {
-                                        let progress = loaded_sample_count as f32 / total_samples_to_load as f32;
-                                        let file_name = rel_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                        let _ = tx.send((progress, file_name));
-                                    }
-                                }
-                                Err(e) => eprintln!("[ERROR] [Cache] Failed to load sample {:?}: {}", rel_path, e),
-                            }
-                        }
-                    }
 
                     releases.push(ReleaseSample {
                         path: rel_path,
@@ -705,13 +720,9 @@ impl Organ {
         convert_to_16_bit: bool, 
         pre_cache: bool, 
         original_tuning: bool,
-        progress_tx: Option<mpsc::Sender<(f32, String)>>
     ) -> Result<Self> {
         println!("Loading GrandOrgue organ from: {:?}", path);
         let base_path = path.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
-        if pre_cache {
-            println!("[Organ] Pre-caching mode enabled. This may take a moment...");
-        }
         
         // Read file to string
         let file_content = std::fs::read_to_string(path)
@@ -729,58 +740,14 @@ impl Organ {
         let mut organ = Organ {
             base_path: base_path.to_path_buf(),
             name: path.file_stem().unwrap_or_default().to_string_lossy().to_string(),
-            sample_cache: if pre_cache { Some(HashMap::new()) } else { None },
-            metadata_cache: if pre_cache { Some(HashMap::new()) } else { None },
+            sample_cache: None,
+            metadata_cache: None,
             ..Default::default()
         };
 
-        // Pre-scan for unique sample paths if pre-caching is enabled
-        let mut total_samples_to_load = 0;
-        let mut loaded_sample_count = 0;
         if pre_cache {
-            log::info!("Pre-scanning samples for loading...");
-            let mut unique_paths_to_load = HashSet::new();
-
-            for (section_name, props) in &conf {
-                if section_name.starts_with("rank") {
-                    let get_prop = |key_upper: &str, key_lower: &str, default: &str| {
-                        props.get(key_upper)
-                             .or_else(|| props.get(key_lower))
-                             .and_then(|opt| opt.as_deref())
-                             .map(|s| s.to_string())
-                             .unwrap_or_else(|| default.to_string())
-                             .trim()
-                             .replace("__HASH__", "#")
-                             .to_string()
-                    };
-
-                    let pipe_count: usize = get_prop("NumberOfLogicalPipes", "numberoflogicalpipes", "0").parse().unwrap_or(0);
-                    for i in 1..=pipe_count {
-                        let pipe_key_prefix_upper = format!("Pipe{:03}", i);
-                        let pipe_key_prefix_lower = format!("pipe{:03}", i);
-
-                        if let Some(attack_path_str) = get_prop(&pipe_key_prefix_upper, &pipe_key_prefix_lower, "").non_empty_or(None) {
-                            unique_paths_to_load.insert(attack_path_str.replace('\\', "/"));
-                        }
-
-                        let release_count: usize = get_prop(
-                            &format!("{}ReleaseCount", pipe_key_prefix_upper), 
-                            &format!("{}releasecount", pipe_key_prefix_lower), 
-                            "0"
-                        ).parse().unwrap_or(0);
-
-                        for r_idx in 1..=release_count {
-                            let rel_key_upper = format!("{}Release{:03}", pipe_key_prefix_upper, r_idx);
-                            let rel_key_lower = format!("{}release{:03}", pipe_key_prefix_lower, r_idx);
-                            if let Some(rel_path_str) = get_prop(&rel_key_upper, &rel_key_lower, "").non_empty_or(None) {
-                                unique_paths_to_load.insert(rel_path_str.replace('\\', "/"));
-                            }
-                        }
-                    }
-                }
-            }
-            total_samples_to_load = unique_paths_to_load.len();
-            log::info!("Found {} unique samples to pre-cache.", total_samples_to_load);
+            organ.sample_cache = Some(HashMap::new());
+            organ.metadata_cache = Some(HashMap::new());
         }
 
         let mut stops_map: HashMap<String, Stop> = HashMap::new();
@@ -802,7 +769,6 @@ impl Organ {
                     .to_string()
             };
 
-            
             // --- Parse Stops ---
             if section_name.starts_with("stop") {
                 stops_found += 1;
@@ -890,28 +856,6 @@ impl Organ {
                         // Join with base path for the final absolute-like path
                         let attack_sample_path = organ.base_path.join(attack_sample_path_relative);
 
-                        // Pre-cache attack sample if enabled
-                        if let Some(audio_cache) = &mut organ.sample_cache {
-                            if !audio_cache.contains_key(&attack_sample_path) {
-                                match wav_converter::load_sample_as_f32(&attack_sample_path) {
-                                    Ok((samples, metadata)) => {
-                                        audio_cache.insert(attack_sample_path.clone(), Arc::new(samples));
-                                        // Also cache the metadata
-                                        organ.metadata_cache.as_mut().unwrap().insert(attack_sample_path.clone(), Arc::new(metadata));
-                                        loaded_sample_count += 1;
-                                        if let Some(tx) = &progress_tx {
-                                            let progress = loaded_sample_count as f32 / total_samples_to_load as f32;
-                                            let file_name = attack_sample_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                            let _ = tx.send((progress, file_name));
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::error!("[Cache] Failed to load sample {:?}: {}", attack_sample_path, e);
-                                    }
-                                }
-                            }
-                        }
-
                         let release_count: usize = get_prop(
                             &format!("{}ReleaseCount", pipe_key_prefix_upper), 
                             &format!("{}releasecount", pipe_key_prefix_lower), 
@@ -939,27 +883,6 @@ impl Organ {
                                 }
 
                                 let rel_path = organ.base_path.join(rel_path_relative);
-                                
-                                // Pre-cache release sample if enabled
-                                if let Some(audio_cache) = &mut organ.sample_cache {
-                                    if !audio_cache.contains_key(&rel_path) {
-                                        match wav_converter::load_sample_as_f32(&rel_path) {
-                                            Ok((samples, metadata)) => {
-                                                audio_cache.insert(rel_path.clone(), Arc::new(samples));
-                                                organ.metadata_cache.as_mut().unwrap().insert(rel_path.clone(), Arc::new(metadata));
-                                                loaded_sample_count += 1;
-                                                if let Some(tx) = &progress_tx {
-                                                    let progress = loaded_sample_count as f32 / total_samples_to_load as f32;
-                                                    let file_name = rel_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                                                    let _ = tx.send((progress, file_name));
-                                                }
-                                            }
-                                            Err(e) => {
-                                                log::error!("[Cache] Failed to load sample {:?}: {}", rel_path, e);
-                                            }
-                                        }
-                                    }
-                                }
                                 
                                 let time_key_upper = format!("{}MaxKeyPressTime", rel_key_upper);
                                 let time_key_lower = format!("{}maxkeypresstime", rel_key_lower);
