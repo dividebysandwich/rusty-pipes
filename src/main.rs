@@ -175,6 +175,7 @@ fn main() -> Result<()> {
         convert_to_16bit: config.convert_to_16bit,
         original_tuning: config.original_tuning,
         midi_device_name: config.midi_port_name.clone(),
+        gain: config.gain,
         tui_mode,
     };
     if let Err(e) = config::save_settings(&settings_to_save) {

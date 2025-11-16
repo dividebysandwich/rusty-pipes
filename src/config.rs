@@ -16,6 +16,7 @@ pub struct AppSettings {
     pub original_tuning: bool,
     pub tui_mode: bool,
     pub midi_device_name: Option<String>,
+    pub gain: f32,
 }
 
 /// Default settings for a new installation.
@@ -25,12 +26,13 @@ impl Default for AppSettings {
             organ_file: None,
             ir_file: None,
             reverb_mix: 0.5,
-            audio_buffer_frames: 512,
+            audio_buffer_frames: 256,
             precache: false,
             convert_to_16bit: false,
             original_tuning: false,
             tui_mode: false, // Default to GUI
             midi_device_name: None,
+            gain: 0.4, // Conservative default gain
         }
     }
 }
@@ -47,6 +49,7 @@ pub struct RuntimeConfig {
     pub precache: bool,
     pub convert_to_16bit: bool,
     pub original_tuning: bool,
+    pub gain: f32,
 
     // --- Runtime-Only Settings ---
     pub midi_file: Option<PathBuf>,

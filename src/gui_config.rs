@@ -170,7 +170,16 @@ impl App for ConfigApp {
                             .min_decimals(2)
                             .text(""));
                         ui.end_row();
-                        
+
+                        // --- Gain ---
+                        ui.label("Gain:");
+                        // Make slider fill available width
+                        ui.add(egui::Slider::new(&mut self.state.settings.gain, 0.0..=1.0)
+                            .show_value(true)
+                            .min_decimals(2)
+                            .text(""));
+                        ui.end_row();
+
                         // --- Audio Buffer ---
                         ui.label("Audio Buffer (frames):");
                         ui.add(egui::DragValue::new(&mut self.state.settings.audio_buffer_frames).speed(32.0).range(32..=4096));
@@ -228,6 +237,7 @@ impl App for ConfigApp {
                             midi_file: self.state.midi_file.clone(),
                             midi_port: port,
                             midi_port_name: name,
+                            gain: self.state.settings.gain,
                         };
                         
                         *self.output.lock().unwrap() = Some(runtime_config); 

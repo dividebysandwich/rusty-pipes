@@ -1002,7 +1002,7 @@ pub fn start_audio_playback(rx: mpsc::Receiver<AppMessage>, organ: Arc<Organ>, b
     );
 
     // Find a supported config
-    let mut supported_configs = device.supported_output_configs()?;
+    let supported_configs = device.supported_output_configs()?;
 
     // Show all supported configs
     log::debug!("[Cpal] Supported output configs:");

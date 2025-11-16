@@ -37,12 +37,13 @@ fn get_item_display(idx: usize, state: &ConfigState) -> String {
         2 => format!("3. MIDI Device:      {}", state.selected_midi_port.as_ref().map_or("None", |(_, n)| n.as_str())),
         3 => format!("4. IR File:          {}", path_to_str(settings.ir_file.as_deref())),
         4 => format!("5. Reverb Mix:       {:.2}", settings.reverb_mix),
-        5 => format!("6. Audio Buffer:     {} frames", settings.audio_buffer_frames),
-        6 => format!("7. Pre-cache:        {}", bool_to_str(settings.precache)),
-        7 => format!("8. Convert to 16-bit:{}", bool_to_str(settings.convert_to_16bit)),
-        8 => format!("9. Original Tuning:  {}", bool_to_str(settings.original_tuning)),
-        9 => "S. Start Rusty Pipes".to_string(),
-        10 => "Q. Quit".to_string(),
+        5 => format!("6. Gain:             {:.2}", settings.gain),
+        6 => format!("7. Audio Buffer:     {} frames", settings.audio_buffer_frames),
+        7 => format!("8. Pre-cache:        {}", bool_to_str(settings.precache)),
+        8 => format!("9. Convert to 16-bit:{}", bool_to_str(settings.convert_to_16bit)),
+        9 => format!("0. Original Tuning:  {}", bool_to_str(settings.original_tuning)),
+        10 => "S. Start Rusty Pipes".to_string(),
+        11 => "Q. Quit".to_string(),
         _ => unreachable!(),
     }
 }
@@ -146,14 +147,18 @@ pub fn run_config_ui(
                                         let buffer = state.config_state.settings.reverb_mix.to_string();
                                         state.mode = ConfigMode::TextInput(idx, buffer);
                                     }
-                                    5 => { // Audio Buffer
+                                    5 => { // Gain
+                                        let gain = state.config_state.settings.gain.to_string();
+                                        state.mode = ConfigMode::TextInput(idx, gain);
+                                    }
+                                    6 => { // Audio Buffer
                                         let buffer = state.config_state.settings.audio_buffer_frames.to_string();
                                         state.mode = ConfigMode::TextInput(idx, buffer);
                                     }
-                                    6 => state.config_state.settings.precache = !state.config_state.settings.precache,
-                                    7 => state.config_state.settings.convert_to_16bit = !state.config_state.settings.convert_to_16bit,
-                                    8 => state.config_state.settings.original_tuning = !state.config_state.settings.original_tuning,
-                                    9 => { // Start
+                                    7 => state.config_state.settings.precache = !state.config_state.settings.precache,
+                                    8 => state.config_state.settings.convert_to_16bit = !state.config_state.settings.convert_to_16bit,
+                                    9 => state.config_state.settings.original_tuning = !state.config_state.settings.original_tuning,
+                                    10 => { // Start
                                         if state.config_state.settings.organ_file.is_none() {
                                             state.config_state.error_msg = Some("Please select an Organ File to start.".to_string());
                                         } else {
@@ -169,11 +174,12 @@ pub fn run_config_ui(
                                                 midi_file: state.config_state.midi_file.clone(),
                                                 midi_port: state.config_state.selected_midi_port.as_ref().map(|(p, _)| p.clone()),
                                                 midi_port_name: state.config_state.selected_midi_port.as_ref().map(|(_, n)| n.clone()),
+                                                gain: s.gain,
                                             });
                                             break 'config_loop;
                                         }
                                     }
-                                    10 => break 'config_loop, // Quit
+                                    11 => break 'config_loop, // Quit
                                     _ => {}
                                 }
                             }
