@@ -1017,7 +1017,7 @@ pub fn start_audio_playback(rx: mpsc::Receiver<AppMessage>, organ: Arc<Organ>, b
     }
 
     let config = supported_configs
-        .find(|c| c.channels() == 2 && c.sample_format() == SampleFormat::F32)
+        .find(|c| c.channels() >= 2 && c.sample_format() == SampleFormat::F32)
         .ok_or_else(|| anyhow!("No supported F32 stereo config found"))?
         .with_sample_rate(SampleRate(AUDIO_SAMPLE_RATE));
 
