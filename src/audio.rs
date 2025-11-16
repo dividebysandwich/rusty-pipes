@@ -1024,51 +1024,75 @@ pub fn start_audio_playback(rx: mpsc::Receiver<AppMessage>, organ: Arc<Organ>, b
     let sample_format = config.sample_format();
     let stream_config: StreamConfig = config.into();
     let sample_rate = stream_config.sample_rate.0;
-    let channels = stream_config.channels as usize;
+    let device_channels = stream_config.channels as usize;
 
     println!(
-        "[Cpal] Using config: SampleRate: {}, Channels: {}, Format: {:?}",
-        sample_rate, channels, sample_format
+        "[Cpal] Using config: SampleRate: {}, Device channels: {}, Format: {:?}",
+        sample_rate, device_channels, sample_format
     );
 
+    let mix_channels = 2; // Our engine outputs stereo
     // Create the ring buffer
-    let ring_buf_capacity = buffer_size_frames * channels * 10;
+    let ring_buf_capacity = buffer_size_frames * mix_channels * 10;
     let ring_buf = HeapRb::<f32>::new(ring_buf_capacity);
     log::debug!(
         "[Cpal] Ring buffer created with capacity for {} frames.",
-        ring_buf_capacity / channels
+        ring_buf_capacity / mix_channels
     );
     let (producer, mut consumer) = ring_buf.split();
 
     // Spawn the audio processing thread
     spawn_audio_processing_thread(rx, producer, organ, sample_rate, buffer_size_frames);
 
+    let mut stereo_read_buffer: Vec<f32> = vec![0.0; buffer_size_frames * 2];
+
     // --- The cpal audio callback ---
     let data_callback = move |output: &mut [f32], _: &cpal::OutputCallbackInfo| {
-        let frames_to_write = output.len() / channels;
-        let frames_available = consumer.occupied_len() / channels;
+        let out_channels = device_channels;
+        let in_channels = 2;
+        // Calculate how many *frames* the device is asking for.
+        let frames_to_write = output.len() / out_channels;
 
-        let frames_to_take = frames_to_write.min(frames_available);
+        // Check how many *frames* our engine has ready.
+        let frames_available = consumer.occupied_len() / in_channels;
 
-        if frames_to_take > 0 {
-            let samples_to_take = frames_to_take * channels;
-            let samples_popped = consumer.pop_slice(&mut output[..samples_to_take]);
-            if samples_popped < samples_to_take {
-                for sample in &mut output[samples_popped..samples_to_take] {
-                    *sample = 0.0;
+        // We'll process the minimum of the two.
+        let frames_to_process = frames_to_write.min(frames_available);
+        let samples_to_read = frames_to_process * in_channels;
+
+        if frames_to_process > 0 {
+            // Resize our temp buffer if needed and pop the stereo data.
+            if stereo_read_buffer.len() < samples_to_read {
+                stereo_read_buffer.resize(samples_to_read, 0.0);
+            }
+            let _ = consumer.pop_slice(&mut stereo_read_buffer[..samples_to_read]);
+
+            // 5. Manually interleave the stereo data into the 6-channel output.
+            let mut in_idx = 0;
+            let mut out_idx = 0;
+            for _ in 0..frames_to_process {
+                // Copy L -> C1
+                output[out_idx + 0] = stereo_read_buffer[in_idx + 0];
+                // Copy R -> C2
+                output[out_idx + 1] = stereo_read_buffer[in_idx + 1];
+                
+                for ch in 2..out_channels {
+                    output[out_idx + ch] = 0.0; // Fill unused channels with silence
                 }
+                in_idx += in_channels;
+                out_idx += out_channels;
             }
         }
 
-        // Fill remaining buffer with silence if we underrun
-        if frames_to_take < frames_to_write {
-            let silence_start_index = frames_to_take * channels;
-            for sample in &mut output[silence_start_index..] {
+        // Fill remaining buffer with silence if we underrun.
+        let silence_start_frame = frames_to_process;
+        if silence_start_frame < frames_to_write {
+            let silence_start_sample = silence_start_frame * out_channels;
+            for sample in &mut output[silence_start_sample..] {
                 *sample = 0.0;
             }
             if frames_available > 0 {
-                // This is a real underrun
-                log::warn!("[CpalCallback] Audio buffer underrun! Wrote {} silent frames.", frames_to_write - frames_to_take);
+                log::warn!("[CpalCallback] Audio buffer underrun! Wrote {} silent frames.", frames_to_write - frames_to_process);
             }
         }
     };
