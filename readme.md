@@ -62,7 +62,7 @@ Apple's OS prevents users from running unsigned programs. To bypass this mechani
 
 The configuration dialog is shown on startup in both text and graphical mode, the settings are the same for both.
 
-<img width="1008" height="310" alt="image" src="https://github.com/user-attachments/assets/2b495ed5-a110-435c-a7a0-505271ca4c64" />
+<img width="644" height="670" alt="image" src="https://github.com/user-attachments/assets/b1fa1114-3d62-467d-9ab9-ce1a9cb52043" />
 
 ### Organ file
 
@@ -71,6 +71,10 @@ This setting needs to point to a GrandOrgue ".organ" or Hauptwerk ".Organ_Hauptw
 > [!NOTE]
 > Hauptwerk support is experimental and known to still have pitch issues with some sample sets
 > Some Hauptwerk organs are mixed completely dry on purpose and may require the use of the convolutional reverb setting to be used.
+
+### Audio device
+
+Select the audio output device. Note that if your device has more than 2 channels (professional multichannel audio interfaces, etc) then only the first 2 channels will be used for the left and right channel respectively.
 
 ### MIDI file
 
@@ -161,6 +165,8 @@ Options:
           List all available MIDI input devices and exit
       --midi-device <DEVICE_NAME>
           Select a MIDI device by name
+      --audio-device <AUDIO_DEVICE>
+          Select an audio device by name
       --audio-buffer-frames <NUM_FRAMES>
           Audio buffer size in frames (lower values reduce latency but may cause glitches) [default: 512]
       --tui
