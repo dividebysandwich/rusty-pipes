@@ -225,7 +225,6 @@ impl Voice {
                         let total_frames = samples_in_memory.len() / input_channels;
                         loop_end_frame = if end == 0 { total_frames } else { end as usize };
 
-                        // ... (Sanity check loop points logic is unchanged) ...
                         if loop_start_frame >= loop_end_frame || loop_end_frame > total_frames {
                             log::warn!(
                                 "[LoaderThread] Invalid loop points for {:?}: start {}, end {}, total {}. Disabling loop.",
@@ -639,6 +638,26 @@ fn spawn_audio_processing_thread<P>(
         let mut loop_counter: u64 = 0;
         let mut voices_to_remove: Vec<u64> = Vec::with_capacity(32);
 
+        // Calculate the duration of one audio buffer in microseconds.
+        let buffer_duration_micros = (buffer_size_frames as u64 * 1_000_000) / sample_rate as u64;
+        
+        // We will sleep for 80% of the buffer duration. This gives the thread
+        // 20% of the buffer time (~1ms for a 5.3ms buffer) to wake up
+        // and prepare the next block before the hardware needs it.
+        let sleep_duration = Duration::from_micros(
+            (buffer_duration_micros * 8) / 10
+        );
+        log::info!(
+            "[AudioThread] Buffer duration is {:.2}ms. Using adaptive sleep of {:?}.",
+            buffer_duration_micros as f32 / 1000.0,
+            sleep_duration
+        );
+
+        // Pre-calculate fade increment
+        let fade_frames = (sample_rate as f32 * CROSSFADE_TIME) as usize; 
+        let fade_increment = if fade_frames > 0 { 1.0 / fade_frames as f32 } else { 1.0 };
+        let samples_per_block = interleaved_buffer.len();
+
         loop {
             // --- Handle incoming messages ---
             while let Ok(msg) = rx.try_recv() {
@@ -818,82 +837,100 @@ fn spawn_audio_processing_thread<P>(
                 }
             }
 
-            let mut max_abs_sample = 0.0f32;
-
-            // --- mixing loop ---
-            let fade_frames = (sample_rate as f32 * CROSSFADE_TIME) as usize; 
-            let fade_increment = if fade_frames > 0 { 1.0 / fade_frames as f32 } else { 1.0 };
-
-            // --- process voices ---
+            // --- Voice Processing Loop ---
             for (voice_id, voice) in voices.iter_mut() {
                 let is_loader_finished = voice.is_finished.load(Ordering::Relaxed);
-                let mut is_buffer_empty = voice.consumer.is_empty();
-
-                let frames_to_read = buffer_size_frames;
-                let samples_to_read = frames_to_read * CHANNEL_COUNT;
                 
-                let samples_read = voice.consumer.pop_slice(&mut voice_read_buffer[..samples_to_read]);
-                let frames_read = samples_read / CHANNEL_COUNT;
+                let samples_to_read = buffer_size_frames * CHANNEL_COUNT;
+                let samples_available = voice.consumer.occupied_len();
 
-                // --- Latency Measurement Logic ---
-                if frames_read > 0 && voice.is_attack_sample && !voice.has_reported_latency {
+                // Check if we have enough data to fill a full block
+                if samples_available < samples_to_read {
+                    // Not enough data.
+                    if is_loader_finished && samples_available == 0 && !voice.is_fading_out {
+                        // Loader is done, buffer is empty, and not fading out: remove it.
+                        voices_to_remove.push(*voice_id);
+                    }
+                    // Otherwise, just skip this voice for this block.
+                    continue;
+                }
+
+                // Pop *exactly* the amount we need
+                let frames_read = buffer_size_frames;
+                let _ = voice.consumer.pop_slice(&mut voice_read_buffer[..samples_to_read]);
+
+                // --- Latency Reporting ---
+                if voice.is_attack_sample && !voice.has_reported_latency {
                     let latency = voice.note_on_time.elapsed();
                     log::debug!(
                         "[AudioThread] Latency for attack voice {} ({:?}): {:.2}ms",
-                        voice_id,
-                        voice.debug_path.file_name().unwrap_or_default(),
-                        latency.as_secs_f32() * 1000.0
+                        voice_id, voice.debug_path.file_name().unwrap_or_default(), latency.as_secs_f32() * 1000.0
                     );
                     voice.has_reported_latency = true;
                 }
 
-                // --- Mix / Crossfade Logic ---
-                for i in 0..frames_read {
-                    if voice.is_fading_in {
-                        voice.fade_level += fade_increment;
-                        if voice.fade_level >= 1.0 {
-                            voice.fade_level = 1.0;
-                            voice.is_fading_in = false;
-                        }
-                    } else if voice.is_fading_out {
-                        voice.fade_level -= fade_increment;
-                        if voice.fade_level <= 0.0 {
-                            voice.fade_level = 0.0;
-                        }
-                    }
-                    let current_gain = voice.gain * voice.fade_level;
-                    let l_sample = voice_read_buffer[i * CHANNEL_COUNT] * current_gain * GAIN_FACTOR;
-                    let r_sample = voice_read_buffer[i * CHANNEL_COUNT + 1] * current_gain * GAIN_FACTOR;
-                    mix_buffer_stereo[0][i] += l_sample;
-                    mix_buffer_stereo[1][i] += r_sample;
-                    if l_sample.abs() > max_abs_sample {
-                        max_abs_sample = l_sample.abs();
-                    }
-                }
+                // --- Fade/Gain Logic ---
+                let initial_fade_level = voice.fade_level;
+                let mut final_fade_level = initial_fade_level;
 
-                // --- Decide whether to REMOVE the voice ---
-                let is_faded_out = voice.is_fading_out && voice.fade_level == 0.0;
-
-                if is_faded_out && !is_buffer_empty {
-                    let _ = voice.consumer.pop_slice(&mut tmp_drain_buffer);
-                    is_buffer_empty = voice.consumer.is_empty();
+                if voice.is_fading_in {
+                    final_fade_level += fade_increment * (frames_read as f32);
+                    if final_fade_level >= 1.0 {
+                        final_fade_level = 1.0;
+                        voice.is_fading_in = false; // State change for next block
+                    }
+                } else if voice.is_fading_out {
+                    final_fade_level -= fade_increment * (frames_read as f32);
+                    if final_fade_level <= 0.0 {
+                        final_fade_level = 0.0;
+                    }
                 }
                 
-                let is_done_playing = is_loader_finished && is_buffer_empty;
+                // Store the final fade level. This is now the state for the *next* block.
+                voice.fade_level = final_fade_level;
 
-                // We must remove a voice if:
-                // 1. It's a "normal" voice (like a release) and it has finished playing
-                //    AND it is *not* currently fading in.
-                let normal_finish = is_done_playing && !voice.is_fading_out && !voice.is_fading_in;
+                let start_gain = voice.gain * initial_fade_level * GAIN_FACTOR;
+                let end_gain = voice.gain * final_fade_level * GAIN_FACTOR;
 
-                // OR
-                // 2. It's a "fading" voice (an attack) and it has finished fading out.
-                let fade_out_finish = is_faded_out; // `is_buffer_empty` is checked if needed above
+                // --- Mixing Loop ---
+                if (start_gain - end_gain).abs() < 1e-8 { // Check for float equality
+                    // --- FAST PATH (No fade / constant gain) ---
+                    // This is the common case.
+                    if start_gain == 0.0 {
+                        // Faded out, or gain is 0. Do nothing.
+                    } else {
+                        // Optimized loop with no branching.
+                        // The compiler can vectorize this.
+                        let gain = start_gain;
+                        for i in 0..frames_read {
+                            let read_idx = i * CHANNEL_COUNT;
+                            mix_buffer_stereo[0][i] += voice_read_buffer[read_idx] * gain;
+                            mix_buffer_stereo[1][i] += voice_read_buffer[read_idx + 1] * gain;
+                        }
+                    }
+                } else {
+                    // --- SLOW PATH (Fading) ---
+                    // This only runs during a crossfade.
+                    let gain_step = (end_gain - start_gain) / (frames_read as f32);
+                    let mut current_gain = start_gain;
+                    
+                    for i in 0..frames_read {
+                        let read_idx = i * CHANNEL_COUNT;
+                        mix_buffer_stereo[0][i] += voice_read_buffer[read_idx] * current_gain;
+                        mix_buffer_stereo[1][i] += voice_read_buffer[read_idx + 1] * current_gain;
+                        current_gain += gain_step;
+                    }
+                }
 
-                if normal_finish || fade_out_finish {
+                // --- Voice Removal Logic (simplified) ---
+                // Check if the voice *finished* fading out *this block*.
+                if voice.is_fading_out && voice.fade_level == 0.0 {
+                    // Drain any remaining buffered samples just in case
+                    voice.consumer.skip(voice.consumer.occupied_len());
                     voices_to_remove.push(*voice_id);
                 }
-            } // --- End of voice processing loop ---
+            }
+            // --- End of voice processing loop ---
 
             // --- Perform deferred removal ---
             if !voices_to_remove.is_empty() {
@@ -953,18 +990,16 @@ fn spawn_audio_processing_thread<P>(
                 interleaved_buffer[i * CHANNEL_COUNT + 1] = final_r;
             }
 
+            // This loop will now only run if the buffer is *extremely* full
+            // (e.g., if the sleep duration was too short and we lapped the consumer).
+            // In the common case, it will push all at once and not sleep.
             let mut offset = 0;
             let needed = interleaved_buffer.len();
             while offset < needed {
-                // push_slice returns the number of samples *actually* pushed
                 let pushed = producer.push_slice(&interleaved_buffer[offset..needed]);
                 offset += pushed;
-
-                // If we didn't push everything, the buffer is full.
-                // We must sleep to yield to the consumer (cpal callback).
                 if offset < needed {
-                    // Sleep for a very short duration. 1ms is a good
-                    // compromise. It's much better than a 100% CPU spin.
+                    // Buffer is full. Sleep for a short, defensive time.
                     thread::sleep(Duration::from_millis(1));
                 }
             }
@@ -982,15 +1017,13 @@ fn spawn_audio_processing_thread<P>(
                 );
             }
 
-            thread::sleep(Duration::from_millis(1));
-
+            thread::sleep(sleep_duration);
         }
     });
 }
 
 /// Helper function to handle Note Off logic
 fn handle_note_off(
-    // ... (function is unchanged) ...
     note: u8,
     organ: &Arc<Organ>,
     voices: &mut HashMap<u64, Voice>,
