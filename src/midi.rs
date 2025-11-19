@@ -30,7 +30,10 @@ fn midi_note_to_name(note: u8) -> String {
 
 /// This is the callback function passed to `midir::MidiInput::connect`.
 /// It's called by the `midir` thread when a MIDI message is received.
-pub fn midi_callback(message: &[u8], tui_tx: &Sender<TuiMessage>) {
+pub fn midi_callback(
+    message: &[u8], 
+    tui_tx: &Sender<TuiMessage>,
+) {
     let now = Instant::now();
         
     // Parse and send to Audio thread
@@ -48,7 +51,7 @@ pub fn midi_callback(message: &[u8], tui_tx: &Sender<TuiMessage>) {
                     // Send raw event to TUI
                     let _ = tui_tx.send(TuiMessage::MidiNoteOn(note, velocity, channel));
                     // Send piano roll event
-                    let _ = tui_tx.send(TuiMessage::TuiNoteOn(note, now));
+                    let _ = tui_tx.send(TuiMessage::TuiNoteOn(note, channel, now));
                 } else {
                     // Note On with velocity 0 is a Note Off
                     let note_name = midi_note_to_name(note);
@@ -57,7 +60,7 @@ pub fn midi_callback(message: &[u8], tui_tx: &Sender<TuiMessage>) {
                     // Send raw event to TUI
                     let _ = tui_tx.send(TuiMessage::MidiNoteOff(note, channel));
                     // Send piano roll event
-                    let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, now));
+                    let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, channel, now));
                 }
             },
             0x80..=0x8F => { // Note Off
@@ -68,7 +71,7 @@ pub fn midi_callback(message: &[u8], tui_tx: &Sender<TuiMessage>) {
                 // Send raw event to TUI
                 let _ = tui_tx.send(TuiMessage::MidiNoteOff(note, channel));
                 // Send piano roll event
-                let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, now));
+                let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, channel, now));
             },
             0xB0..=0xBF => { // Controller Change
                 let controller = message[1];
@@ -185,13 +188,13 @@ pub fn play_midi_file(
                             if vel > 0 {
                                 let log_msg = format!("Note On: {} (Ch {}, Vel {})", note_name, channel_num + 1, vel);
                                 let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                                let _ = tui_tx.send(TuiMessage::TuiNoteOn(key, now));
+                                let _ = tui_tx.send(TuiMessage::TuiNoteOn(key, channel_num, now));
                                 let _ = tui_tx.send(TuiMessage::MidiNoteOn(key, vel, channel_num));
                             } else {
                                 // Velocity 0 is a Note Off
                                 let log_msg = format!("Note Off: {} (Ch {})", note_name, channel_num + 1);
                                 let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                                let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, now));
+                                let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, channel_num,now));
                                 let _ = tui_tx.send(TuiMessage::MidiNoteOff(key, channel_num));
                             }
                         },
@@ -200,7 +203,7 @@ pub fn play_midi_file(
                             let note_name = midi_note_to_name(key);
                             let log_msg = format!("Note Off: {} (Ch {})", note_name, channel_num + 1);
                             let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                            let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, now));
+                            let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, channel_num, now));
                             let _ = tui_tx.send(TuiMessage::MidiNoteOff(key, channel_num));
                         },
                         MidlyMidiMessage::Controller { controller, value: _ } => {

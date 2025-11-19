@@ -31,6 +31,7 @@ pub const MIDI_LOG_CAPACITY: usize = 10; // Max log lines
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlayedNote {
     pub note: u8,
+    pub channel: u8,
     pub start_time: Instant,
     pub end_time: Option<Instant>, // None if still playing
 }
@@ -185,8 +186,8 @@ impl AppState {
             // --- Other TUI messages ---
             TuiMessage::MidiLog(log) => self.add_midi_log(log),
             TuiMessage::Error(err) => self.error_msg = Some(err),
-            TuiMessage::TuiNoteOn(note, start_time) => self.handle_tui_note_on(note, start_time),
-            TuiMessage::TuiNoteOff(note, end_time) => self.handle_tui_note_off(note, end_time),
+            TuiMessage::TuiNoteOn(note, channel, start_time) => self.handle_tui_note_on(note, channel, start_time),
+            TuiMessage::TuiNoteOff(note, channel, end_time) => self.handle_tui_note_off(note, channel, end_time),
             TuiMessage::TuiAllNotesOff => self.handle_tui_all_notes_off(),
         }
         Ok(())
@@ -270,19 +271,32 @@ impl AppState {
         self.midi_log.push_back(msg);
     }
 
-    pub fn handle_tui_note_on(&mut self, note: u8, start_time: Instant) {
+    pub fn handle_tui_note_on(&mut self, note: u8, channel: u8, start_time: Instant) {
         let played_note = PlayedNote {
             note,
+            channel,
             start_time,
             end_time: None,
         };
         self.currently_playing_notes.insert(note, played_note);
     }
 
-    pub fn handle_tui_note_off(&mut self, note: u8, end_time: Instant) {
-        if let Some(mut played_note) = self.currently_playing_notes.remove(&note) {
-            played_note.end_time = Some(end_time);
-            self.finished_notes_display.push_back(played_note);
+    pub fn handle_tui_note_off(&mut self, note: u8, channel: u8, end_time: Instant) {
+        let mut found = None;
+        let mut to_reinsert = Vec::new();
+
+        for (n, mut played_note) in self.currently_playing_notes.drain() {
+            if n == note && played_note.channel == channel && found.is_none() {
+                played_note.end_time = Some(end_time);
+                self.finished_notes_display.push_back(played_note);
+                found = Some(n);
+            } else {
+                to_reinsert.push((n, played_note));
+            }
+        }
+
+        for (n, played_note) in to_reinsert {
+            self.currently_playing_notes.insert(n, played_note);
         }
     }
 

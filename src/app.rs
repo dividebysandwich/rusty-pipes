@@ -26,8 +26,8 @@ pub enum TuiMessage {
     /// An error message to display.
     Error(String),
     /// Messages for Piano Roll
-    TuiNoteOn(u8, Instant),
-    TuiNoteOff(u8, Instant),
+    TuiNoteOn(u8, u8, Instant),
+    TuiNoteOff(u8, u8, Instant),
     TuiAllNotesOff,
 
     /// --- Midi events to TUI---

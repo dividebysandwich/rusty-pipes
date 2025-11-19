@@ -2,17 +2,17 @@ use anyhow::Result;
 use eframe::{egui, App, Frame};
 use egui::{Stroke, UiBuilder};
 use midir::MidiInputConnection;
+use std::time::{Instant, Duration};
 use std::{
     sync::{
         mpsc::Sender,
         Arc, Mutex
     },
-    time::{Duration, Instant},
     collections::{VecDeque, HashMap, BTreeSet},
 };
 
 use crate::{
-    app::{AppMessage, TuiMessage},
+    app::AppMessage,
     app_state::{AppState, Preset},
     organ::Organ,
 };
@@ -21,7 +21,6 @@ use crate::{
 pub struct EguiApp {
     app_state: Arc<Mutex<AppState>>,
     audio_tx: Sender<AppMessage>,
-    tui_tx: Sender<TuiMessage>,
 
     // Need to hold the connection to keep it alive
     _midi_connection: Option<MidiInputConnection<()>>,
@@ -30,6 +29,8 @@ pub struct EguiApp {
     selected_stop_index: Option<usize>,
     stop_list_scroll_offset: f32,
     selection_changed_by_key: bool,
+
+    last_mouse_move_repaint: Instant,
 
     show_preset_save_modal: bool,
     preset_save_slot: usize,
@@ -40,9 +41,9 @@ pub struct EguiApp {
 pub fn run_gui_loop(
     audio_tx: Sender<AppMessage>,
     app_state: Arc<Mutex<AppState>>,
-    tui_tx: Sender<TuiMessage>,
     organ: Arc<Organ>,
     midi_connection: Option<MidiInputConnection<()>>,
+    gui_ctx_tx: Sender<egui::Context>,
 ) -> Result<()> {
 
     let selected_stop_index = if !organ.stops.is_empty() { Some(0) } else { None };
@@ -50,11 +51,11 @@ pub fn run_gui_loop(
     let egui_app = EguiApp {
         app_state,
         audio_tx,
-        tui_tx,
         _midi_connection: midi_connection, // Store the connection
         selected_stop_index,
         stop_list_scroll_offset: 0.0,
         selection_changed_by_key: false,
+        last_mouse_move_repaint: Instant::now(),
         show_preset_save_modal: false,
         preset_save_slot: 0,
         preset_save_name: String::new(),
@@ -70,16 +71,42 @@ pub fn run_gui_loop(
     eframe::run_native(
         &format!("Rusty Pipes - {}", organ.name),
         native_options,
-        Box::new(|_cc| Ok::<Box<dyn App>, Box<dyn std::error::Error + Send + Sync>>(Box::new(egui_app))),
+        Box::new(move |cc| {
+            // Extract the Context and send it back to main logic thread
+            let _ = gui_ctx_tx.send(cc.egui_ctx.clone()); 
+            
+            Ok::<Box<dyn App>, Box<dyn std::error::Error + Send + Sync>>(Box::new(egui_app))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("Eframe error: {}", e))?;
 
     Ok(())
 }
 
+const MOUSE_DEBOUNCE_DELAY: Duration = Duration::from_millis(100);
+
 impl App for EguiApp {
+
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+        
+        // Mouse Debouncing Logic
+        let input = ctx.input(|i| i.clone());
+        // Check if the pointer exists (hovering) AND if it moved (delta is non-zero)
+        let mouse_moved = input.pointer.hover_pos().is_some() && input.pointer.delta() != egui::Vec2::ZERO;
+
+        if mouse_moved {
+            let now = Instant::now();
+            if now.duration_since(self.last_mouse_move_repaint) >= MOUSE_DEBOUNCE_DELAY {
+                // Repaint immediately if debounce time has passed
+                ctx.request_repaint(); 
+                self.last_mouse_move_repaint = now;
+            } else {
+                // If debounce time hasn't passed, ask to repaint after the remaining time
+                let remaining_time = MOUSE_DEBOUNCE_DELAY.saturating_sub(now.duration_since(self.last_mouse_move_repaint));
+                ctx.request_repaint_after(remaining_time);
+            }
+        }
 
         let (
             organ,
@@ -87,8 +114,6 @@ impl App for EguiApp {
             midi_log,
             presets,
             active_notes,
-            finished_notes,
-            piano_roll_duration,
         ) = {
             let app_state = self.app_state.lock().unwrap();
             (
@@ -97,8 +122,6 @@ impl App for EguiApp {
                 app_state.midi_log.clone(),
                 app_state.presets.clone(),
                 app_state.currently_playing_notes.clone(),
-                app_state.finished_notes_display.clone(),
-                app_state.piano_roll_display_duration,
             )
         };
 
@@ -191,16 +214,11 @@ impl App for EguiApp {
             
         }
 
-        // Request continuous repaints for the piano roll
-        ctx.request_repaint_after(Duration::from_millis(33));
-        
         // Draw the UI (no more mode switching)
         self.draw_main_app_ui(
             ctx,
             &midi_log,
             &active_notes,
-            &finished_notes,
-            piano_roll_duration,
             organ.clone(),
             stop_channels.clone(),
             &presets
@@ -228,15 +246,17 @@ impl EguiApp {
         ctx: &egui::Context, 
         midi_log: &VecDeque<std::string::String>, 
         active_notes: &std::collections::HashMap<u8, crate::app_state::PlayedNote>, 
-        finished_notes: &std::collections::VecDeque<crate::app_state::PlayedNote>, 
-        piano_roll_duration: Duration, 
         organ: Arc<Organ>,
         stop_channels: HashMap<usize, BTreeSet<u8>>,
         presets: &[std::option::Option<Preset>; 12],
     ) {
         self.draw_footer(ctx);
         self.draw_preset_panel(ctx, presets);
-        self.draw_log_and_piano_roll_panel(ctx, midi_log, &active_notes, &finished_notes, piano_roll_duration);
+        self.draw_log_and_midi_indicator_panel( // Renamed and simplified call
+            ctx, 
+            midi_log, 
+            active_notes, 
+        );
 
         let panel_frame = egui::Frame {
             fill: egui::Color32::from_rgb(30, 30, 30),
@@ -441,27 +461,25 @@ impl EguiApp {
     }
 
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    fn draw_log_and_piano_roll_panel(
+    fn draw_log_and_midi_indicator_panel(
         &mut self,
         ctx: &egui::Context,
         midi_log: &std::collections::VecDeque<String>,
         active_notes: &std::collections::HashMap<u8, crate::app_state::PlayedNote>,
-        finished_notes: &std::collections::VecDeque<crate::app_state::PlayedNote>,
-        piano_roll_duration: Duration,
-    ){ 
+    ){
         const LOG_WIDTH: f32 = 300.0;
 
         egui::TopBottomPanel::bottom("bottom_panel")
         .resizable(true)
-        .default_height(250.0)
-        .min_height(250.0)
+        .default_height(100.0) 
+        .min_height(75.0)
         .show(ctx, |ui| {
             
             let full_rect = ui.available_rect_before_wrap();
             let split_x = (full_rect.left() + LOG_WIDTH).min(full_rect.right());
-            let (log_rect, piano_rect) = full_rect.split_left_right_at_x(split_x);
+            let (log_rect, indicator_rect) = full_rect.split_left_right_at_x(split_x);
 
-            // --- Column 0: MIDI Log (Fixed Width) ---
+            // Column 0: MIDI Log
             ui.scope_builder( 
                 UiBuilder{ 
                     max_rect: Some(log_rect),
@@ -469,7 +487,7 @@ impl EguiApp {
                     ..Default::default()
                 }, |ui| {
                 ui.heading("MIDI Log");
-                
+                    
                 egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap); 
                     for msg in midi_log {
@@ -478,123 +496,99 @@ impl EguiApp {
                 });
             });
 
-            // --- Column 1: Piano Roll (Remaining Width) ---
-            ui.scope_builder( UiBuilder{ max_rect: Some(piano_rect), layout: Some(egui::Layout::top_down(egui::Align::LEFT)), ..Default::default()}, |ui| {
+            // MIDI Activity Indicator
+            ui.scope_builder( UiBuilder{ max_rect: Some(indicator_rect), layout: Some(egui::Layout::top_down(egui::Align::LEFT)), ..Default::default()}, |ui| {
                 ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.heading("Piano Roll");
-                    self.draw_piano_roll(
+                    ui.heading("MIDI Activity"); 
+                    self.draw_midi_indicator( 
                         ui,
                         active_notes,
-                        finished_notes,
-                        piano_roll_duration,
                     );
                 });
             });
         });
+        
     }
 
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    fn draw_piano_roll(
+    fn draw_midi_indicator(
         &self,
         ui: &mut egui::Ui,
         active_notes: &std::collections::HashMap<u8, crate::app_state::PlayedNote>,
-        finished_notes: &std::collections::VecDeque<crate::app_state::PlayedNote>,
-        piano_roll_duration: Duration,
     ) {
-
-        const PIANO_LOW_NOTE: u8 = 21;  // A0
+        const PIANO_LOW_NOTE: u8 = 21; // A0
         const PIANO_HIGH_NOTE: u8 = 108; // C8
         const BLACK_KEY_MODS: [u8; 5] = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
 
-        let desired_size = ui.available_size_before_wrap();
-
+        let desired_size = egui::vec2(ui.available_width(), 50.0);
         let (response, painter) = ui.allocate_painter(
             desired_size,
             egui::Sense::hover(),
         );
         let rect = response.rect;
 
-        let now = Instant::now();
-        let display_start_time = now.checked_sub(piano_roll_duration)
-            .unwrap_or(Instant::now());
-        let total_duration_f64 = piano_roll_duration.as_secs_f64();
-
-        // Draw Background (Keyboard)
         let note_range = (PIANO_HIGH_NOTE - PIANO_LOW_NOTE + 1) as f32;
         let key_width = rect.width() / note_range;
+        let _key_height = rect.height();
 
+        // Iterate over the note range to draw all keys
         for note in PIANO_LOW_NOTE..=PIANO_HIGH_NOTE {
-            let is_black_key = BLACK_KEY_MODS.contains(&(note % 12));
-            let color = if is_black_key {
-                egui::Color32::from_gray(50)
-            } else {
-                egui::Color32::from_gray(100)
-            };
-            
-            let x_start = egui::remap(
-                note as f64, 
-                PIANO_LOW_NOTE as f64..=(PIANO_HIGH_NOTE + 1) as f64, 
-                rect.left() as f64..=rect.right() as f64
-            ) as f32;
+            let note_mod = note % 12;
+            let is_black_key = BLACK_KEY_MODS.contains(&note_mod);
 
-            painter.add(egui::Shape::Rect(egui::epaint::RectShape::new(
-                egui::Rect::from_x_y_ranges(x_start..=(x_start + key_width), rect.y_range()),
-                egui::CornerRadius::ZERO,
-                color, // fill
-                Stroke::new(1.0, color), // border
-                egui::StrokeKind::Inside,
-            )));
-        }
-        
-        // Helper to map time to Y-coord
-        let map_time_to_y = |time: Instant| -> f32 {
-            let time_since_start = time.duration_since(display_start_time).as_secs_f64();
-            // Remap 0.0 -> total_duration to rect.bottom() -> rect.top() (inverted)
-            egui::remap(
-                time_since_start, 
-                0.0..=total_duration_f64, 
-                rect.bottom() as f64..=rect.top() as f64
-            ) as f32
-        };
-        
-        // Helper to map note to X-coord
-        let map_note_to_x_range = |note: u8| -> (f32, f32) {
             let x_start = egui::remap(
                 note as f64, 
                 PIANO_LOW_NOTE as f64..=(PIANO_HIGH_NOTE + 1) as f64, 
                 rect.left() as f64..=rect.right() as f64
             ) as f32;
-            (x_start, x_start + key_width)
-        };
-        
-        // Draw Finished Notes
-        for note in finished_notes {
-            let (x1, x2) = map_note_to_x_range(note.note);
-            let y1 = map_time_to_y(note.start_time);
-            let y2 = map_time_to_y(note.end_time.unwrap_or(now));
-            
+            let note_rect = egui::Rect::from_x_y_ranges(
+                x_start..=(x_start + key_width), 
+                rect.y_range()
+            );
+
+            let base_color = if is_black_key {
+                egui::Color32::from_gray(50) 
+            } else {
+                egui::Color32::from_gray(100) 
+            };
+
+            let mut fill_color = base_color;
+            let mut stroke_color = egui::Color32::BLACK;
+
+            // Activity Logic: Use PlayedNote's channel for color
+            if let Some(played_note) = active_notes.get(&note) {
+                // Key is active: use the color corresponding to the channel
+                let active_color = Self::get_channel_color(played_note.channel);
+                fill_color = active_color; 
+                stroke_color = active_color; // Match border for better visibility
+            }
+
+            // Draw the key
             painter.add(egui::Shape::Rect(egui::epaint::RectShape::new(
-                egui::Rect::from_x_y_ranges(x1..=x2, y2..=y1),
+                note_rect,
                 egui::CornerRadius::ZERO,
-                egui::Color32::from_rgb(255, 0, 255),
-                egui::Stroke::NONE,
-                egui::StrokeKind::Inside,
+                fill_color, 
+                Stroke::new(1.0, stroke_color),
+                egui::StrokeKind::Middle,
             )));
-        }
-        
-        // Draw Active Notes
-        for note in active_notes.values() {
-            let (x1, x2) = map_note_to_x_range(note.note);
-            let y1 = map_time_to_y(note.start_time);
-            let y2 = map_time_to_y(now); // End at the "now" line
-            
-            painter.add(egui::Shape::Rect(egui::epaint::RectShape::new(
-                egui::Rect::from_x_y_ranges(x1..=x2, y2..=y1),
-                egui::CornerRadius::ZERO,
-                egui::Color32::from_rgb(0, 255, 0),
-                egui::Stroke::NONE,
-                egui::StrokeKind::Inside,
-            )));
+
+            // Draw note labels for white keys only
+            if !is_black_key && note_mod == 0 { // C notes
+            // Convert note number to name
+                let note_rel = note.rem_euclid(12);
+                let octave = (note / 12) - 1;
+                let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+                let note_label = format!("{}{}", note_names[note_rel as usize], octave);
+                let text = format!("{}", note_label);
+                let pos = note_rect.center_bottom() - egui::vec2(0.0, 5.0);
+                painter.text(
+                    pos,
+                    egui::Align2::CENTER_BOTTOM,
+                    text,
+                    egui::FontId::proportional(10.0),
+                    egui::Color32::WHITE,
+                );
+            }
         }
     }
 
@@ -658,6 +652,24 @@ impl EguiApp {
         // If the user clicked the 'X' button on the window
         if !is_open {
             self.show_preset_save_modal = false;
+        }
+    }
+
+    /// helper function inside impl EguiApp or as a standalone function
+    fn get_channel_color(channel: u8) -> egui::Color32 {
+        match channel {
+            0 => egui::Color32::from_rgb(255, 0, 0),    // Red
+            1 => egui::Color32::from_rgb(255, 165, 0),  // Orange
+            2 => egui::Color32::from_rgb(255, 255, 0),  // Yellow
+            3 => egui::Color32::from_rgb(0, 255, 0),    // Lime Green
+            4 => egui::Color32::from_rgb(0, 255, 255),  // Cyan
+            5 => egui::Color32::from_rgb(0, 0, 255),    // Blue
+            6 => egui::Color32::from_rgb(128, 0, 128),  // Purple
+            7 => egui::Color32::from_rgb(255, 0, 255),  // Magenta
+            8 => egui::Color32::from_rgb(255, 192, 203),// Pink
+            9 => egui::Color32::from_rgb(139, 69, 19),  // Brown
+            10..=15 => egui::Color32::from_gray(180), // Light Gray for higher channels
+            _ => egui::Color32::WHITE, // Fallback
         }
     }
 }

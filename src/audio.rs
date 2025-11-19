@@ -629,7 +629,6 @@ fn spawn_audio_processing_thread<P>(
         
         // --- This buffer is for popping from the voice's ringbuf ---
         let mut voice_read_buffer: Vec<f32> = vec![0.0; buffer_size_frames * CHANNEL_COUNT];
-        let mut tmp_drain_buffer: Vec<f32> = vec![0.0; buffer_size_frames * CHANNEL_COUNT];
 
         // Initialize the StereoConvolver with the correct block size
         let mut convolver = StereoConvolver::new(buffer_size_frames);
@@ -656,7 +655,6 @@ fn spawn_audio_processing_thread<P>(
         // Pre-calculate fade increment
         let fade_frames = (sample_rate as f32 * CROSSFADE_TIME) as usize; 
         let fade_increment = if fade_frames > 0 { 1.0 / fade_frames as f32 } else { 1.0 };
-        let samples_per_block = interleaved_buffer.len();
 
         loop {
             // --- Handle incoming messages ---

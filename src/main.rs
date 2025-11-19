@@ -304,6 +304,7 @@ fn main() -> Result<()> {
     // --- Create channels for thread communication ---
     let (audio_tx, audio_rx) = mpsc::channel::<AppMessage>();
     let (tui_tx, tui_rx) = mpsc::channel::<TuiMessage>();
+    let (gui_ctx_tx, gui_ctx_rx) = mpsc::channel::<egui::Context>();
 
     // --- Start the Audio thread ---
     if tui_mode { println!("Starting audio engine..."); }
@@ -332,18 +333,32 @@ fn main() -> Result<()> {
     // --- Spawn the dedicated MIDI logic thread ---
     let logic_app_state = Arc::clone(&app_state);
     let logic_audio_tx = audio_tx.clone();
+
     let _logic_thread = thread::spawn(move || {
         log::info!("MIDI logic thread started.");
+        let mut egui_ctx: Option<egui::Context> = None;
+
         // This is a blocking loop, it waits for messages from either the MIDI callback or the file player.
         while let Ok(msg) = tui_rx.recv() {
-            // Yield
-            thread::yield_now();
+            
+            if egui_ctx.is_none() {
+                if let Ok(ctx) = gui_ctx_rx.try_recv() {
+                    egui_ctx = Some(ctx);
+                }
+            }
+
             // Lock the state, handle the message, then unlock.
             let mut app_state_locked = logic_app_state.lock().unwrap();
             if let Err(e) = app_state_locked.handle_tui_message(msg, &logic_audio_tx) {
                 let err_msg = format!("Error handling TUI message: {}", e);
                 log::error!("{}", err_msg);
                 app_state_locked.add_midi_log(err_msg);
+            }
+
+            // Tell the GUI to repaint
+            if let Some(ctx) = &egui_ctx {
+                // This wakes up the GUI thread immediately from sleep!
+                ctx.request_repaint(); 
             }
         }
         log::info!("MIDI logic thread shutting down.");
@@ -388,9 +403,9 @@ fn main() -> Result<()> {
         gui::run_gui_loop(
             audio_tx,
             Arc::clone(&app_state),
-            tui_tx,
             organ,
             _midi_connection, // Pass the connection to the GUI
+            gui_ctx_tx,
         )?;
     }
 
