@@ -924,7 +924,7 @@ fn spawn_audio_processing_thread<P>(
                 // Check if we have enough data to fill a full block
                 if samples_available < samples_to_read {
                     // Not enough data.
-                    if is_loader_finished && samples_available == 0 && !voice.is_fading_out {
+                    if is_loader_finished {
                         // Loader is done, buffer is empty, and not fading out: remove it.
                         voices_to_remove.push(*voice_id);
                     }
