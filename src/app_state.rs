@@ -81,6 +81,7 @@ pub struct AppState {
     pub presets: PresetBank,
     pub gain: f32,
     pub polyphony: usize,
+    pub last_underrun: Option<Instant>, // Store when the last buffer underrun occurred
 }
 
 impl AppState {
@@ -100,7 +101,7 @@ impl AppState {
             presets,
             gain: initial_gain,
             polyphony: initial_polyphony,
-            
+            last_underrun: None,
         })
     }
     
@@ -217,6 +218,7 @@ impl AppState {
             },
             
             // --- Other TUI messages ---
+            TuiMessage::AudioUnderrun => self.last_underrun = Some(Instant::now()),
             TuiMessage::MidiLog(log) => self.add_midi_log(log),
             TuiMessage::Error(err) => self.error_msg = Some(err),
             TuiMessage::TuiNoteOn(note, channel, start_time) => self.handle_tui_note_on(note, channel, start_time),

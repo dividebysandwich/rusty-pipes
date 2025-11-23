@@ -27,6 +27,8 @@ pub enum TuiMessage {
     MidiLog(String),
     /// An error message to display.
     Error(String),
+    /// Triggered whenever a buffer underrun occurs.
+    AudioUnderrun,
     /// Messages for Piano Roll
     TuiNoteOn(u8, u8, Instant),
     TuiNoteOff(u8, u8, Instant),

@@ -316,6 +316,7 @@ fn main() -> Result<()> {
         config.gain,
         config.polyphony,
         config.audio_device_name,
+        tui_tx.clone(),
     )?;
     if tui_mode { println!("Audio engine running."); }
     

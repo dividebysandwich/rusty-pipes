@@ -263,10 +263,22 @@ fn draw_main_app_ui(
         ])
         .split(frame.area());
 
+    let is_underrun = {
+         if let Some(last) = app_state.last_underrun {
+             last.elapsed() < Duration::from_millis(200)
+         } else {
+             false
+         }
+    };
+
     // --- Footer Help Text / Error ---
     let footer_widget = if let Some(err) = &app_state.error_msg {
         Paragraph::new(err.as_str())
             .style(Style::default().fg(Color::White).bg(Color::Red))
+    } else if is_underrun {
+        Paragraph::new("⚠ AUDIO BUFFER UNDERRUN ⚠")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD))
     } else {
         let status = format!(
             "Gain: {:.0}% | Polyphony: {} || [Q]uit | [P]anic | Nav:↑↓←→ | +/-:Gain | [/]:Poly | F1-12:Recall | Shift+F1-12:Save", 

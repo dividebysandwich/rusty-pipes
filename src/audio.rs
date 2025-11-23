@@ -20,6 +20,7 @@ use crate::app::{ActiveNote, AppMessage};
 use crate::organ::Organ;
 use crate::wav::{parse_wav_metadata, WavSampleReader, parse_smpl_chunk};
 use crate::wav_converter::SampleMetadata;
+use crate::TuiMessage;
 
 const AUDIO_SAMPLE_RATE: u32 = 48000;
 const CHANNEL_COUNT: usize = 2; // Stereo
@@ -1132,7 +1133,8 @@ pub fn start_audio_playback(
     buffer_size_frames: usize,
     gain: f32,
     polyphony: usize,
-    audio_device_name: Option<String>
+    audio_device_name: Option<String>,
+    tui_tx: mpsc::Sender<TuiMessage>,
 ) -> Result<Stream> {
     let available_hosts = cpal::available_hosts();
     log::info!("[Cpal] Available audio hosts:");
@@ -1266,6 +1268,10 @@ pub fn start_audio_playback(
             for sample in &mut output[silence_start_sample..] {
                 *sample = 0.0;
             }
+
+            // Notify the user interface about the underrun
+            let _ = tui_tx.send(TuiMessage::AudioUnderrun);
+
             if frames_available > 0 {
                 log::warn!("[CpalCallback] Audio buffer underrun! Wrote {} silent frames.", frames_to_write - frames_to_process);
             }

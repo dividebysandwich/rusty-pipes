@@ -358,7 +358,7 @@ impl EguiApp {
             ui.add_space(5.0);
 
             // Get current values
-            let (mut gain, mut polyphony) = {
+            let (mut gain, polyphony) = {
                 let state = self.app_state.lock().unwrap();
                 (state.gain, state.polyphony)
             };
@@ -373,7 +373,6 @@ impl EguiApp {
                 // Slider for visual feedback and direct drag
                 let gain_slider = egui::Slider::new(&mut gain, 0.0..=2.0)
                     .text("Vol")
-                    .clamp_to_range(true)
                     .show_value(true);
                     
                 if ui.add(gain_slider).changed() {
@@ -406,6 +405,33 @@ impl EguiApp {
                 }
             });
             ui.label(egui::RichText::new("Keys: [ / ]").small().weak());
+            
+            ui.add_space(15.0);
+
+            // --- CPU / Underrun Indicator ---
+            let is_underrun = {
+                let state = self.app_state.lock().unwrap();
+                if let Some(last) = state.last_underrun {
+                    // Light up if underrun happened in the last 200ms
+                    last.elapsed() < Duration::from_millis(200)
+                } else {
+                    false
+                }
+            };
+
+            if is_underrun {
+                ui.add(egui::Button::new(
+                    egui::RichText::new("⚠ AUDIO UNDERRUN ⚠")
+                        .color(egui::Color32::WHITE)
+                        .strong()
+                ).fill(egui::Color32::RED));
+            } else {
+                 ui.add(egui::Button::new(
+                    egui::RichText::new("Status: OK")
+                        .color(egui::Color32::GREEN)
+                        .small()
+                ).fill(egui::Color32::from_gray(40)).frame(false));
+            }
 
         });
     }
