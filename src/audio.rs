@@ -478,6 +478,27 @@ impl StereoConvolver {
             log::debug!("[Convolver] Loaded stereo IR ({} frames).", ir_l.len());
         }
 
+        // --- Normalize IR Energy ---
+        // We calculate the sum of absolute values (L1 Norm).
+        // If we simply normalize by Peak, dense reverb tails will still sum up to huge values.
+        // Normalizing by L1 ensures the output never exceeds the input gain purely via summation.
+        
+        fn normalize_ir(samples: &mut [f32]) {
+            let sum_abs: f32 = samples.iter().map(|x| x.abs()).sum();
+            if sum_abs > 0.0 {
+                // Scale factor: 1.0 / Sum. 
+                // We add a slight safety headroom (0.95) to prevent edge-case clipping.
+                let scale = 0.95 / sum_abs;
+                for sample in samples.iter_mut() {
+                    *sample *= scale;
+                }
+                log::debug!("[Convolver] Normalized IR by factor: {:.5} (Original Sum: {:.2})", scale, sum_abs);
+            }
+        }
+
+        normalize_ir(&mut ir_l);
+        normalize_ir(&mut ir_r);
+
         // --- Set IR in convolvers ---
         // We must re-create the convolvers, as `init` is the only way
         // to set the IR, and it can only be called once.
