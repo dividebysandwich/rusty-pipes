@@ -52,13 +52,23 @@ jobs:
       OS: ${{ matrix.OS }}
     steps:
       - uses: actions/checkout@v4
+      - name: Calculate Cargo hash
+        id: cargo-hash
+        run: |
+          # Try sha256sum (Linux/Windows), fall back to shasum (macOS)
+          if command -v sha256sum > /dev/null; then
+            echo "hash=$(sha256sum Cargo.lock | awk '{print $1}')" >> $GITHUB_OUTPUT
+          else
+            echo "hash=$(shasum -a 256 Cargo.lock | awk '{print $1}')" >> $GITHUB_OUTPUT
+          fi
+
       - name: Cargo cache
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ./target
-          key: build-cargo-registry-${{ matrix.TARGET }}-${{ hashFiles('Cargo.lock') }}
+          key: build-cargo-registry-${{ matrix.TARGET }}-${{ steps.cargo-hash.outputs.hash }}
       - name: List
         run: find ./
 
