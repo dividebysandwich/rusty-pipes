@@ -54,11 +54,11 @@ struct Args {
 
     /// Pre-cache all samples on startup (uses more memory, reduces latency)
     #[arg(long)]
-    precache: Option<bool>, // Made Option to allow overriding
+    precache: Option<bool>, 
 
     /// Convert all samples to 16-bit PCM on load (saves memory, may reduce quality)
     #[arg(long)]
-    convert_to_16bit: Option<bool>, // Made Option
+    convert_to_16bit: Option<bool>, 
 
     /// Set the application log level
     #[arg(long, value_name = "LEVEL", default_value = "info")]
@@ -91,7 +91,7 @@ struct Args {
     /// Audio buffer size in frames (lower values reduce latency but may cause glitches)
     #[arg(long, value_name = "NUM_FRAMES")]
     audio_buffer_frames: Option<usize>,
-    
+     
     /// Run in terminal UI (TUI) mode as a fallback
     #[arg(long)]
     tui: bool,
@@ -124,7 +124,7 @@ fn main() -> Result<()> {
     let log_path = log_dir.join("rusty-pipes.log");
 
     WriteLogger::init(log_level, Config::default(), File::create(log_path)?)?;
-    
+     
     // --- List MIDI devices and exit ---
     if args.list_midi_devices {
         println!("Available MIDI Input Devices:");
@@ -150,7 +150,7 @@ fn main() -> Result<()> {
     let mut settings = config::load_settings().unwrap_or_default();
     let tui_mode = args.tui;
 
-    
+     
     // Command-line arguments override saved config
     if let Some(f) = args.organ_file { settings.organ_file = Some(f); }
     if let Some(f) = args.ir_file { settings.ir_file = Some(f); }
@@ -167,7 +167,7 @@ fn main() -> Result<()> {
     } else {
         gui_config::run_config_ui(settings, Arc::clone(&midi_input_arc))
     };
-    
+     
     // `config` is the final, user-approved configuration
     let config: RuntimeConfig = match config_result {
         Ok(Some(config)) => config,
@@ -185,7 +185,7 @@ fn main() -> Result<()> {
             return Err(e);
         }
     };
-    
+     
     // --- Save Final Settings (excluding runtime options) ---
     let settings_to_save = AppSettings {
         organ_file: Some(config.organ_file.clone()),
@@ -199,23 +199,28 @@ fn main() -> Result<()> {
         gain: config.gain,
         polyphony: config.polyphony,
         audio_device_name: config.audio_device_name.clone(),
-        tui_mode,       
+        tui_mode,        
     };
     if let Err(e) = config::save_settings(&settings_to_save) {
         log::warn!("Failed to save settings: {}", e);
     }
 
     // --- APPLICATION STARTUP ---
-    
+     
     if tui_mode {
         println!("\nRusty Pipes - Virtual Pipe Organ Simulator v{}\n", env!("CARGO_PKG_VERSION"));
     }
 
     let organ: Arc<Organ>; // Define organ variable
 
-    if config.precache && !tui_mode {
+    // If we are in GUI mode, we generally want the loading window, 
+    // especially if we are precaching OR converting OR just parsing a large file.
+    // This prevents the main thread from freezing during startup.
+    let needs_loading_ui = !tui_mode; 
+
+    if needs_loading_ui {
         // --- GUI Pre-caching with Progress Window ---
-        log::info!("Starting GUI pre-caching...");
+        log::info!("Starting GUI loading process...");
 
         // Channels for progress
         let (progress_tx, progress_rx) = mpsc::channel::<(f32, String)>();
@@ -267,7 +272,7 @@ fn main() -> Result<()> {
         organ = Arc::new(organ_result?); // Handle the Result<> from Organ::load
 
     } else {
-        // --- Original TUI or Non-Precache Loading ---
+        // --- TUI Loading (Simple text progress) ---
         if tui_mode { println!("Loading organ definition..."); }
         
         // Create a dummy transmitter for TUI progress
@@ -288,6 +293,9 @@ fn main() -> Result<()> {
             None
         };
 
+        // Note: For TUI mode, we only pass the progress transmitter if we are precaching.
+        // If we aren't precaching, the conversion is usually fast enough (or hidden) in TUI.
+        // You could enable it for conversion too if desired.
         organ = Arc::new(Organ::load(
             &config.organ_file, 
             config.convert_to_16bit, 
@@ -296,7 +304,7 @@ fn main() -> Result<()> {
             if config.precache && tui_mode { Some(tui_progress_tx) } else { None }
         )?);
     }
-    
+     
     if tui_mode {
         println!("Successfully loaded organ: {}", organ.name);
         println!("Found {} stops.", organ.stops.len());
@@ -319,7 +327,7 @@ fn main() -> Result<()> {
         tui_tx.clone(),
     )?;
     if tui_mode { println!("Audio engine running."); }
-    
+     
     // --- Load IR file ---
     if let Some(path) = config.ir_file {
         if path.exists() {
@@ -344,7 +352,7 @@ fn main() -> Result<()> {
 
         // This is a blocking loop, it waits for messages from either the MIDI callback or the file player.
         while let Ok(msg) = tui_rx.recv() {
-            
+             
             if egui_ctx.is_none() {
                 if let Ok(ctx) = gui_ctx_rx.try_recv() {
                     egui_ctx = Some(ctx);
