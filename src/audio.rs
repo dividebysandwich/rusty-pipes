@@ -22,11 +22,54 @@ use crate::wav::{parse_wav_metadata, WavSampleReader, parse_smpl_chunk};
 use crate::wav_converter::SampleMetadata;
 use crate::TuiMessage;
 
-const AUDIO_SAMPLE_RATE: u32 = 48000;
 const CHANNEL_COUNT: usize = 2; // Stereo
 const VOICE_BUFFER_FRAMES: usize = 14400; 
 const CROSSFADE_TIME: f32 = 0.20; // How long to crossfade from attack to release samples, in seconds
 const VOICE_STEALING_FADE_TIME: f32 = 1.00; // Fade out stolen release samples over 1s
+
+/// Returns a sorted list of standard sample rates supported by the device.
+pub fn get_supported_sample_rates(device_name: Option<String>) -> Result<Vec<u32>> {
+    let host = get_cpal_host();
+    
+    let device = if let Some(name) = device_name {
+        host.output_devices()?
+            .find(|d| d.name().map_or(false, |n| n == name))
+            .ok_or_else(|| anyhow!("Device not found"))?
+    } else {
+        host.default_output_device().ok_or_else(|| anyhow!("No default device"))?
+    };
+
+    let supported_configs = device.supported_output_configs()?;
+    let standard_rates = [44100, 48000, 88200, 96000, 176400, 192000];
+    let mut available_rates = Vec::new();
+
+    for config_range in supported_configs {
+        log::info!("[Cpal] Device {:?} supports config: {:?} - Sample Format: {:?}", device.name()?, config_range, config_range.sample_format());
+        // We only care about F32 usually, but let's be generous for checking rates
+        let min = config_range.min_sample_rate().0;
+        let max = config_range.max_sample_rate().0;
+
+        for &rate in &standard_rates {
+            if rate >= min && rate <= max {
+                if !available_rates.contains(&rate) {
+                    available_rates.push(rate);
+                }
+            }
+        }
+    }
+    
+    available_rates.sort();
+    
+    if available_rates.is_empty() {
+        // Fallback if no standard rates match
+        available_rates.push(48000); 
+    }
+
+    // Log the available rates
+    log::info!("[Cpal] Supported sample rates for device {:?}: {:?}", device.name()?, available_rates);
+    
+    Ok(available_rates)
+}
 
 /// Helper to get the cpal host, preferring JACK if available.
 fn get_cpal_host() -> cpal::Host {
@@ -1197,6 +1240,7 @@ pub fn start_audio_playback(
     gain: f32,
     polyphony: usize,
     audio_device_name: Option<String>,
+    sample_rate: u32,
     tui_tx: mpsc::Sender<TuiMessage>,
 ) -> Result<Stream> {
     let available_hosts = cpal::available_hosts();
@@ -1244,7 +1288,8 @@ pub fn start_audio_playback(
         );
     }
 
-    let target_sample_rate = SampleRate(AUDIO_SAMPLE_RATE);
+    let target_sample_rate = SampleRate(sample_rate);
+
     let config_range = supported_configs
         .filter(|c| c.sample_format() == SampleFormat::F32 && c.channels() >= 2)
         .find(|c| {

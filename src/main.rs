@@ -199,6 +199,7 @@ fn main() -> Result<()> {
         gain: config.gain,
         polyphony: config.polyphony,
         audio_device_name: config.audio_device_name.clone(),
+        sample_rate: config.sample_rate,
         tui_mode,        
     };
     if let Err(e) = config::save_settings(&settings_to_save) {
@@ -244,6 +245,7 @@ fn main() -> Result<()> {
                 load_config.convert_to_16bit,
                 load_config.precache,
                 load_config.original_tuning,
+                load_config.sample_rate,
                 Some(progress_tx), // Pass the transmitter
             );
 
@@ -301,6 +303,7 @@ fn main() -> Result<()> {
             config.convert_to_16bit, 
             config.precache, 
             config.original_tuning,
+            config.sample_rate,
             if config.precache && tui_mode { Some(tui_progress_tx) } else { None }
         )?);
     }
@@ -324,6 +327,7 @@ fn main() -> Result<()> {
         config.gain,
         config.polyphony,
         config.audio_device_name,
+        config.sample_rate,
         tui_tx.clone(),
     )?;
     if tui_mode { println!("Audio engine running."); }

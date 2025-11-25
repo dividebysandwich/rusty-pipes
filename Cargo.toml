@@ -1,7 +1,7 @@
 [package]
 name = "rusty-pipes"
 description = "Virtual pipe organ simulator"
-version = "0.5.7"
+version = "0.5.8"
 license = "GPL-2.0-or-later"
 authors = ["dividebysandwich"]
 repository = "https://github.com/dividebysandwich/rusty-pipes"
@@ -26,22 +26,20 @@ log = "0.4"
 simplelog = "0.12"
 midly = "0.5"
 clap = { version = "4.5", features = ["derive"] }
-fft-convolver = "0.2.0"
+fft-convolver = "0.3.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 quick-xml = { version = "0.38", features = ["serde", "serialize"] }
 eframe = "0.33"
 egui = "0.33"
-rfd = "0.15"
+rfd = "0.16.0"
 confy = "2.0"
 dirs = "6.0"
-hotpath = { version = "0.6", optional = true }
+hotpath = { version = "0.7", optional = true }
 rayon = "1.11"
 
 [features]
 hotpath = ["dep:hotpath", "hotpath/hotpath"]
-hotpath-alloc-bytes-total = ["hotpath/hotpath-alloc-bytes-total"]
-hotpath-alloc-count-total = ["hotpath/hotpath-alloc-count-total"]
 hotpath-off = ["hotpath/hotpath-off"]
 
 [profile.release]
@@ -60,7 +58,7 @@ assets = [
 name = "Rusty Pipes"
 identifier = "com.dividebysandwich.rustypipes"
 icon = ["assets/rusty-pipes.icns"]
-version = "0.5.7" 
+version = "0.5.8" 
 copyright = "Copyright 2025 Dividebysandwich"
 category = "Music"
 short_description = "Virtual pipe organ simulator"

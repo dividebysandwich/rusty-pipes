@@ -5,6 +5,7 @@ use midir::MidiInput;
 use crate::config::{AppSettings, ConfigState, RuntimeConfig};
 use crate::gui_filepicker;
 use crate::app::{PIPES, LOGO};
+use crate::audio::get_supported_sample_rates;
 
 #[allow(dead_code)]
 struct ConfigApp {
@@ -44,6 +45,23 @@ impl ConfigApp {
             is_finished,
             selected_midi_port_index,
             selected_audio_device_index,
+        }
+    }
+
+    // Helper to refresh rates when device changes
+    fn refresh_sample_rates(&mut self) {
+         let device_name = self.selected_audio_device_index
+            .and_then(|idx| self.state.available_audio_devices.get(idx))
+            .cloned();
+
+        if let Ok(rates) = get_supported_sample_rates(device_name) {
+            self.state.available_sample_rates = rates;
+            // Ensure selected rate is valid, else reset to first available
+            if !self.state.available_sample_rates.contains(&self.state.settings.sample_rate) {
+                if let Some(&first) = self.state.available_sample_rates.first() {
+                     self.state.settings.sample_rate = first;
+                }
+            }
         }
     }
 }
@@ -111,18 +129,46 @@ impl App for ConfigApp {
                         let selected_audio_text = self.selected_audio_device_index
                             .and_then(|idx| self.state.available_audio_devices.get(idx))
                             .map_or("Default", |name| name.as_str());
-                        
+                    
                         ui.set_min_width(300.0); 
                         egui::ComboBox::from_id_salt("audio_device_combo")
                             .selected_text(selected_audio_text)
                             .show_ui(ui, |ui| {
-                                // "Default" option
+                                // Track the user's intended action
+                                let mut selected_default = false;
+                                let mut selected_index = None;
+
+                                // Check "Default" option
                                 if ui.selectable_label(self.selected_audio_device_index.is_none(), "[ Default ]").clicked() {
-                                    self.selected_audio_device_index = None;
+                                    selected_default = true;
                                 }
+
+                                // Iterate list (Immutable borrow of self happens here)
                                 for (i, name) in self.state.available_audio_devices.iter().enumerate() {
                                     if ui.selectable_label(self.selected_audio_device_index == Some(i), name).clicked() {
-                                        self.selected_audio_device_index = Some(i);
+                                        selected_index = Some(i);
+                                    }
+                                }
+
+                                // Apply changes (Immutable borrow is dropped, so we can now mutate self)
+                                if selected_default {
+                                    self.selected_audio_device_index = None;
+                                    self.refresh_sample_rates();
+                                } else if let Some(i) = selected_index {
+                                    self.selected_audio_device_index = Some(i);
+                                    self.refresh_sample_rates();
+                                }
+                            });
+                        ui.end_row();
+
+                        // --- Sample Rate ---
+                        ui.label("Sample Rate:");
+                        egui::ComboBox::from_id_salt("sample_rate_combo")
+                            .selected_text(format!("{} Hz", self.state.settings.sample_rate))
+                            .show_ui(ui, |ui| {
+                                for &rate in &self.state.available_sample_rates {
+                                    if ui.selectable_label(self.state.settings.sample_rate == rate, format!("{}", rate)).clicked() {
+                                        self.state.settings.sample_rate = rate;
                                     }
                                 }
                             });
@@ -293,6 +339,7 @@ impl App for ConfigApp {
                             gain: self.state.settings.gain,
                             polyphony: self.state.settings.polyphony,
                             audio_device_name,
+                            sample_rate: self.state.settings.sample_rate,
                         };
                         
                         *self.output.lock().unwrap() = Some(runtime_config); 

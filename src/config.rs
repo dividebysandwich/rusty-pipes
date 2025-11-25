@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use crate::audio::{get_audio_device_names, get_default_audio_device_name};
+use crate::audio::{get_audio_device_names, get_default_audio_device_name, get_supported_sample_rates};
 
 /// Settings that are saved to the configuration file.
 #[derive(Debug, Serialize, Deserialize)]
@@ -21,6 +21,7 @@ pub struct AppSettings {
     pub gain: f32,
     pub polyphony: usize,
     pub audio_device_name: Option<String>,
+    pub sample_rate: u32,
 }
 
 /// Default settings for a new installation.
@@ -39,6 +40,7 @@ impl Default for AppSettings {
             gain: 0.4, // Conservative default gain
             polyphony: 128,
             audio_device_name: None,
+            sample_rate: 48000,
         }
     }
 }
@@ -63,6 +65,7 @@ pub struct RuntimeConfig {
     pub midi_port: Option<MidiInputPort>,
     pub midi_port_name: Option<String>,
     pub audio_device_name: Option<String>,
+    pub sample_rate: u32,
 }
 
 /// Loads settings from disk.
@@ -90,6 +93,7 @@ pub struct ConfigState {
     // Audio-related fields
     pub available_audio_devices: Vec<String>,
     pub selected_audio_device_name: Option<String>,
+    pub available_sample_rates: Vec<u32>,
 }
 
 impl ConfigState {
@@ -155,6 +159,9 @@ impl ConfigState {
         }
         // If still None, it will just be "Default" in the UI (which is None)
 
+        // Get available sample rates for the selected audio device
+        let available_sample_rates = get_supported_sample_rates(selected_audio_device_name.clone()).unwrap_or_else(|_| vec![44100, 48000]);
+
         Ok(Self {
             settings,
             midi_file: None,
@@ -163,6 +170,7 @@ impl ConfigState {
             error_msg,
             available_audio_devices,
             selected_audio_device_name,
+            available_sample_rates,
         })
     }
 }

@@ -12,11 +12,13 @@ use crate::config::{AppSettings, ConfigState, RuntimeConfig};
 use crate::tui::{cleanup_terminal, setup_terminal};
 use crate::tui_filepicker;
 use crate::app::{PIPES, LOGO};
+use crate::audio::get_supported_sample_rates;
 
 enum ConfigMode {
     Main,
     MidiSelection,
     AudioSelection,
+    SampleRateSelection,
     TextInput(usize, String), // Holds (config_index, buffer)
 }
 
@@ -26,6 +28,7 @@ struct TuiConfigState {
     list_state: ListState,
     midi_list_state: ListState,
     audio_list_state: ListState,
+    sample_rate_list_state: ListState,
     mode: ConfigMode,
 }
 
@@ -35,18 +38,19 @@ fn get_item_display(idx: usize, state: &ConfigState) -> String {
     match idx {
         0 => format!("1. Organ File:       {}", path_to_str(settings.organ_file.as_deref())),
         1 => format!("2. Audio Device:     {}", state.selected_audio_device_name.as_deref().unwrap_or("Default")),
-        2 => format!("3. MIDI Device:      {}", state.selected_midi_port.as_ref().map_or("None", |(_, n)| n.as_str())),
-        3 => format!("4. MIDI File (Play): {}", path_to_str(state.midi_file.as_deref())),
-        4 => format!("5. IR File:          {}", path_to_str(settings.ir_file.as_deref())),
-        5 => format!("6. Reverb Mix:       {:.2}", settings.reverb_mix),
-        6 => format!("7. Gain:             {:.2}", settings.gain),
-        7 => format!("8. Polyphony:        {}", settings.polyphony),
-        8 => format!("9. Audio Buffer:     {} frames", settings.audio_buffer_frames),
-        9 => format!("0. Pre-cache:        {}", bool_to_str(settings.precache)),
-        10 => format!("-. Convert to 16-bit:{}", bool_to_str(settings.convert_to_16bit)),
-        11 => format!("=. Original Tuning:  {}", bool_to_str(settings.original_tuning)),
-        12 => "S. Start Rusty Pipes".to_string(),
-        13 => "Q. Quit".to_string(),
+        2 => format!("3. Sample Rate:      {} Hz", settings.sample_rate),
+        3 => format!("4. MIDI Device:      {}", state.selected_midi_port.as_ref().map_or("None", |(_, n)| n.as_str())),
+        4 => format!("5. MIDI File (Play): {}", path_to_str(state.midi_file.as_deref())),
+        5 => format!("6. IR File:          {}", path_to_str(settings.ir_file.as_deref())),
+        6 => format!("7. Reverb Mix:       {:.2}", settings.reverb_mix),
+        7 => format!("8. Gain:             {:.2}", settings.gain),
+        8 => format!("9. Polyphony:        {}", settings.polyphony),
+        9 => format!("0. Audio Buffer:     {} frames", settings.audio_buffer_frames),
+        10 => format!("-. Pre-cache:        {}", bool_to_str(settings.precache)),
+        11 => format!("=. Convert to 16-bit:{}", bool_to_str(settings.convert_to_16bit)),
+        12 => format!("+. Original Tuning:  {}", bool_to_str(settings.original_tuning)),
+        13 => "S. Start Rusty Pipes".to_string(),
+        14 => "Q. Quit".to_string(),
         _ => unreachable!(),
     }
 }
@@ -93,6 +97,7 @@ pub fn run_config_ui(
         list_state: ListState::default(),
         midi_list_state,
         audio_list_state,
+        sample_rate_list_state: ListState::default(),
         mode: ConfigMode::Main,
     };
     state.list_state.select(Some(0));
@@ -117,11 +122,11 @@ pub fn run_config_ui(
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break 'config_loop,
                         KeyCode::Down | KeyCode::Char('j') => {
-                            let i = state.list_state.selected().map_or(0, |i| (i + 1) % 14);
+                            let i = state.list_state.selected().map_or(0, |i| (i + 1) % 15);
                             state.list_state.select(Some(i));
                         }
                         KeyCode::Up | KeyCode::Char('k') => {
-                            let i = state.list_state.selected().map_or(13, |i| (i + 13) % 14);
+                            let i = state.list_state.selected().map_or(14, |i| (i + 14) % 15);
                             state.list_state.select(Some(i));
                         }
                         KeyCode::Enter => {
@@ -140,10 +145,13 @@ pub fn run_config_ui(
                                     1 => { // Audio Device
                                         state.mode = ConfigMode::AudioSelection;
                                     }
-                                    2 => { // MIDI Device
+                                    2 => { 
+                                        state.mode = ConfigMode::SampleRateSelection; 
+                                    }
+                                    3 => { // MIDI Device
                                         state.mode = ConfigMode::MidiSelection;
                                     }
-                                    3 => { // MIDI File
+                                    4 => { // MIDI File
                                         let path = tui_filepicker::run_file_picker(
                                             &mut terminal,
                                             "Select MIDI File (Optional)",
@@ -151,7 +159,7 @@ pub fn run_config_ui(
                                         )?;
                                         state.config_state.midi_file = path;
                                     }
-                                    4 => { // IR File
+                                    5 => { // IR File
                                         let path = tui_filepicker::run_file_picker(
                                             &mut terminal,
                                             "Select IR File (Optional)",
@@ -159,26 +167,26 @@ pub fn run_config_ui(
                                         )?;
                                         state.config_state.settings.ir_file = path;
                                     }
-                                    5 => { // Reverb Mix
+                                    6 => { // Reverb Mix
                                         let buffer = state.config_state.settings.reverb_mix.to_string();
                                         state.mode = ConfigMode::TextInput(idx, buffer);
                                     }
-                                    6 => { // Gain
+                                    7 => { // Gain
                                         let gain = state.config_state.settings.gain.to_string();
                                         state.mode = ConfigMode::TextInput(idx, gain);
                                     }
-                                    7 => { // Polyphony
+                                    8 => { // Polyphony
                                         let polyphony = state.config_state.settings.polyphony.to_string();
                                         state.mode = ConfigMode::TextInput(idx, polyphony);
                                     }
-                                    8 => { // Audio Buffer
+                                    9 => { // Audio Buffer
                                         let buffer = state.config_state.settings.audio_buffer_frames.to_string();
                                         state.mode = ConfigMode::TextInput(idx, buffer);
                                     }
-                                    9 => state.config_state.settings.precache = !state.config_state.settings.precache,
-                                    10 => state.config_state.settings.convert_to_16bit = !state.config_state.settings.convert_to_16bit,
-                                    11 => state.config_state.settings.original_tuning = !state.config_state.settings.original_tuning,
-                                    12 => { // Start
+                                    10 => state.config_state.settings.precache = !state.config_state.settings.precache,
+                                    11 => state.config_state.settings.convert_to_16bit = !state.config_state.settings.convert_to_16bit,
+                                    12 => state.config_state.settings.original_tuning = !state.config_state.settings.original_tuning,
+                                    13 => { // Start
                                         if state.config_state.settings.organ_file.is_none() {
                                             state.config_state.error_msg = Some("Please select an Organ File to start.".to_string());
                                         } else {
@@ -197,11 +205,12 @@ pub fn run_config_ui(
                                                 gain: s.gain,
                                                 polyphony: s.polyphony,
                                                 audio_device_name: state.config_state.selected_audio_device_name.clone(),
+                                                sample_rate: s.sample_rate,
                                             });
                                             break 'config_loop;
                                         }
                                     }
-                                    13 => break 'config_loop, // Quit
+                                    14 => break 'config_loop, // Quit
                                     _ => {}
                                 }
                             }
@@ -254,10 +263,50 @@ pub fn run_config_ui(
                         }
                         KeyCode::Enter => {
                             if let Some(idx) = state.audio_list_state.selected() {
+                                // Update selection
                                 if idx == 0 {
-                                    state.config_state.selected_audio_device_name = None; // "[ Default ]"
+                                    state.config_state.selected_audio_device_name = None;
                                 } else {
                                     state.config_state.selected_audio_device_name = state.config_state.available_audio_devices.get(idx - 1).cloned();
+                                }
+                                
+                                // REFRESH RATES
+                                if let Ok(rates) = get_supported_sample_rates(state.config_state.selected_audio_device_name.clone()) {
+                                    state.config_state.available_sample_rates = rates;
+                                    // Reset current selection if invalid
+                                    if !state.config_state.available_sample_rates.contains(&state.config_state.settings.sample_rate) {
+                                        if let Some(&first) = state.config_state.available_sample_rates.first() {
+                                            state.config_state.settings.sample_rate = first;
+                                        }
+                                    }
+                                }
+                            }
+                            state.mode = ConfigMode::Main;
+                        }
+                        _ => {}
+                    }
+                }
+                ConfigMode::SampleRateSelection => {
+                    match key.code {
+                        KeyCode::Esc => state.mode = ConfigMode::Main,
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let len = state.config_state.available_sample_rates.len();
+                            if len > 0 {
+                                let i = state.sample_rate_list_state.selected().map_or(0, |i| (i + 1) % len);
+                                state.sample_rate_list_state.select(Some(i));
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            let len = state.config_state.available_sample_rates.len();
+                            if len > 0 {
+                                let i = state.sample_rate_list_state.selected().map_or(len - 1, |i| (i + len - 1) % len);
+                                state.sample_rate_list_state.select(Some(i));
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if let Some(idx) = state.sample_rate_list_state.selected() {
+                                if let Some(&rate) = state.config_state.available_sample_rates.get(idx) {
+                                    state.config_state.settings.sample_rate = rate;
                                 }
                             }
                             state.mode = ConfigMode::Main;
@@ -410,6 +459,17 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
                 &items,
                 &mut state.audio_list_state,
             );
+        }
+        ConfigMode::SampleRateSelection => {
+             let items: Vec<String> = state.config_state.available_sample_rates.iter()
+                .map(|r| format!("{}", r))
+                .collect();
+             draw_modal_list(
+                frame,
+                "Select Sample Rate",
+                &items,
+                &mut state.sample_rate_list_state
+             );
         }
         ConfigMode::TextInput(idx, buffer) => {
             let title = match *idx {
