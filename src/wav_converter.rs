@@ -399,7 +399,7 @@ pub fn process_sample_file(
     let mut reader = BufReader::new(file);
 
     match crate::wav::parse_wav_metadata(&mut reader, &full_source_path) {
-        Ok((fmt, chunks, data_offset, data_size)) => {
+        Ok((fmt, chunks, _data_offset, _data_size)) => {
             // It is a WAV
             sample_rate = fmt.sample_rate;
             bits_per_sample = fmt.bits_per_sample;
