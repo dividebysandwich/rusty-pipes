@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Result, Error};
 use std::io::{Seek, SeekFrom, Read, Cursor};
 use std::path::Path;
 use byteorder::{ReadBytesExt as OtherReadBytesExt, LittleEndian};
@@ -22,15 +22,34 @@ pub struct OtherChunk {
     pub data: Vec<u8>,
 }
 
+// Custom error type to signal WavPack detection
+#[derive(Debug)]
+pub struct IsWavPackError;
+impl std::fmt::Display for IsWavPackError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "File appears to be WavPack")
+    }
+}
+impl std::error::Error for IsWavPackError {}
+
 /// Parses all necessary metadata from a WAV file in one pass.
-/// Returns (format, loop_info, data_chunk_start_pos, data_chunk_size)
 pub fn parse_wav_metadata<R: Read + Seek>(
     reader: &mut R,
     full_path_for_logs: &Path,
 ) -> Result<(WavFmt, Vec<OtherChunk>, u64, u32)> {
-    let mut riff_header = [0; 4];
-    reader.read_exact(&mut riff_header)?;
-    if &riff_header != b"RIFF" { return Err(anyhow!("Not a RIFF file: {:?}", full_path_for_logs)); }
+    let mut header = [0; 4];
+    reader.read_exact(&mut header)?;
+    
+    // --- Check for WavPack Signature ---
+    if &header == b"wvpk" {
+        return Err(Error::new(IsWavPackError));
+    }
+
+    // --- Standard RIFF Check ---
+    if &header != b"RIFF" { 
+        return Err(anyhow!("Not a RIFF file (found {:?}): {:?}", header, full_path_for_logs)); 
+    }
+
     let _file_size = reader.read_u32::<LittleEndian>()?;
     let mut wave_header = [0; 4];
     reader.read_exact(&mut wave_header)?;
@@ -103,7 +122,7 @@ impl<R: Read + Seek> WavSampleReader<R> {
             bytes_read: 0,
         })
     }
-
+    
     #[allow(dead_code)]
     pub fn sample_rate(&self) -> u32 {
         self.fmt.sample_rate
@@ -159,7 +178,7 @@ impl<R: Read + Seek> Iterator for WavSampleReader<R> {
             }
             _ => {
                 log::warn!("Unsupported bits_per_sample: {}", self.fmt.bits_per_sample);
-                None // Unsupported format
+                None
             }
         }
     }

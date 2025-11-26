@@ -331,31 +331,32 @@ impl Organ {
         log::info!("Processing {} unique audio samples in parallel...", total);
         let completed = AtomicUsize::new(0);
 
-        task_list.par_iter().try_for_each(|task| -> Result<()> {
+        task_list.par_iter().for_each(|task| {
             let cents = task.tuning_cents_int as f32 / 100.0;
             
-            // This function handles the "if exists, skip" check internally,
-            // so if we run this, the files will be ready for the sequential pass.
-            let _ = wav_converter::process_sample_file(
+            match wav_converter::process_sample_file(
                 &task.relative_path,
                 base_path,
                 cache_path,
                 cents,
                 task.to_16bit,
-                target_sample_rate,
-            )?;
-
-            // Update UI
-            if let Some(tx) = progress_tx {
-                let current = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                // Only send update every few items to reduce overhead
-                if current % 5 == 0 || current == total {
-                    let progress = current as f32 / total as f32;
-                    let _ = tx.send((progress, format!("Converting: {}/{}", current, total)));
+                target_sample_rate
+            ) {
+                Ok(_) => {},
+                Err(e) => {
+                    // Log the error but continue
+                    log::error!("Failed to process audio file {:?}: {}", task.relative_path, e);
                 }
             }
-            Ok(())
-        })?;
+
+            if let Some(tx) = progress_tx {
+                let current = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                if current % 5 == 0 || current == total {
+                    let progress = current as f32 / total as f32;
+                    let _ = tx.send((progress, format!("Processing: {}/{}", current, total)));
+                }
+            }
+        });
 
         Ok(())
     }

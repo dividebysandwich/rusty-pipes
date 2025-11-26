@@ -37,6 +37,7 @@ confy = "2.0"
 dirs = "6.0"
 hotpath = { version = "0.7", optional = true }
 rayon = "1.11"
+symphonia = { version = "0.5", features = ["wav"] }
 
 [features]
 hotpath = ["dep:hotpath", "hotpath/hotpath"]
