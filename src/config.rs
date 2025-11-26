@@ -100,7 +100,7 @@ pub struct ConfigState {
 }
 
 impl ConfigState {
-    pub fn new(settings: AppSettings, midi_input_arc: &Arc<Mutex<Option<MidiInput>>>) -> Result<Self> {
+    pub fn new(mut settings: AppSettings, midi_input_arc: &Arc<Mutex<Option<MidiInput>>>) -> Result<Self> {
         let mut available_ports = Vec::new();
         let mut error_msg = None;
         let mut selected_midi_port = None;
@@ -165,10 +165,22 @@ impl ConfigState {
         // Get available sample rates for the selected audio device
         let available_sample_rates = get_supported_sample_rates(selected_audio_device_name.clone()).unwrap_or_else(|_| vec![44100, 48000]);
 
+        // If the current setting (e.g. default 48000) is not supported by the device,
+        // auto-select the best available one.
+        if !available_sample_rates.contains(&settings.sample_rate) {
+            if available_sample_rates.contains(&48000) {
+                settings.sample_rate = 48000;
+            } else if available_sample_rates.contains(&44100) {
+                settings.sample_rate = 44100;
+            } else if let Some(&first) = available_sample_rates.first() {
+                settings.sample_rate = first;
+            }
+        }
+
         Ok(Self {
             settings,
             midi_file: None,
-            selected_midi_port, // <-- Set here
+            selected_midi_port,
             available_ports,
             error_msg,
             available_audio_devices,
