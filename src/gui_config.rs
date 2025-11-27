@@ -15,6 +15,7 @@ struct ConfigApp {
     is_finished: Arc<Mutex<bool>>,
     selected_midi_port_index: Option<usize>,
     selected_audio_device_index: Option<usize>,
+    selected_ir_index: Option<usize>,
 }
 
 impl ConfigApp {
@@ -38,6 +39,10 @@ impl ConfigApp {
                 state.available_audio_devices.iter().position(|name| name == selected_name)
             });
 
+        // Find pre-selected IR index
+        let selected_ir_index = state.settings.ir_file.as_ref()
+             .and_then(|path| state.available_ir_files.iter().position(|(_, p)| p == path));
+
         Self {
             state,
             midi_input_arc,
@@ -45,6 +50,7 @@ impl ConfigApp {
             is_finished,
             selected_midi_port_index,
             selected_audio_device_index,
+            selected_ir_index,
         }
     }
 
@@ -218,24 +224,34 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- IR File ---
-                        ui.label("Reverb Impulse Response WAV:");
-                        ui.horizontal(|ui| {
-                            let ir_text = path_to_str_truncated(self.state.settings.ir_file.as_deref());
-                            let full_path = path_to_str_full(self.state.settings.ir_file.as_deref());
-                            ui.label(ir_text).on_hover_text(full_path);
-
-                            if ui.button("Browse...").clicked() {
-                                 if let Ok(Some(path)) = gui_filepicker::pick_file(
-                                    "Select IR File (Optional)",
-                                    &[("Audio Files", &["wav", "flac"])]
-                                ) {
-                                    self.state.settings.ir_file = Some(path);
+                        ui.label("Reverb (IR):");
+            
+                        let current_ir_name = self.selected_ir_index
+                            .and_then(|idx| self.state.available_ir_files.get(idx))
+                            .map(|(name, _)| name.as_str())
+                            .unwrap_or("No Reverb");
+                        ui.set_min_width(300.0);
+                        egui::ComboBox::from_id_salt("ir_combo")
+                            .selected_text(current_ir_name)
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_label(self.selected_ir_index.is_none(), "No Reverb").clicked() {
+                                    self.selected_ir_index = None;
+                                    self.state.settings.ir_file = None;
                                 }
-                            }
-                             if ui.button("Clear").clicked() {
-                                self.state.settings.ir_file = None;
-                            }
-                        });
+
+                                for (i, (name, path)) in self.state.available_ir_files.iter().enumerate() {
+                                    if ui.selectable_label(self.selected_ir_index == Some(i), name).clicked() {
+                                        self.selected_ir_index = Some(i);
+                                        self.state.settings.ir_file = Some(path.clone());
+                                    }
+                                }
+                            });
+                        // Add a refresh button for IRs? Or a "Show Folder" button could be nice, but simple is best.
+                        if ui.button("📂").on_hover_text("Open Reverb Folder").clicked() {
+                             if let Ok(dir) = crate::config::get_reverb_directory() {
+                                 let _ = open::that(dir); // Requires 'open' crate, or just omit if not adding deps
+                             }
+                        }
                         ui.end_row();
 
                         // --- Reverb Mix ---

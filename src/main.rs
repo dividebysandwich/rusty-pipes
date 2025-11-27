@@ -219,6 +219,8 @@ fn main() -> Result<()> {
 
     let organ: Arc<Organ>; // Define organ variable
 
+    let reverb_files = config::get_available_ir_files();
+
     // If we are in GUI mode, we generally want the loading window, 
     // especially if we are precaching OR converting OR just parsing a large file.
     // This prevents the main thread from freezing during startup.
@@ -338,10 +340,10 @@ fn main() -> Result<()> {
     if tui_mode { println!("Audio engine running."); }
      
     // --- Load IR file ---
-    if let Some(path) = config.ir_file {
+    if let Some(path) = &config.ir_file {
         if path.exists() {
             log::info!("Loading IR file: {}", path.display());
-            audio_tx.send(AppMessage::SetReverbIr(path))?;
+            audio_tx.send(AppMessage::SetReverbIr(path.clone()))?;
             audio_tx.send(AppMessage::SetReverbWetDry(config.reverb_mix))?;
         } else {
             log::warn!("IR file not found: {}", path.display());
@@ -427,6 +429,9 @@ fn main() -> Result<()> {
             organ,
             _midi_connection, // Pass the connection to the GUI
             gui_ctx_tx,
+            reverb_files,
+            config.ir_file.clone(),
+            config.reverb_mix,
         )?;
     }
 

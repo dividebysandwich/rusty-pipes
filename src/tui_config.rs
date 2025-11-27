@@ -19,6 +19,7 @@ enum ConfigMode {
     MidiSelection,
     AudioSelection,
     SampleRateSelection,
+    IrSelection, // Reverb Impulse Response File selection
     TextInput(usize, String), // Holds (config_index, buffer)
 }
 
@@ -29,6 +30,7 @@ struct TuiConfigState {
     midi_list_state: ListState,
     audio_list_state: ListState,
     sample_rate_list_state: ListState,
+    ir_list_state: ListState,
     mode: ConfigMode,
 }
 
@@ -41,7 +43,7 @@ fn get_item_display(idx: usize, state: &ConfigState) -> String {
         2 => format!("3. Sample Rate:      {} Hz", settings.sample_rate),
         3 => format!("4. MIDI Device:      {}", state.selected_midi_port.as_ref().map_or("None", |(_, n)| n.as_str())),
         4 => format!("5. MIDI File (Play): {}", path_to_str(state.midi_file.as_deref())),
-        5 => format!("6. IR File:          {}", path_to_str(settings.ir_file.as_deref())),
+        5 => format!("6. Reverb IR File:   {}", path_to_str(settings.ir_file.as_deref())),
         6 => format!("7. Reverb Mix:       {:.2}", settings.reverb_mix),
         7 => format!("8. Gain:             {:.2}", settings.gain),
         8 => format!("9. Polyphony:        {}", settings.polyphony),
@@ -91,13 +93,25 @@ pub fn run_config_ui(
     let mut audio_list_state = ListState::default();
     audio_list_state.select(Some(initial_audio_index));
 
+    // Setup Reverb IR list state
+    let initial_ir_index = config_state.settings.ir_file.as_ref()
+        .and_then(|current_path| {
+             config_state.available_ir_files.iter().position(|(_, path)| path == current_path)
+        })
+        .map(|i| i + 1) // +1 because 0 is "None"
+        .unwrap_or(0);
+
+    let mut ir_list_state = ListState::default();
+    ir_list_state.select(Some(initial_ir_index));
+
     let mut state = TuiConfigState {
         config_state,
-        _midi_input_arc: midi_input_arc, // Store the arc
+        _midi_input_arc: midi_input_arc,
         list_state: ListState::default(),
         midi_list_state,
         audio_list_state,
         sample_rate_list_state: ListState::default(),
+        ir_list_state, // New
         mode: ConfigMode::Main,
     };
     state.list_state.select(Some(0));
@@ -160,12 +174,7 @@ pub fn run_config_ui(
                                         state.config_state.midi_file = path;
                                     }
                                     5 => { // IR File
-                                        let path = tui_filepicker::run_file_picker(
-                                            &mut terminal,
-                                            "Select IR File (Optional)",
-                                            &["wav", "flac"],
-                                        )?;
-                                        state.config_state.settings.ir_file = path;
+                                        state.mode = ConfigMode::IrSelection;
                                     }
                                     6 => { // Reverb Mix
                                         let buffer = state.config_state.settings.reverb_mix.to_string();
@@ -307,6 +316,38 @@ pub fn run_config_ui(
                             if let Some(idx) = state.sample_rate_list_state.selected() {
                                 if let Some(&rate) = state.config_state.available_sample_rates.get(idx) {
                                     state.config_state.settings.sample_rate = rate;
+                                }
+                            }
+                            state.mode = ConfigMode::Main;
+                        }
+                        _ => {}
+                    }
+                }
+                ConfigMode::IrSelection => {
+                    match key.code {
+                        KeyCode::Esc => state.mode = ConfigMode::Main,
+                        KeyCode::Down | KeyCode::Char('j') => {
+                            let len = state.config_state.available_ir_files.len() + 1; // +1 for "None"
+                            if len > 0 {
+                                let i = state.ir_list_state.selected().map_or(0, |i| (i + 1) % len);
+                                state.ir_list_state.select(Some(i));
+                            }
+                        }
+                        KeyCode::Up | KeyCode::Char('k') => {
+                            let len = state.config_state.available_ir_files.len() + 1;
+                            if len > 0 {
+                                let i = state.ir_list_state.selected().map_or(len - 1, |i| (i + len - 1) % len);
+                                state.ir_list_state.select(Some(i));
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if let Some(idx) = state.ir_list_state.selected() {
+                                if idx == 0 {
+                                    state.config_state.settings.ir_file = None;
+                                } else {
+                                    if let Some((_, path)) = state.config_state.available_ir_files.get(idx - 1) {
+                                        state.config_state.settings.ir_file = Some(path.clone());
+                                    }
                                 }
                             }
                             state.mode = ConfigMode::Main;
@@ -469,6 +510,17 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
                 "Select Sample Rate",
                 &items,
                 &mut state.sample_rate_list_state
+             );
+        }
+        ConfigMode::IrSelection => {
+             let mut items = vec!["[ No Reverb ]".to_string()];
+             items.extend(state.config_state.available_ir_files.iter().map(|(name, _)| name.clone()));
+             
+             draw_modal_list(
+                frame,
+                "Select Impulse Response",
+                &items,
+                &mut state.ir_list_state
              );
         }
         ConfigMode::TextInput(idx, buffer) => {

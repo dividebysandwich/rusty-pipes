@@ -88,6 +88,8 @@ pub struct AppState {
     pub cpu_load: f32,
     pub keyboard_layout: KeyboardLayout,
     pub octave_offset: i8, // Octave offset for computer keyboard input
+    pub reverb_mix: f32,
+    pub selected_reverb_index: Option<usize>,
 }
 
 pub fn get_preset_file_path() -> PathBuf {
@@ -124,6 +126,8 @@ impl AppState {
             cpu_load: 0.0,
             keyboard_layout,
             octave_offset: 0,
+            reverb_mix: 0.0,
+            selected_reverb_index: None,
         })
     }
     

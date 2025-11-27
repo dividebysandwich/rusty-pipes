@@ -3,6 +3,7 @@ use midir::{MidiInput, MidiInputPort};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::fs;
 
 use crate::audio::{get_audio_device_names, get_default_audio_device_name, get_supported_sample_rates};
 use crate::input::KeyboardLayout;
@@ -83,6 +84,52 @@ pub fn save_settings(settings: &AppSettings) -> Result<()> {
     Ok(())
 }
 
+/// Helper to get the Reverb directory, creating it if it doesn't exist.
+pub fn get_reverb_directory() -> Result<PathBuf> {
+    let config_path = confy::get_configuration_file_path("rusty-pipes", "settings")?;
+    let parent = config_path.parent().ok_or_else(|| anyhow::anyhow!("No config parent dir"))?;
+    let reverb_dir = parent.join("reverb");
+    
+    if !reverb_dir.exists() {
+        fs::create_dir_all(&reverb_dir)?;
+    }
+    Ok(reverb_dir)
+}
+
+/// Scans the reverb directory for supported audio files.
+/// Returns a vector of (Display Name, PathBuf).
+pub fn get_available_ir_files() -> Vec<(String, PathBuf)> {
+    let mut files = Vec::new();
+    
+    // Add "None" option logic implicitly, but here we just list files.
+    
+    if let Ok(dir) = get_reverb_directory() {
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        match ext.to_lowercase().as_str() {
+                            "wav" | "flac" | "mp3" => {
+                                let name = path.file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("Unknown")
+                                    .to_string();
+                                files.push((name, path));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Sort alphabetically by name
+    files.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    files
+}
+
 /// Helper struct to pass around in the config UIs
 pub struct ConfigState {
     pub settings: AppSettings,
@@ -97,6 +144,7 @@ pub struct ConfigState {
     pub available_audio_devices: Vec<String>,
     pub selected_audio_device_name: Option<String>,
     pub available_sample_rates: Vec<u32>,
+    pub available_ir_files: Vec<(String, PathBuf)>,
 }
 
 impl ConfigState {
@@ -177,6 +225,8 @@ impl ConfigState {
             }
         }
 
+        let available_ir_files = get_available_ir_files();
+
         Ok(Self {
             settings,
             midi_file: None,
@@ -186,6 +236,7 @@ impl ConfigState {
             available_audio_devices,
             selected_audio_device_name,
             available_sample_rates,
+            available_ir_files,
         })
     }
 }

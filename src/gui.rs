@@ -8,6 +8,7 @@ use std::{
         mpsc::Sender,
         Arc, Mutex
     },
+    path::PathBuf,
     collections::{VecDeque, HashMap, BTreeSet},
 };
 
@@ -36,6 +37,8 @@ pub struct EguiApp {
     show_preset_save_modal: bool,
     preset_save_slot: usize,
     preset_save_name: String,
+    reverb_files: Vec<(String, PathBuf)>,
+    selected_reverb_index: Option<usize>,
 }
 
 /// Runs the main GUI loop.
@@ -45,9 +48,23 @@ pub fn run_gui_loop(
     organ: Arc<Organ>,
     midi_connection: Option<MidiInputConnection<()>>,
     gui_ctx_tx: Sender<egui::Context>,
+    reverb_files: Vec<(String, PathBuf)>,
+    initial_ir_file: Option<PathBuf>,
+    initial_mix: f32,
 ) -> Result<()> {
 
     let selected_stop_index = if !organ.stops.is_empty() { Some(0) } else { None };
+
+    let selected_reverb_index = initial_ir_file.as_ref().and_then(|path| {
+        reverb_files.iter().position(|(_, p)| p == path)
+    });
+
+    // Limit scope to reduce lock time
+    {
+        let mut state = app_state.lock().unwrap();
+        state.reverb_mix = initial_mix;
+        state.selected_reverb_index = selected_reverb_index;
+    }
 
     let egui_app = EguiApp {
         app_state,
@@ -60,6 +77,8 @@ pub fn run_gui_loop(
         show_preset_save_modal: false,
         preset_save_slot: 0,
         preset_save_name: String::new(),
+        reverb_files,
+        selected_reverb_index,
     };
 
     let native_options = eframe::NativeOptions {
@@ -393,10 +412,54 @@ impl EguiApp {
             ui.add_space(5.0);
 
             // Get current values
-            let (mut gain, polyphony) = {
+            let (mut gain, polyphony, mut selected_reverb_index, mut reverb_mix) = {
                 let state = self.app_state.lock().unwrap();
-                (state.gain, state.polyphony)
+                (state.gain, state.polyphony, state.selected_reverb_index, state.reverb_mix)
             };
+
+
+            ui.label("Reverb:");
+            let current_name = self.selected_reverb_index
+                .and_then(|i| self.reverb_files.get(i))
+                .map(|(n, _)| n.as_str())
+                .unwrap_or("No Reverb");
+
+            egui::ComboBox::from_id_salt("runtime_reverb_combo")
+                .selected_text(current_name)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(selected_reverb_index.is_none(), "No Reverb").clicked() {
+                        selected_reverb_index = None;
+                        // Send empty/dummy path or handle specific "Clear" message?
+                        // Assuming audio engine handles empty path or we send a specific Clear command.
+                        // Ideally, we send AppMessage::SetReverbIr(None) but the message takes PathBuf.
+                        // We might need to handle this logic. 
+                        // For now, let's assume setting Wet/Dry to 0 is the "Off" state, 
+                        // but strictly speaking, unloading the IR saves CPU.
+                        // As per request 1, we list files. If we select None, we likely want to disable it.
+                        
+                        // NOTE: You might need to update AppMessage definition to allow Option<PathBuf>
+                        // or just send a mix of 0.0. 
+                        let _ = self.audio_tx.send(AppMessage::SetReverbWetDry(0.0));
+                    }
+                    
+                    for (i, (name, path)) in self.reverb_files.iter().enumerate() {
+                        if ui.selectable_label(selected_reverb_index == Some(i), name).clicked() {
+                            selected_reverb_index = Some(i);
+                            let _ = self.audio_tx.send(AppMessage::SetReverbIr(path.clone()));
+                            // If we switch to a file, ensure mix is not 0?
+                            // Let the user adjust mix manually.
+                        }
+                    }
+                });
+
+            ui.add_space(10.0);
+
+            // Reverb Mix
+            ui.label("Reverb Mix:");
+            if ui.add(egui::Slider::new(&mut reverb_mix, 0.0..=1.0).show_value(true)).changed() {
+                 self.app_state.lock().unwrap().reverb_mix = reverb_mix;
+                 let _ = self.audio_tx.send(AppMessage::SetReverbWetDry(reverb_mix));
+            }
 
             // --- Gain Control ---
             ui.label("Master Gain:");
