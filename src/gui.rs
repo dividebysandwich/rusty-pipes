@@ -429,16 +429,6 @@ impl EguiApp {
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(selected_reverb_index.is_none(), "No Reverb").clicked() {
                         selected_reverb_index = None;
-                        // Send empty/dummy path or handle specific "Clear" message?
-                        // Assuming audio engine handles empty path or we send a specific Clear command.
-                        // Ideally, we send AppMessage::SetReverbIr(None) but the message takes PathBuf.
-                        // We might need to handle this logic. 
-                        // For now, let's assume setting Wet/Dry to 0 is the "Off" state, 
-                        // but strictly speaking, unloading the IR saves CPU.
-                        // As per request 1, we list files. If we select None, we likely want to disable it.
-                        
-                        // NOTE: You might need to update AppMessage definition to allow Option<PathBuf>
-                        // or just send a mix of 0.0. 
                         let _ = self.audio_tx.send(AppMessage::SetReverbWetDry(0.0));
                     }
                     
@@ -446,8 +436,6 @@ impl EguiApp {
                         if ui.selectable_label(selected_reverb_index == Some(i), name).clicked() {
                             selected_reverb_index = Some(i);
                             let _ = self.audio_tx.send(AppMessage::SetReverbIr(path.clone()));
-                            // If we switch to a file, ensure mix is not 0?
-                            // Let the user adjust mix manually.
                         }
                     }
                 });

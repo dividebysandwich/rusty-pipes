@@ -448,7 +448,40 @@ impl Drop for Voice {
     }
 }
 
-/// Contains a stereo FFT convolver for reverb processing.
+/// Simple Linear Interpolation Resampler.
+/// Used to convert IR files to the engine's sample rate on the fly.
+fn resample_interleaved(input: &[f32], channels: usize, from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || input.is_empty() {
+        return input.to_vec();
+    }
+
+    let ratio = from_rate as f64 / to_rate as f64;
+    let input_frames = input.len() / channels;
+    let output_frames = (input_frames as f64 / ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(output_frames * channels);
+
+    for i in 0..output_frames {
+        let src_idx_float = i as f64 * ratio;
+        let index0 = src_idx_float.floor() as usize;
+        let index1 = (index0 + 1).min(input_frames - 1);
+        let frac = (src_idx_float - index0 as f64) as f32;
+
+        for c in 0..channels {
+            let s0 = input[index0 * channels + c];
+            let s1 = input[index1 * channels + c];
+            // Linear interpolation
+            let interpolated = s0 + (s1 - s0) * frac;
+            output.push(interpolated);
+        }
+    }
+    
+    log::info!("[Resampler] Resampled IR from {}Hz to {}Hz. ({} -> {} frames)", 
+        from_rate, to_rate, input_frames, output_frames);
+
+    output
+}
+
+/// A stereo FFT convolver for reverb processing.
 struct StereoConvolver {
     convolver_l: FFTConvolver<f32>,
     convolver_r: FFTConvolver<f32>,
@@ -481,22 +514,22 @@ impl StereoConvolver {
             parse_wav_metadata(&mut reader, path)
             .map_err(|e| anyhow!("[Convolver] Failed to parse IR metadata for {:?}: {}", path, e))?;
 
-        if fmt.sample_rate != sample_rate {
-            // fft_convolver doesn't resample, so this is a problem.
-            // For a real-world app, you'd need to resample the IR here.
-            // For now, we'll log an error and refuse to load.
-            return Err(anyhow!(
-                "[Convolver] IR {:?} has sample rate {}Hz, but engine is {}Hz.",
-                path.file_name().unwrap_or_default(), fmt.sample_rate, sample_rate
-            ));
-        }
-
         let decoder = WavSampleReader::new(reader, fmt, data_start, data_size)
             .map_err(|e| anyhow!("[Convolver] Failed to create IR reader for {:?}: {}", path, e))?;
         
-        let ir_samples_interleaved: Vec<f32> = decoder.collect();
+        let mut ir_samples_interleaved: Vec<f32> = decoder.collect();
         if ir_samples_interleaved.is_empty() {
             return Err(anyhow!("[Convolver] IR file {:?} contains no samples.", path));
+        }
+
+        if fmt.sample_rate != sample_rate {
+            log::warn!("[Convolver] IR Rate Mismatch (File: {}, Engine: {}). Resampling...", fmt.sample_rate, sample_rate);
+            ir_samples_interleaved = resample_interleaved(
+                &ir_samples_interleaved, 
+                fmt.num_channels as usize, 
+                fmt.sample_rate, 
+                sample_rate
+            );
         }
 
         // --- De-interleave ---
