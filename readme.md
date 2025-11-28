@@ -119,7 +119,9 @@ Starting audio engine...
 
 ### Convolution Reverb
 
-Lets you pass a .wav file containing the impulse response of the desired room/church.
+This option lets you select a file containing the impulse response of the desired room/church.
+RustyPipes will look in the user's config directory, subdirectory "reverb", for .wav files.
+If you don't know where that directory is on your system, you can click on the folder icon next to the dropdown to open a file browser at that location.
 
 ### Reverb mix
 
