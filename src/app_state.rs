@@ -455,42 +455,47 @@ impl AppState {
     }
 
     /// Recalls a preset from a slot into `stop_channels`.
+    /// Only releases notes if their controlling MIDI channel is no longer mapped to the stop.
     pub fn recall_preset(&mut self, slot: usize, audio_tx: &Sender<AppMessage>) -> Result<()> {
         if slot >= 12 { return Ok(()); }
         if let Some(preset_data) = &self.presets[slot] {
-            // Get the data from inside the struct
-            let stop_channels = &preset_data.stop_channels;
+            let new_preset_map = &preset_data.stop_channels;
             let _preset_name = &preset_data.name;
 
-            let is_valid = stop_channels.keys().all(|&stop_index| stop_index < self.organ.stops.len());
+            let is_valid = new_preset_map.keys().all(|&stop_index| stop_index < self.organ.stops.len());
+            
             if is_valid {
-                // First, update all stops to the preset
-                self.stop_channels = stop_channels.clone();
+                // Snapshot the current configuration before we change it
+                let old_map = self.stop_channels.clone();
 
-                // Iterate through all stops
-                for stop in self.organ.stops.iter() {
-                    let stop_name = stop.name.clone();
-                    // Send NoteOff for all active notes on this stop
-                    for notes in self.channel_active_notes.values() {
-                        for &note in notes {
-                            audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
-                        }
-                    }
-                }
+                // Update the state to the new preset immediately
+                // Any new notes played after this line will use the new mapping
+                self.stop_channels = new_preset_map.clone();
 
-                // Then, for each stop, send NoteOff for channels that are being deactivated
-                for stop in self.organ.stops.iter() {
-                    for channel in 0..10 {
-                        let active_notes_on_channel = self.channel_active_notes.get(&channel);
-                        // Get active channels for this stop in the recalled preset
-                        // We must use `stop_channels` (the map) not `preset_data` (the struct)
-                        let active_channels = stop_channels.get(&stop.id_str.parse::<usize>()?).cloned().unwrap_or_default();
-                        if !active_channels.contains(&channel) {
-                            // Send NoteOff for all active notes on this channel for this stop
-                            if let Some(notes_to_stop) = active_notes_on_channel {
-                                let stop_name = stop.name.clone();
-                                for &note in notes_to_stop {
-                                    audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
+                // We iterate over the OLD map to find Stop -> Channel mappings that have been removed.
+                for (stop_index, old_active_channels) in &old_map {
+                    
+                    // Get the set of channels enabled for this stop in the new preset
+                    let new_active_channels_opt = self.stop_channels.get(stop_index);
+
+                    for &channel in old_active_channels {
+                        // Check if this specific channel is still mapped to this stop in the new preset
+                        let is_still_mapped = match new_active_channels_opt {
+                            Some(new_set) => new_set.contains(&channel),
+                            None => false, // The stop was completely disabled in the new preset
+                        };
+
+                        // If the channel is no longer mapped to this stop, we must cut the audio
+                        // for any notes currently being held on this MIDI channel.
+                        if !is_still_mapped {
+                            if let Some(active_notes_on_channel) = self.channel_active_notes.get(&channel) {
+                                if let Some(stop) = self.organ.stops.get(*stop_index) {
+                                    let stop_name = stop.name.clone();
+                                    
+                                    // Send NoteOff for currently active notes on this specific channel/stop combo
+                                    for &note in active_notes_on_channel {
+                                        audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
+                                    }
                                 }
                             }
                         }
@@ -501,8 +506,8 @@ impl AppState {
             } else {
                 // This can happen if the organ definition file changed
                 let err_msg = format!(
-                    "Failed to recall preset F{}: stop count mismatch (preset has {}, organ has {})",
-                    slot + 1, stop_channels.len(), self.stop_channels.len()
+                    "Failed to recall preset F{}: stop count mismatch or invalid indices",
+                    slot + 1
                 );
                 log::warn!("{}", err_msg);
                 self.add_midi_log(err_msg);
