@@ -288,7 +288,7 @@ impl App for ConfigApp {
 
                         // --- Preload Frames ---
                         ui.label("Preload Frames:");
-                        ui.add(egui::DragValue::new(&mut self.state.settings.preload_frames).speed(32.0).range(1024..=65536));
+                        ui.add(egui::DragValue::new(&mut self.state.settings.preload_frames).speed(32.0).range(1024..=99999999));
                         ui.end_row();
 
                         // --- Boolean Options ---
