@@ -4,28 +4,38 @@ use cpal::{Device, SampleFormat, SampleRate, Stream, StreamConfig};
 use decibel::{AmplitudeRatio, DecibelRatio};
 use ringbuf::traits::{Observer, Consumer, Producer, Split};
 use fft_convolver::FFTConvolver;
-use ringbuf::{HeapCons, HeapRb};
-use std::collections::HashMap;
+use ringbuf::{HeapCons, HeapRb, HeapProd};
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::{mpsc, Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::thread::JoinHandle;
 use std::time::{Instant, Duration};
-use std::path::Path;
-use std::mem;
+use std::path::{Path, PathBuf};
 
 use crate::app::{ActiveNote, AppMessage};
 use crate::organ::Organ;
 use crate::wav::{parse_wav_metadata, WavSampleReader, parse_smpl_chunk};
-use crate::wav_converter::SampleMetadata;
 use crate::TuiMessage;
 
 const CHANNEL_COUNT: usize = 2; // Stereo
 const VOICE_BUFFER_FRAMES: usize = 14400; 
-const CROSSFADE_TIME: f32 = 0.20; // How long to crossfade from attack to release samples, in seconds
+const CROSSFADE_TIME: f32 = 0.10; // How long to crossfade from attack to release samples, in seconds
 const VOICE_STEALING_FADE_TIME: f32 = 1.00; // Fade out stolen release samples over 1s
+const MAX_NEW_VOICES_PER_BLOCK: usize = 28; // Limit how many new voices can be started per audio block
+
+struct SpawnJob {
+    path: PathBuf,
+    organ: Arc<Organ>,
+    sample_rate: u32,
+    is_attack_sample: bool,
+    frames_to_skip: usize,
+    // We pass the RingBuffer producer to the thread so it can fill it
+    producer: HeapProd<f32>,
+    is_finished: Arc<AtomicBool>,
+    is_cancelled: Arc<AtomicBool>,
+}
 
 /// Returns a sorted list of standard sample rates supported by the device.
 pub fn get_supported_sample_rates(device_name: Option<String>) -> Result<Vec<u32>> {
@@ -114,16 +124,12 @@ pub fn get_default_audio_device_name() -> Result<Option<String>> {
 /// Represents one playing sample, either attack or release.
 struct Voice {
     gain: f32, // Linear amplitude
-    debug_path: std::path::PathBuf, // For debugging
     
     // The main thread *only* interacts with these:
-    consumer: HeapCons<f32>, // <-- Use concrete type HeapCons
+    consumer: HeapCons<f32>, // Use concrete type HeapCons
     is_finished: Arc<AtomicBool>, // Has the loader thread finished?
     is_cancelled: Arc<AtomicBool>, // Has NoteOff told the loader to stop?
     
-    // The loader thread is held so it can be detached
-    loader_handle: Option<thread::JoinHandle<()>>,
-
     fade_level: f32, // 1.0 = full volume, 0.0 = silent
     is_fading_out: bool, // Is the attack sample fading out?
     is_fading_in: bool, // Is the release sample fading in?
@@ -131,7 +137,6 @@ struct Voice {
     release_voice_id: Option<u64>,
     // Latency measurement
     note_on_time: Instant,
-    has_reported_latency: bool,
     is_attack_sample: bool,
     fade_increment: f32,
 }
@@ -147,6 +152,7 @@ impl Voice {
         is_attack_sample: bool, 
         note_on_time: Instant,
         preloaded_bytes: Option<Arc<Vec<f32>>>,
+        spawner_tx: &mpsc::Sender<SpawnJob>
     ) -> Result<Self> {
         
         let fade_frames = (sample_rate as f32 * CROSSFADE_TIME) as usize;
@@ -162,7 +168,6 @@ impl Voice {
         // Create communication atomics
         let is_finished = Arc::new(AtomicBool::new(false));
         let is_cancelled = Arc::new(AtomicBool::new(false));
-        let is_attack_sample_clone = is_attack_sample;
         
         // If we have pre-loaded attack bytes, push them to the ring buffer right away.
         let mut preloaded_frames_count = 0;
@@ -173,280 +178,38 @@ impl Voice {
             preloaded_frames_count = pushed / CHANNEL_COUNT;
         }
 
-        // Clone variables to move into the loader thread
-        let path_buf = path.to_path_buf();
-        let is_finished_clone = Arc::clone(&is_finished);
-        let is_cancelled_clone = Arc::clone(&is_cancelled);
-        let organ_clone = Arc::clone(&organ);
+        // Instead of calling thread::spawn here (heavy system call),
+        // we push a lightweight struct to a channel.
+        let job = SpawnJob {
+            path: path.to_path_buf(),
+            organ: Arc::clone(&organ),
+            sample_rate,
+            is_attack_sample,
+            frames_to_skip: preloaded_frames_count,
+            producer, // Move the producer to the job
+            is_finished: Arc::clone(&is_finished),
+            is_cancelled: Arc::clone(&is_cancelled),
+        };
+
+        // Send to background spawner. If channel is full/broken, we log error but don't panic.
+        if let Err(e) = spawner_tx.send(job) {
+            log::error!("Failed to queue voice spawn job: {}", e);
+            // If we fail to spawn, we should probably mark finished so the voice gets cleaned up
+            is_finished.store(true, Ordering::Relaxed);
+        }
         
-        // --- Spawn the Loader Thread ---
-        let loader_handle = thread::spawn(move || {
-            let path_buf_clone = path_buf.clone();
-            let path_str = path_buf_clone.file_name().unwrap_or_default().to_string_lossy();
-            let path_str_clone = path_str.clone();
-            
-            // Use catch_unwind to handle ALL panics
-            let panic_result = std::panic::catch_unwind(move || {
-
-                let mut loader_loop_counter = 0u64;
-                let mut cancelled_log_sent = false;
-
-                // This inner closure contains all the fallible logic
-                let result: Result<()> = (|| {
-                    // Check cache first
-                    let maybe_cached_data: Option<Arc<Vec<f32>>> = 
-                        organ_clone.sample_cache.as_ref().and_then(|cache| {
-                            cache.get(&path_buf).cloned()
-                        });
-
-                    let maybe_cached_metadata: Option<Arc<SampleMetadata>> =
-                        organ_clone.metadata_cache.as_ref().and_then(|cache| {
-                            cache.get(&path_buf).cloned()
-                        });
-
-                    let loop_info: Option<(u32, u32)>;
-                    let input_channels: usize;
-                    let mut source: Option<Box<dyn Iterator<Item = f32>>> = None;
-                    let mut source_is_finished;
-                    let use_memory_reader;
-                    let mut samples_in_memory: Vec<f32> = Vec::new();
-                    
-                    let mut interleaved_buffer = vec![0.0f32; 1024 * CHANNEL_COUNT];
-                    
-                    // If we already pushed preloaded data, we need to skip that many frames when we start reading.
-                    let frames_to_skip = preloaded_frames_count;
-
-                    if let (Some(cached_samples), Some(cached_metadata)) = (maybe_cached_data, maybe_cached_metadata) {
-                        // --- CACHED PATH ---
-                        samples_in_memory = (*cached_samples).clone();
-                        // Get metadata from cache
-                        loop_info = if is_attack_sample_clone { cached_metadata.loop_info } else { None };
-                        input_channels = cached_metadata.channel_count as usize;
-                        
-                        use_memory_reader = true;
-                        source_is_finished = false; // This prevents the release sample from being prematurely marked as finished
-                    } else {
-                        // --- STREAMING PATH ---
-                        if organ_clone.sample_cache.is_some() {
-                            log::warn!("[LoaderThread] CACHE MISS for {:?}. Falling back to streaming.", path_str);
-                        }
-                        
-                        let file = File::open(&path_buf.clone())
-                            .map_err(|e| anyhow!("[LoaderThread] Failed to open {:?}: {}", path_buf.clone(), e))?;
-                        let mut reader = BufReader::new(file);
-
-                        // Assuming parse_wav_metadata is in a shared wav_reader mod
-                        let (fmt, other_chunks, data_start, data_size) = 
-                            parse_wav_metadata(&mut reader, &path_buf)
-                            .map_err(|e| anyhow!("[LoaderThread] Failed to parse WAV metadata for {:?}: {}", path_buf.clone(), e))?;
-
-                        if fmt.sample_rate != sample_rate {
-                            return Err(anyhow!(
-                                "[LoaderThread] File {:?} has wrong sample rate: {} (expected {}). Please re-process samples.",
-                                path_buf, fmt.sample_rate, sample_rate
-                            ));
-                        }
-                        
-                        let mut loop_info_from_file = None;
-                        for chunk in other_chunks {
-                            if &chunk.id == b"smpl" {
-                                loop_info_from_file = parse_smpl_chunk(&chunk.data);
-                                break;
-                            }
-                        }
-                        // Set metadata from file
-                        loop_info = if is_attack_sample_clone { loop_info_from_file } else { None };
-                        input_channels = fmt.num_channels as usize;
-
-                        // Assuming WavSampleReader is in a shared wav_reader mod
-                        let decoder = WavSampleReader::new(reader, fmt, data_start, data_size)
-                            .map_err(|e| anyhow!("[LoaderThread] Failed to create sample reader for {:?}: {}", path_buf.clone(), e))?;
-
-                        let is_looping = is_attack_sample_clone && loop_info.is_some();
-                        if is_looping {
-                            samples_in_memory = decoder.collect();
-                            use_memory_reader = true;
-                            source_is_finished = false;
-                        } else {
-                            // Streaming iterator
-                            let mut iterator = Box::new(decoder);
-                            
-                            // Skip the frames we already played from the pre-load buffer
-                            if frames_to_skip > 0 {
-                                // We need to consume N items * channels
-                                let samples_to_skip = frames_to_skip * input_channels;
-                                // Simple consume
-                                for _ in 0..samples_to_skip {
-                                    if iterator.next().is_none() {
-                                        break; 
-                                    }
-                                }
-                            }
-                            source = Some(iterator);
-                            source_is_finished = false;
-                            use_memory_reader = false;
-                        }
-                    }
-
-                    // --- Setup loop points (applies to both cached and streaming-loaded-to-memory) ---
-                    let is_mono = input_channels == 1;
-                    let mut current_frame_index: usize = frames_to_skip;
-                    let mut loop_start_frame: usize = 0;
-                    let mut loop_end_frame: usize = 0;
-                    let mut is_looping_sample = is_attack_sample_clone && loop_info.is_some();
-
-                    if use_memory_reader && is_looping_sample {
-                        let (start, end) = loop_info.unwrap();
-                        loop_start_frame = start as usize;
-                        let total_frames = samples_in_memory.len() / input_channels;
-                        loop_end_frame = if end == 0 { total_frames } else { end as usize };
-
-                        if loop_start_frame >= loop_end_frame || loop_end_frame > total_frames {
-                            log::warn!(
-                                "[LoaderThread] Invalid loop points for {:?}: start {}, end {}, total {}. Disabling loop.",
-                                path_str, loop_start_frame, loop_end_frame, total_frames
-                            );
-                            is_looping_sample = false;
-                            current_frame_index = 0;
-                        }
-                    }
-
-                    // --- The Loader Loop ---
-                    'loader_loop: loop {
-                        loader_loop_counter += 1;
-
-                        if is_cancelled_clone.load(Ordering::Relaxed) {
-                            if !cancelled_log_sent {
-                                cancelled_log_sent = true;
-                            }
-                            break 'loader_loop;
-                        }
-
-                        let frames_to_read = 1024;
-                        let mut frames_read = 0;
-
-                        if use_memory_reader {
-                            // --- READING FROM MEMORY (Looping OR One-Shot) ---
-                            for i in 0..frames_to_read {
-                                if is_looping_sample {
-                                    // Check for loop point
-                                    if current_frame_index >= loop_end_frame {
-                                        current_frame_index = loop_start_frame;
-                                    }
-                                } else {
-                                    // One-shot from memory
-                                    if current_frame_index >= (samples_in_memory.len() / input_channels) {
-                                        source_is_finished = true; // True EOF
-                                        break; // Stop adding frames
-                                    }
-                                }
-                                
-                                let sample_l_idx = current_frame_index * input_channels;
-                                let sample_l = samples_in_memory.get(sample_l_idx).cloned().unwrap_or(0.0);
-                                let sample_r = if is_mono {
-                                    sample_l
-                                } else {
-                                    samples_in_memory.get(sample_l_idx + 1).cloned().unwrap_or(0.0)
-                                };
-                                
-                                interleaved_buffer[i * CHANNEL_COUNT] = sample_l;
-                                interleaved_buffer[i * CHANNEL_COUNT + 1] = sample_r;
-                                current_frame_index += 1;
-                                frames_read += 1; // Increment frames *read*
-                            }
-                        } else {
-                            // --- ONE-SHOT LOGIC (streaming from File) ---
-                            // This branch is only entered if `use_memory_reader` is false,
-                            // meaning `source.take()` was never called, so `source` is `Some`.
-                            if let Some(ref mut s_iter) = source {
-                                for i in 0..frames_to_read {
-                                    if let Some(sample_l) = s_iter.next() {
-                                        let sample_r = if is_mono {
-                                            sample_l
-                                        } else if let Some(r) = s_iter.next() {
-                                            r
-                                        } else {
-                                            source_is_finished = true;
-                                            sample_l // fallback
-                                        };
-
-                                        interleaved_buffer[i * CHANNEL_COUNT] = sample_l;
-                                        interleaved_buffer[i * CHANNEL_COUNT + 1] = sample_r;
-                                        frames_read += 1;
-
-                                        if source_is_finished { break; }
-                                    } else {
-                                        source_is_finished = true;
-                                        break; // End of source
-                                    }
-                                }
-                            } else {
-                                source_is_finished = true;
-                            }
-                        }
-                        
-                        // Push whatever we read
-                        if frames_read > 0 {
-                            let samples_to_push = frames_read * CHANNEL_COUNT;
-                            let mut offset = 0;
-                            while offset < samples_to_push {
-                                if is_cancelled_clone.load(Ordering::Relaxed) {
-                                    break 'loader_loop;
-                                }
-                                let pushed = producer.push_slice(&interleaved_buffer[offset..samples_to_push]);
-                                offset += pushed;
-                                if offset < samples_to_push {
-                                    thread::sleep(Duration::from_millis(1)); // Ringbuf is full
-                                }
-                            }
-                        }
-
-                        // Decide to sleep or exit
-                        if source_is_finished && !is_looping_sample {
-                            break 'loader_loop;
-                        }
-
-                        if is_looping_sample && frames_read == 0 {
-                            // This shouldn't happen, but as a fallback
-                            thread::sleep(Duration::from_millis(1));
-                        }
-                        
-                    } // --- End of 'loader_loop ---
-                
-                    Ok(()) // Success
-                })(); // End of fallible closure
-                
-                // Log any Result::Err
-                if let Err(e) = result {
-                    log::error!("{}", e);
-                }
-            }); // --- End of catch_unwind ---
-
-            // Log any panics
-            if panic_result.is_err() {
-                log::error!("[LoaderThread] PANICKED. This is a bug. Path: {:?}", path_str_clone);
-                }
-
-            // This line is *outside* the unwind block and will
-            // execute *even if* the code inside it panicked.
-            is_finished_clone.store(true, Ordering::SeqCst);
-        });
-
         // --- Return the non-blocking Voice struct ---
         Ok(Self {
             gain,
-            debug_path: path.to_path_buf(),
             consumer,
             is_finished,
             is_cancelled,
-            loader_handle: Some(loader_handle),
             fade_level: if start_fading_in { 0.0 } else { 1.0 }, 
             is_fading_out: false,
             is_fading_in: start_fading_in,
             is_awaiting_release_sample: false,
             release_voice_id: None,
             note_on_time,
-            has_reported_latency: false,
             is_attack_sample,
             fade_increment,
         })
@@ -458,10 +221,6 @@ impl Drop for Voice {
     fn drop(&mut self) {
         // Tell the loader thread to stop, just in case
         self.is_cancelled.store(true, Ordering::SeqCst);
-        if let Some(handle) = self.loader_handle.take() {
-            log::warn!("[Voice::Drop] Leaking thread handle for {:?}.", self.debug_path.file_name().unwrap_or_default());
-            mem::forget(handle);
-        }
     }
 }
 
@@ -704,25 +463,19 @@ fn trigger_note_release(
     voices: &mut HashMap<u64, Voice>,
     sample_rate: u32,
     voice_counter: &mut u64,
+    spawner_tx: &mpsc::Sender<SpawnJob>,
 ) {
     let press_duration = stopped_note.start_time.elapsed().as_millis() as i64;
-    let note = stopped_note.note; // Get the note number
+    let note = stopped_note.note;
 
     if let Some(rank) = organ.ranks.get(&stopped_note.rank_id) {
         if let Some(pipe) = rank.pipes.get(&note) {
-            // Find the correct release sample
-            let release_sample = pipe
-                .releases
-                .iter()
-                .find(|r| {
-                    r.max_key_press_time_ms == -1
-                        || press_duration <= r.max_key_press_time_ms
-                })
-                .or_else(|| pipe.releases.last()); // Fallback to last
+            let release_sample = pipe.releases.iter()
+                .find(|r| r.max_key_press_time_ms == -1 || press_duration <= r.max_key_press_time_ms)
+                .or_else(|| pipe.releases.last());
 
             if let Some(release) = release_sample {
                 let total_gain = rank.gain_db + pipe.gain_db;
-                // Play release sample
                 match Voice::new(
                     &release.path,
                     Arc::clone(&organ),
@@ -732,35 +485,27 @@ fn trigger_note_release(
                     false,
                     Instant::now(),
                     release.preloaded_bytes.clone(),
+                    spawner_tx
                 ) {
                     Ok(mut voice) => {
-                        
-                        voice.fade_level = 0.0; // Start silent
-
+                        voice.fade_level = 0.0;
                         let release_voice_id = *voice_counter;
                         *voice_counter += 1;
                         voices.insert(release_voice_id, voice);
 
-                        // Now link the attack voice to this new release voice
                         if let Some(attack_voice) = voices.get_mut(&stopped_note.voice_id) {
                             attack_voice.is_cancelled.store(true, Ordering::SeqCst);
                             attack_voice.is_awaiting_release_sample = true;
                             attack_voice.release_voice_id = Some(release_voice_id);
                         } else {
-                            // Attack voice is already gone, just fade in the release voice
-                            log::warn!("[AudioThread] ...attack voice {} already gone. Fading in release {} immediately.", stopped_note.voice_id, release_voice_id);
                             if let Some(rv) = voices.get_mut(&release_voice_id) {
                                 rv.is_fading_in = true;
                             }
                         }
                     }
-                    Err(e) => {
-                        log::error!("[AudioThread] Error creating release sample: {}", e)
-                    }
+                    Err(e) => log::error!("Error creating release: {}", e),
                 }
             } else {
-                log::warn!("[AudioThread] ...but no release sample found for pipe on note {}.", note);
-                // No release sample, so just fade out the attack voice
                 if let Some(voice) = voices.get_mut(&stopped_note.voice_id) {
                     voice.is_cancelled.store(true, Ordering::SeqCst);
                     voice.is_fading_out = true;
@@ -784,11 +529,23 @@ fn spawn_audio_processing_thread<P>(
     P: Producer<Item = f32> + Send + 'static,
 {
 
-    let (reaper_tx, reaper_rx) = mpsc::channel::<thread::JoinHandle<()>>();
-    spawn_reaper_thread(reaper_rx);
-
     // Channel for receiving loaded Reverb convolvers from background thread
     let (ir_loader_tx, ir_loader_rx) = mpsc::channel::<Result<StereoConvolver>>();
+
+    // Spawner Thread Setup
+    let (spawner_tx, spawner_rx) = mpsc::channel::<SpawnJob>();
+
+    // Spawn the background thread that handles the "heavy" thread::spawn calls
+    thread::spawn(move || {
+        log::info!("[SpawnerThread] Started.");
+        for job in spawner_rx {
+            // Detached thread, runs until IO is done.
+            thread::spawn(move || {
+                run_loader_job(job);
+            });
+        }
+        log::info!("[SpawnerThread] Shutting down.");
+    });
 
     thread::spawn(move || {
         // Create a map from stop_name -> stop_index for fast lookup
@@ -828,374 +585,281 @@ fn spawn_audio_processing_thread<P>(
         
         let mut max_load_accumulator = 0.0f32;
 
+        let mut pending_note_queue: VecDeque<AppMessage> = VecDeque::with_capacity(64);
+
         loop {
             let start_time = Instant::now();
 
-            // --- Handle incoming messages ---
+            // Drain incoming messages from UI to internal queue
+            // We differentiate "Immediate" vs "Deferrable" events
             while let Ok(msg) = rx.try_recv() {
                 match msg {
-                    AppMessage::NoteOn(note, _vel, stop_name) => {
-                        let note_on_time = Instant::now();
-                        // Find the stop_index from the stop_name
-                        if let Some(stop_index) = stop_name_to_index_map.get(&stop_name) {
-                            let stop = &organ.stops[*stop_index];
-                            let mut new_notes = Vec::new();
-
-                            for rank_id in &stop.rank_ids {
-                                if let Some(rank) = organ.ranks.get(rank_id) {
-                                    if let Some(pipe) = rank.pipes.get(&note) {
-                                        let total_gain = rank.gain_db + pipe.gain_db;
-                                        // Play attack sample
-                                        match Voice::new(
-                                            &pipe.attack_sample_path,
-                                            Arc::clone(&organ),
-                                            sample_rate,
-                                            total_gain,
-                                            false,
-                                            true,
-                                            note_on_time,
-                                            pipe.preloaded_bytes.clone(),
-                                        ) {
-                                            Ok(voice) => {
-                                                let voice_id = voice_counter;
-                                                voice_counter += 1;
-                                                voices.insert(voice_id, voice);
-
-                                                new_notes.push(ActiveNote {
-                                                    note,
-                                                    start_time: note_on_time, // Use the same start time
-                                                    stop_index: *stop_index,
-                                                    rank_id: rank_id.clone(),
-                                                    voice_id,
-                                                });
-                                            }
-                                            Err(e) => {
-                                                log::error!("[AudioThread] Error creating attack voice: {}", e)
-                                        }
-                                    }
-                                }
-                            }
-                            }
-                            
-                            if !new_notes.is_empty() {
-                                // Add all new notes to the map entry for that note number
-                                active_notes.entry(note).or_default().extend(new_notes);
-                            }
-
-                        } else {
-                            log::warn!("[AudioThread] NoteOn for unknown stop: {}", stop_name);
-                        }
-                    }
-                    AppMessage::NoteOff(note, stop_name) => {
-                        // Find the stop_index from the stop_name
-                        if let Some(stop_index) = stop_name_to_index_map.get(&stop_name) {
-                            let mut stopped_note_opt: Option<ActiveNote> = None;
-                            // Check if the note is active at all
-                            if let Some(note_list) = active_notes.get_mut(&note) {
-                                // Find the index of the specific note to remove
-                                if let Some(pos) = note_list.iter().position(|an| an.stop_index == *stop_index) {
-                                    // Remove it from the list and take ownership
-                                    stopped_note_opt = Some(note_list.remove(pos));
-                                }
-                                // If list is now empty, remove the note key from the main map
-                                if note_list.is_empty() {
-                                    active_notes.remove(&note);
-                                }
-                            }
-
-                            // If we successfully removed a note, trigger its release
-                            if let Some(stopped_note) = stopped_note_opt {
-                                    trigger_note_release(
-                                        stopped_note,
-                                        &organ,
-                                        &mut voices,
-                                        sample_rate,
-                                        &mut voice_counter
-                                    );
-                            } else {
-                                // This is common if NoteOff is sent twice, etc.
-                                }
-
-                        }
-                    }
-                    AppMessage::AllNotesOff => {
-                        // This is a panic, stop all notes
-                        let notes: Vec<u8> = active_notes.keys().cloned().collect();
-                        for note in notes {
-                            handle_note_off(
-                                note, &organ, &mut voices, &mut active_notes,
-                                sample_rate, &mut voice_counter,
-                            );
-                        }
-                    }
-                    // Handle new reverb messages
-                    AppMessage::SetReverbWetDry(ratio) => {
-                        wet_dry_ratio = ratio.clamp(0.0, 1.0);
-                        log::info!("[AudioThread] Reverb wet/dry ratio set to {:.0}%", wet_dry_ratio * 100.0);
-                    }
-                    AppMessage::SetReverbIr(path) => {
-                        // --- OFF-THREAD LOADING ---
-                        // Loading an IR requires reading a file and computing a large FFT.
-                        // We must spawn a thread to do this to avoid audio dropouts.
-                        let tx = ir_loader_tx.clone();
-                        let path_clone = path.clone();
-                        let s_rate = sample_rate;
-                        let b_size = buffer_size_frames;
-                        
-                        thread::spawn(move || {
-                            let result = StereoConvolver::from_file(&path_clone, s_rate, b_size);
-                            let _ = tx.send(result);
-                        });
-                    }
-                    AppMessage::SetGain(new_gain) => { system_gain = new_gain; }
-                    AppMessage::SetPolyphony(new_poly) => { polyphony = new_poly; }
-                    AppMessage::Quit => {
-                        drop(reaper_tx);
-                        return; 
-                    }
+                    AppMessage::NoteOn(..) => pending_note_queue.push_back(msg),
+                    // Handle control messages immediately to feel responsive
+                    _ => process_message(msg, 
+                        &mut wet_dry_ratio, 
+                        &mut system_gain, 
+                        &mut polyphony, 
+                        &ir_loader_tx, 
+                        sample_rate, 
+                        buffer_size_frames, 
+                        &mut active_notes, 
+                        &organ, &mut voices, 
+                        &mut voice_counter, 
+                        &stop_name_to_index_map, 
+                        &spawner_tx,
+                        &mut pending_note_queue,
+                    ),
                 }
             }
 
-            // --- Check for new Reverb IR ---
-            if let Ok(load_result) = ir_loader_rx.try_recv() {
-                match load_result {
-                    Ok(new_convolver) => {
-                        convolver = new_convolver;
-                        // Auto-set wet/dry if it was zero, to let user hear the effect immediately
-                        if wet_dry_ratio == 0.0 {
-                            wet_dry_ratio = 0.3;
-                            log::info!("[AudioThread] IR Loaded. Auto-setting Wet/Dry to 30%.");
-                        } else {
-                            log::info!("[AudioThread] IR Loaded.");
-                        }
-                    },
-                    Err(e) => {
-                        log::error!("[AudioThread] Failed to load IR: {}", e);
-                        // Don't disable reverb entirely, just keep previous state or warn user via log
-                    }
+            // Process pending NoteOns with Throttling
+            let mut new_voice_count = 0;
+            while new_voice_count < MAX_NEW_VOICES_PER_BLOCK {
+                if let Some(msg) = pending_note_queue.pop_front() {
+                    // This function only handles NoteOn now
+                    process_note_on(
+                        msg, 
+                        &mut active_notes, 
+                        &organ, 
+                        &mut voices, 
+                        &mut voice_counter, 
+                        &stop_name_to_index_map, 
+                        sample_rate, 
+                        &spawner_tx,
+                    );
+                    new_voice_count += 1;
+                } else {
+                    break;
                 }
             }
 
-            // --- Process all active voices ---
+            // Check IR Loader
+             if let Ok(Ok(conv)) = ir_loader_rx.try_recv() { convolver = conv; if wet_dry_ratio == 0.0 { wet_dry_ratio = 0.3; } }
 
-            // Clear mix buffer
             mix_buffer.fill(0.0);
-
-            // Check voice limits and steal if necessary
             enforce_voice_limit(&mut voices, sample_rate, polyphony);
 
-            // --- Crossfade management logic ---
-            // Find voices that are ready to start crossfading.
-            let mut crossfades_to_start: Vec<(u64, u64)> = Vec::with_capacity(16);
-            for (attack_id, attack_voice) in voices.iter() { // Note: .iter()
+            // Crossfade Logic
+             let mut crossfades_to_start: Vec<(u64, u64)> = Vec::with_capacity(16);
+            for (attack_id, attack_voice) in voices.iter() { 
                 if attack_voice.is_awaiting_release_sample {
                     if let Some(release_id) = attack_voice.release_voice_id {
-                        if let Some(release_voice) = voices.get(&release_id) {
-                            // The release voice is "ready" if its consumer has any data
-                            if !release_voice.consumer.is_empty() {
-                                crossfades_to_start.push((*attack_id, release_id));
-                            }
-                        } else {
-                            // Release voice has disappeared? (e.g., finished instantly)
-                            // Start fade-out anyway.
-                            log::warn!("[AudioThread] Release voice {} not found for attack voice {}. Fading out attack.", release_id, *attack_id);
-                            crossfades_to_start.push((*attack_id, u64::MAX)); // use u64::MAX to indicate no release
-                        }
+                        if let Some(rv) = voices.get(&release_id) {
+                            if !rv.consumer.is_empty() { crossfades_to_start.push((*attack_id, release_id)); }
+                        } else { crossfades_to_start.push((*attack_id, u64::MAX)); }
                     }
                 }
             }
-            // Apply the state changes for ready crossfades.
-            for (attack_id, release_id) in crossfades_to_start {
-                if let Some(attack_voice) = voices.get_mut(&attack_id) {
-                    attack_voice.is_fading_out = true;
-                    attack_voice.is_awaiting_release_sample = false; // Done waiting
-                    attack_voice.release_voice_id = None;
+            for (aid, rid) in crossfades_to_start {
+                if let Some(av) = voices.get_mut(&aid) { av.is_fading_out = true; av.is_awaiting_release_sample = false; av.release_voice_id = None; }
+                if rid != u64::MAX { if let Some(rv) = voices.get_mut(&rid) { rv.is_fading_in = true; } }
+            }
+
+            // Processing Loop
+            for (voice_id, voice) in voices.iter_mut() {
+                if voice.is_fading_out && voice.fade_level <= 0.0001 { voices_to_remove.push(*voice_id); continue; }
+                let samples_to_read = buffer_size_frames * CHANNEL_COUNT;
+                if voice.consumer.occupied_len() < samples_to_read {
+                    if voice.is_finished.load(Ordering::Relaxed) { voices_to_remove.push(*voice_id); }
+                    continue;
                 }
                 
-                if release_id != u64::MAX {
-                    if let Some(release_voice) = voices.get_mut(&release_id) {
-                        release_voice.is_fading_in = true;
-                    }
-                }
-            }
-
-            // --- Voice Processing Loop ---
-            for (voice_id, voice) in voices.iter_mut() {
-
-                // Check if the voice is fully faded out and should be removed
-                if voice.is_fading_out && voice.fade_level <= 0.0001 {
-                    voices_to_remove.push(*voice_id);
-                    continue;
-                }
-
-                let is_loader_finished = voice.is_finished.load(Ordering::Relaxed);
-
-                let samples_to_read = buffer_size_frames * CHANNEL_COUNT;
-                let samples_available = voice.consumer.occupied_len();
-
-                // Check if we have enough data to fill a full block
-                if samples_available < samples_to_read {
-                    // Not enough data.
-                    if is_loader_finished {
-                        // Loader is done, buffer is empty, and not fading out: remove it.
-                        voices_to_remove.push(*voice_id);
-                    }
-                    // Otherwise, just skip this voice for this block.
-                    continue;
-                }
-
-                // Pop *exactly* the amount we need
                 let _ = voice.consumer.pop_slice(&mut voice_read_buffer[..samples_to_read]);
 
-                // --- Latency Reporting ---
-                if voice.is_attack_sample && !voice.has_reported_latency {
-                    let latency = voice.note_on_time.elapsed();
-                    log::debug!(
-                        "[AudioThread] Latency for attack voice {} ({:?}): {:.2}ms",
-                        voice_id, voice.debug_path.file_name().unwrap_or_default(), latency.as_secs_f32() * 1000.0
-                    );
-                    voice.has_reported_latency = true;
-                }
+                // Fade Logic
+                let initial = voice.fade_level;
+                let mut final_fl = initial;
+                if voice.is_fading_in { final_fl = (initial + voice.fade_increment * buffer_size_frames as f32).min(1.0); if final_fl >= 1.0 { voice.is_fading_in = false; } }
+                else if voice.is_fading_out { final_fl = (initial - voice.fade_increment * buffer_size_frames as f32).max(0.0); }
+                voice.fade_level = final_fl;
 
-                // --- Fade/Gain Logic ---
-                let initial_fade_level = voice.fade_level;
-                let mut final_fade_level = initial_fade_level;
+                let start_g = voice.gain * initial;
+                let end_g = voice.gain * final_fl;
+                let gain_step = (end_g - start_g) / buffer_size_frames as f32;
+                let mut cur_g = start_g;
 
-                if voice.is_fading_in {
-                    final_fade_level = (initial_fade_level + voice.fade_increment * buffer_size_frames as f32).min(1.0);
-                    if final_fade_level >= 1.0 { voice.is_fading_in = false; }
-                } else if voice.is_fading_out {
-                    final_fade_level = (initial_fade_level - voice.fade_increment * buffer_size_frames as f32).max(0.0);
-                }
-                voice.fade_level = final_fade_level; // State update for next block
-
-                let start_gain = voice.gain * initial_fade_level;
-                let end_gain = voice.gain * final_fade_level;
-                let gain_step = (end_gain - start_gain) / buffer_size_frames as f32;
-                let mut current_gain = start_gain;
-
-                // --- Mixing Loop ---
                 let mix_chunks = mix_buffer.chunks_exact_mut(CHANNEL_COUNT);
                 let voice_chunks = voice_read_buffer.chunks_exact(CHANNEL_COUNT).take(buffer_size_frames);
-
-                for (mix_frame, voice_frame) in mix_chunks.zip(voice_chunks) {
-                    // voice_frame and mix_frame are slices of length 2 (guaranteed)
-                    // The compiler will vectorize these multiplications and additions.
-                    mix_frame[0] += voice_frame[0] * current_gain; // Left
-                    mix_frame[1] += voice_frame[1] * current_gain; // Right
-                    
-                    current_gain += gain_step;
+                for (mix, v) in mix_chunks.zip(voice_chunks) {
+                    mix[0] += v[0] * cur_g;
+                    mix[1] += v[1] * cur_g;
+                    cur_g += gain_step;
                 }
 
-                // --- Voice Removal Logic (simplified) ---
-                // Check if the voice *finished* fading out *this block*.
-                if voice.is_fading_out && voice.fade_level == 0.0 {
-                    // Drain any remaining buffered samples just in case
+                 if voice.is_fading_out && voice.fade_level == 0.0 {
                     voice.consumer.skip(voice.consumer.occupied_len());
                     voices_to_remove.push(*voice_id);
                 }
             }
-            // --- End of voice processing loop ---
 
-            // --- Perform deferred removal ---
-            if !voices_to_remove.is_empty() {
-                for voice_id in voices_to_remove.iter() {
-                    // Remove the voice from the active map, gaining ownership
-                    if let Some(mut voice) = voices.remove(voice_id) {
-                        // We now own the voice.
-                        // Take the handle and send it to the reaper.
-                        if let Some(handle) = voice.loader_handle.take() {
-                            if let Err(e) = reaper_tx.send(handle) {
-                                // This should only happen if the reaper died.
-                                // Fall back to forgetting the handle to avoid blocking.
-                                log::error!("[AudioThread] Failed to send handle to reaper: {}", e);
-                                mem::forget(e.0);
-                            }
-                        }
-                        // `voice` is dropped here, but its handle is now None,
-                        // so the Drop impl (see below) does nothing.
-                    }
+            // Remove voices
+             if !voices_to_remove.is_empty() {
+                for vid in voices_to_remove.iter() {
+                    // Just removing calls Drop, which cancels the detached thread
+                    voices.remove(vid);
                 }
                 voices_to_remove.clear();
             }
 
-            // --- Apply Reverb ---
-            let apply_reverb = wet_dry_ratio > 0.0 && convolver.is_loaded;
+            // Reverb & Gain
+             let apply_reverb = wet_dry_ratio > 0.0 && convolver.is_loaded;
             if apply_reverb {
-                // De-interleave ONLY if we need reverb (Planarize)
-                // This is a linear pass, very fast.
-                for i in 0..buffer_size_frames {
-                    reverb_dry_l[i] = mix_buffer[i * CHANNEL_COUNT];
-                    reverb_dry_r[i] = mix_buffer[i * CHANNEL_COUNT + 1];
-                }
-
-                // Process (Planar In -> Planar Out)
-                convolver.process(
-                    &reverb_dry_l, &reverb_dry_r,
-                    &mut wet_buffer_l, &mut wet_buffer_r
-                );
-            }
-
-            // --- Final Combine & System Gain ---
-            // Combine Dry + Wet and apply Master Gain in one pass.
-            // We write the result DIRECTLY into mix_buffer, which is already Interleaved.
-            // (We no longer need a separate `interleaved_buffer` step).
-            
-            let dry_level = (1.0 - wet_dry_ratio) * system_gain;
-            let wet_level = wet_dry_ratio * system_gain;
-            
-            // Optimization: If no reverb, simplify the math
-            if apply_reverb {
-                for i in 0..buffer_size_frames {
-                    let dry_l = mix_buffer[i * CHANNEL_COUNT];
-                    let dry_r = mix_buffer[i * CHANNEL_COUNT + 1];
-                    let wet_l = wet_buffer_l[i];
-                    let wet_r = wet_buffer_r[i];
-
-                    mix_buffer[i * CHANNEL_COUNT]     = (dry_l * dry_level) + (wet_l * wet_level);
-                    mix_buffer[i * CHANNEL_COUNT + 1] = (dry_r * dry_level) + (wet_r * wet_level);
+                for i in 0..buffer_size_frames { reverb_dry_l[i] = mix_buffer[i*2]; reverb_dry_r[i] = mix_buffer[i*2+1]; }
+                convolver.process(&reverb_dry_l, &reverb_dry_r, &mut wet_buffer_l, &mut wet_buffer_r);
+                let dl = (1.0 - wet_dry_ratio) * system_gain;
+                let wl = wet_dry_ratio * system_gain;
+                 for i in 0..buffer_size_frames {
+                    mix_buffer[i*2] = (mix_buffer[i*2] * dl) + (wet_buffer_l[i] * wl);
+                    mix_buffer[i*2+1] = (mix_buffer[i*2+1] * dl) + (wet_buffer_r[i] * wl);
                 }
             } else {
-                // Just apply master gain
-                 for sample in mix_buffer.iter_mut() {
-                    *sample *= system_gain;
-                }
+                 for s in mix_buffer.iter_mut() { *s *= system_gain; }
             }
 
-            // Calculate Load
-            let processing_duration = start_time.elapsed();
-            let current_load = processing_duration.as_secs_f32() / buffer_duration_secs;
-            
-            // Detect peak CPU load
-            if current_load > max_load_accumulator {
-                max_load_accumulator = current_load;
-            }
+            // Load reporting
+            let duration = start_time.elapsed();
+             let load = duration.as_secs_f32() / buffer_duration_secs;
+             if load > max_load_accumulator { max_load_accumulator = load; }
+             
+             if last_ui_update.elapsed() >= ui_update_interval {
+                 let current_voice_count = voices.len();
+                 if current_voice_count != last_reported_voice_count {
+                     let _ = tui_tx.send(TuiMessage::ActiveVoicesUpdate(current_voice_count));
+                     last_reported_voice_count = current_voice_count;
+                 }
+                 let _ = tui_tx.send(TuiMessage::CpuLoadUpdate(max_load_accumulator));
+                 max_load_accumulator = 0.0;
+                 last_ui_update = Instant::now();
+             }
 
-            if last_ui_update.elapsed() >= ui_update_interval {
-                let current_voice_count = voices.len();
-                if current_voice_count != last_reported_voice_count {
-                    tui_tx.send(TuiMessage::ActiveVoicesUpdate(current_voice_count)).ok();
-                    last_reported_voice_count = current_voice_count;
-                }
-                tui_tx.send(TuiMessage::CpuLoadUpdate(max_load_accumulator)).ok();
-                max_load_accumulator = 0.0;
-                last_ui_update = Instant::now();
-            }
-
-            // --- Push to Ring Buffer ---
+            // Push output
             let mut offset = 0;
             let needed = mix_buffer.len();
             while offset < needed {
                 let pushed = producer.push_slice(&mix_buffer[offset..needed]);
                 offset += pushed;
-                // Throttle based on ringbuffer fullness
-                if offset < needed {
-                    thread::sleep(Duration::from_millis(1));
-                }
+                if offset < needed { thread::sleep(Duration::from_millis(1)); }
             }
-
         }
     });
+}
+
+fn process_note_on(
+    msg: AppMessage,
+    active_notes: &mut HashMap<u8, Vec<ActiveNote>>,
+    organ: &Arc<Organ>,
+    voices: &mut HashMap<u64, Voice>,
+    voice_counter: &mut u64,
+    stop_map: &HashMap<String, usize>,
+    sample_rate: u32,
+    spawner_tx: &mpsc::Sender<SpawnJob>,
+) {
+    if let AppMessage::NoteOn(note, _vel, stop_name) = msg {
+        let note_on_time = Instant::now();
+        if let Some(stop_index) = stop_map.get(&stop_name) {
+            let stop = &organ.stops[*stop_index];
+            let mut new_notes = Vec::new();
+
+            for rank_id in &stop.rank_ids {
+                if let Some(rank) = organ.ranks.get(rank_id) {
+                    if let Some(pipe) = rank.pipes.get(&note) {
+                        let total_gain = rank.gain_db + pipe.gain_db;
+                        match Voice::new(
+                            &pipe.attack_sample_path,
+                            Arc::clone(&organ),
+                            sample_rate,
+                            total_gain,
+                            false,
+                            true,
+                            note_on_time,
+                            pipe.preloaded_bytes.clone(),
+                            spawner_tx
+                        ) {
+                            Ok(voice) => {
+                                let voice_id = *voice_counter;
+                                *voice_counter += 1;
+                                voices.insert(voice_id, voice);
+                                new_notes.push(ActiveNote {
+                                    note,
+                                    start_time: note_on_time,
+                                    stop_index: *stop_index,
+                                    rank_id: rank_id.clone(),
+                                    voice_id,
+                                });
+                            }
+                            Err(e) => log::error!("Error creating attack voice: {}", e),
+                        }
+                    }
+                }
+            }
+            if !new_notes.is_empty() {
+                active_notes.entry(note).or_default().extend(new_notes);
+            }
+        }
+    }
+}
+
+// Process everything EXCEPT NoteOn
+fn process_message(
+    msg: AppMessage,
+    wet_dry_ratio: &mut f32,
+    system_gain: &mut f32,
+    polyphony: &mut usize,
+    ir_loader_tx: &mpsc::Sender<Result<StereoConvolver>>,
+    sample_rate: u32,
+    buffer_size_frames: usize,
+    active_notes: &mut HashMap<u8, Vec<ActiveNote>>,
+    organ: &Arc<Organ>,
+    voices: &mut HashMap<u64, Voice>,
+    voice_counter: &mut u64,
+    stop_map: &HashMap<String, usize>,
+    spawner_tx: &mpsc::Sender<SpawnJob>,
+    pending_queue: &mut VecDeque<AppMessage>
+) {
+    match msg {
+        AppMessage::NoteOff(n, s) => {
+            // Check if this note is still waiting in the pending queue
+            // If we find it there, we delete it. It effectively "never happened" (staccato).
+            // No need to play a release sample because the attack never started.
+            let mut removed_from_queue = false;
+            if !pending_queue.is_empty() {
+                // retain loops through the queue. returning 'false' removes the item.
+                pending_queue.retain(|pending_msg| {
+                    if let AppMessage::NoteOn(pending_note, _, pending_stop) = pending_msg {
+                        if *pending_note == n && *pending_stop == s {
+                            removed_from_queue = true;
+                            return false; // Remove this NoteOn!
+                        }
+                    }
+                    true // Keep other messages
+                });
+            }
+
+            // Standard NoteOff logic (only if we didn't just kill it in the queue)
+            if let Some(idx) = stop_map.get(&s) {
+                if let Some(list) = active_notes.get_mut(&n) {
+                    // Find the active note corresponding to this stop
+                    if let Some(pos) = list.iter().position(|an| an.stop_index == *idx) {
+                        let stopped = list.remove(pos);
+                        if list.is_empty() { active_notes.remove(&n); }
+                        trigger_note_release(stopped, organ, voices, sample_rate, voice_counter, spawner_tx);
+                    }
+                }
+            }
+        },
+        AppMessage::AllNotesOff => { 
+                pending_queue.clear();
+                let notes: Vec<u8> = active_notes.keys().cloned().collect();
+                for note in notes { handle_note_off(note, organ, voices, active_notes, sample_rate, voice_counter, spawner_tx); }
+        },
+        AppMessage::SetReverbWetDry(r) => *wet_dry_ratio = r.clamp(0.0, 1.0),
+        AppMessage::SetReverbIr(p) => { let tx = ir_loader_tx.clone(); thread::spawn(move || { let _ = tx.send(StereoConvolver::from_file(&p, sample_rate, buffer_size_frames)); }); },
+        AppMessage::SetGain(g) => *system_gain = g,
+        AppMessage::SetPolyphony(p) => *polyphony = p,
+        AppMessage::Quit => { std::process::exit(0); } // Quick exit
+        _ => {}
+    }
 }
 
 /// Helper function to handle Note Off logic
@@ -1206,23 +870,183 @@ fn handle_note_off(
     active_notes: &mut HashMap<u8, Vec<ActiveNote>>,
     sample_rate: u32,
     voice_counter: &mut u64,
+    spawner_tx: &mpsc::Sender<SpawnJob>,
 ) {
-    // This removes *all* active notes for this note number,
-    // which is used for the panic function
     if let Some(notes_to_stop) = active_notes.remove(&note) {
         for stopped_note in notes_to_stop {
-            // This `stopped_note` is an `ActiveNote`
             trigger_note_release(
-                stopped_note, // Pass ownership
-                organ,
-                voices,
+                stopped_note, 
+                organ, 
+                voices, 
                 sample_rate,
-                voice_counter
+                voice_counter, 
+                spawner_tx
             );
         }
-    } else {
-        log::warn!("[AudioThread] ...but no active notes found for note {}.", note);
     }
+}
+
+fn run_loader_job(mut job: SpawnJob) {
+    // Check if the note was stopped before we even started loading
+    if job.is_cancelled.load(Ordering::Relaxed) {
+        // Just mark finished so resources are cleaned up, but don't do IO
+        job.is_finished.store(true, Ordering::SeqCst);
+        return; 
+    }
+
+    let path_str_clone = job.path.file_name().unwrap_or_default().to_string_lossy().to_string();
+    
+    // We can't access "self" variables from Voice here, so they are passed in SpawnJob
+    let panic_result = std::panic::catch_unwind(move || {
+        let result: Result<()> = (|| {
+            // Check cache
+            let maybe_cached_data = job.organ.sample_cache.as_ref().and_then(|c| c.get(&job.path).cloned());
+            let maybe_cached_meta = job.organ.metadata_cache.as_ref().and_then(|c| c.get(&job.path).cloned());
+
+            let loop_info;
+            let input_channels;
+            let mut source: Option<Box<dyn Iterator<Item = f32>>> = None;
+            let mut source_is_finished;
+            let use_memory_reader;
+            let mut samples_in_memory: Vec<f32> = Vec::new();
+            
+            let mut interleaved_buffer = vec![0.0f32; 1024 * CHANNEL_COUNT];
+            let frames_to_skip = job.frames_to_skip;
+
+            if let (Some(cached_samples), Some(cached_metadata)) = (maybe_cached_data, maybe_cached_meta) {
+                samples_in_memory = (*cached_samples).clone();
+                loop_info = if job.is_attack_sample { cached_metadata.loop_info } else { None };
+                input_channels = cached_metadata.channel_count as usize;
+                use_memory_reader = true;
+                source_is_finished = false;
+            } else {
+                let file = File::open(&job.path)?;
+                let mut reader = BufReader::new(file);
+                let (fmt, other_chunks, data_start, data_size) = parse_wav_metadata(&mut reader, &job.path)?;
+                
+                if fmt.sample_rate != job.sample_rate { return Err(anyhow!("Rate mismatch")); }
+                
+                let mut loop_info_from_file = None;
+                for chunk in other_chunks {
+                    if &chunk.id == b"smpl" { loop_info_from_file = parse_smpl_chunk(&chunk.data); break; }
+                }
+                loop_info = if job.is_attack_sample { loop_info_from_file } else { None };
+                input_channels = fmt.num_channels as usize;
+
+                let decoder = WavSampleReader::new(reader, fmt, data_start, data_size)?;
+                
+                if job.is_attack_sample && loop_info.is_some() {
+                    samples_in_memory = decoder.collect();
+                    use_memory_reader = true;
+                    source_is_finished = false;
+                } else {
+                    let mut iterator = Box::new(decoder);
+                    
+                    // If we skip to EOF, mark source as finished immediately.
+                    let mut skip_successful = true;
+                    if frames_to_skip > 0 {
+                        let samples_to_skip = frames_to_skip * input_channels;
+                        for _ in 0..samples_to_skip { 
+                            if iterator.next().is_none() { 
+                                skip_successful = false; 
+                                break; 
+                            } 
+                        }
+                    }
+                    
+                    if !skip_successful {
+                        source_is_finished = true;
+                    } else {
+                        source_is_finished = false;
+                    }
+                    
+                    source = Some(iterator);
+                    use_memory_reader = false;
+                }
+            }
+
+            let is_mono = input_channels == 1;
+            let mut current_frame_index: usize = frames_to_skip; 
+            let mut loop_start_frame: usize = 0;
+            let mut loop_end_frame: usize = 0;
+            let mut is_looping_sample = job.is_attack_sample && loop_info.is_some();
+
+            if use_memory_reader && is_looping_sample {
+                let (start, end) = loop_info.unwrap();
+                loop_start_frame = start as usize;
+                let total_frames = samples_in_memory.len() / input_channels;
+                loop_end_frame = if end == 0 { total_frames } else { end as usize };
+                if loop_start_frame >= loop_end_frame || loop_end_frame > total_frames {
+                    is_looping_sample = false;
+                    current_frame_index = 0;
+                }
+            }
+
+            'loader_loop: loop {
+                if job.is_cancelled.load(Ordering::Relaxed) { break 'loader_loop; }
+
+                let frames_to_read = 1024;
+                let mut frames_read = 0;
+
+                if use_memory_reader {
+                    for i in 0..frames_to_read {
+                        if is_looping_sample {
+                            if current_frame_index >= loop_end_frame { current_frame_index = loop_start_frame; }
+                        } else {
+                            if current_frame_index >= (samples_in_memory.len() / input_channels) { source_is_finished = true; break; }
+                        }
+                        let sample_l_idx = current_frame_index * input_channels;
+                        let sample_l = samples_in_memory.get(sample_l_idx).cloned().unwrap_or(0.0);
+                        let sample_r = if is_mono { sample_l } else { samples_in_memory.get(sample_l_idx + 1).cloned().unwrap_or(0.0) };
+                        interleaved_buffer[i * CHANNEL_COUNT] = sample_l;
+                        interleaved_buffer[i * CHANNEL_COUNT + 1] = sample_r;
+                        current_frame_index += 1;
+                        frames_read += 1;
+                    }
+                } else {
+                    if !source_is_finished {
+                        if let Some(ref mut s_iter) = source {
+                            for i in 0..frames_to_read {
+                                if let Some(sample_l) = s_iter.next() {
+                                    let sample_r = if is_mono { sample_l } else { s_iter.next().unwrap_or(0.0) };
+                                    interleaved_buffer[i * CHANNEL_COUNT] = sample_l;
+                                    interleaved_buffer[i * CHANNEL_COUNT + 1] = sample_r;
+                                    frames_read += 1;
+                                } else {
+                                    source_is_finished = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Push to ringbuffer
+                if frames_read > 0 {
+                    let samples_to_push = frames_read * CHANNEL_COUNT;
+                    let mut offset = 0;
+                    while offset < samples_to_push {
+                        if job.is_cancelled.load(Ordering::Relaxed) { break 'loader_loop; }
+                        let pushed = job.producer.push_slice(&interleaved_buffer[offset..samples_to_push]);
+                        offset += pushed;
+                        // Throttle based on ringbuffer fullness
+                        if offset < samples_to_push { thread::sleep(Duration::from_millis(1)); }
+                    }
+                }
+
+                if source_is_finished && !is_looping_sample { break 'loader_loop; }
+                if is_looping_sample && frames_read == 0 { thread::sleep(Duration::from_millis(1)); }
+            }
+            Ok(())
+        })();
+        if let Err(e) = result { log::error!("Loader error: {}", e); }
+    });
+
+    if let Err(e) = panic_result {
+        log::error!("[LoaderThread] PANICKED for file {:?}: {:?}", path_str_clone, e);
+    }
+
+    job.is_finished.store(true, Ordering::SeqCst);
 }
 
 /// Sets up the cpal audio stream and spawns the processing thread.
@@ -1393,28 +1217,4 @@ pub fn start_audio_playback(
 
     stream.play()?;
     Ok(stream)
-}
-
-/// Spawns a low-priority "reaper" thread.
-/// This thread's only job is to receive finished thread handles
-/// and call .join() on them, freeing their resources.
-/// This prevents the real-time audio thread from ever blocking.
-fn spawn_reaper_thread(rx: mpsc::Receiver<JoinHandle<()>>) {
-    thread::spawn(move || {
-        log::debug!("[ReaperThread] Starting...");
-        
-        // This loop will block on .recv() until a handle is sent.
-        // It will then block on .join() until that thread finishes.
-        // This is perfectly safe as it's not on the audio path.
-        for handle in rx {
-            if let Err(e) = handle.join() {
-                log::warn!("[ReaperThread] A voice loader thread panicked: {:?}", e);
-            } else {
-                log::debug!("[ReaperThread] Cleaned up a voice thread.");
-            }
-        }
-        
-        // The loop exits when the sender (in AudioThread) is dropped.
-        log::debug!("[ReaperThread] Shutting down.");
-    });
 }
