@@ -34,26 +34,69 @@ struct TuiConfigState {
     mode: ConfigMode,
 }
 
+#[derive(Copy, Clone, PartialEq)]
+enum SettingRow {
+    OrganFile = 0,
+    AudioDevice = 1,
+    SampleRate = 2,
+    MidiDevice = 3,
+    MidiFile = 4,
+    ReverbIRFile = 5,
+    ReverbMix = 6,
+    Gain = 7,
+    Polyphony = 8,
+    AudioBuffer = 9,
+    Precache = 10,
+    ConvertTo16Bit = 11,
+    OriginalTuning = 12,
+    Start = 13,
+    Quit = 14,
+}
+
+impl SettingRow {
+    // The "Safe Helper"
+    pub fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(Self::OrganFile),
+            1 => Some(Self::AudioDevice),
+            2 => Some(Self::SampleRate),
+            3 => Some(Self::MidiDevice),
+            4 => Some(Self::MidiFile),
+            5 => Some(Self::ReverbIRFile),
+            6 => Some(Self::ReverbMix),
+            7 => Some(Self::Gain),
+            8 => Some(Self::Polyphony),
+            9 => Some(Self::AudioBuffer),
+            10 => Some(Self::Precache),
+            11 => Some(Self::ConvertTo16Bit),
+            12 => Some(Self::OriginalTuning),
+            13 => Some(Self::Start),
+            14 => Some(Self::Quit),
+            _ => None,
+        }
+    }
+}
+
 // Helper to get the display string for a config item
 fn get_item_display(idx: usize, state: &ConfigState) -> String {
     let settings = &state.settings;
-    match idx {
-        0 => format!("1. Organ File:       {}", path_to_str(settings.organ_file.as_deref())),
-        1 => format!("2. Audio Device:     {}", state.selected_audio_device_name.as_deref().unwrap_or("Default")),
-        2 => format!("3. Sample Rate:      {} Hz", settings.sample_rate),
-        3 => format!("4. MIDI Device:      {}", state.selected_midi_port.as_ref().map_or("None", |(_, n)| n.as_str())),
-        4 => format!("5. MIDI File (Play): {}", path_to_str(state.midi_file.as_deref())),
-        5 => format!("6. Reverb IR File:   {}", path_to_str(settings.ir_file.as_deref())),
-        6 => format!("7. Reverb Mix:       {:.2}", settings.reverb_mix),
-        7 => format!("8. Gain:             {:.2}", settings.gain),
-        8 => format!("9. Polyphony:        {}", settings.polyphony),
-        9 => format!("0. Audio Buffer:     {} frames", settings.audio_buffer_frames),
-        10 => format!("-. Pre-cache:        {}", bool_to_str(settings.precache)),
-        11 => format!("=. Convert to 16-bit:{}", bool_to_str(settings.convert_to_16bit)),
-        12 => format!("+. Original Tuning:  {}", bool_to_str(settings.original_tuning)),
-        13 => "S. Start Rusty Pipes".to_string(),
-        14 => "Q. Quit".to_string(),
-        _ => unreachable!(),
+    let row = SettingRow::from_index(idx).unwrap(); // Safe unwrap
+    match row {
+        SettingRow::OrganFile => format!("1. Organ File:       {}", path_to_str(settings.organ_file.as_deref())),
+        SettingRow::AudioDevice => format!("2. Audio Device:     {}", state.selected_audio_device_name.as_deref().unwrap_or("Default")),
+        SettingRow::SampleRate => format!("3. Sample Rate:      {} Hz", settings.sample_rate),
+        SettingRow::MidiDevice => format!("4. MIDI Device:      {}", state.selected_midi_port.as_ref().map_or("None", |(_, n)| n.as_str())),
+        SettingRow::MidiFile => format!("5. MIDI File (Play): {}", path_to_str(state.midi_file.as_deref())),
+        SettingRow::ReverbIRFile => format!("6. Reverb IR File:   {}", path_to_str(settings.ir_file.as_deref())),
+        SettingRow::ReverbMix => format!("7. Reverb Mix:       {:.2}", settings.reverb_mix),
+        SettingRow::Gain => format!("8. Gain:             {:.2}", settings.gain),
+        SettingRow::Polyphony => format!("9. Polyphony:        {}", settings.polyphony),
+        SettingRow::AudioBuffer => format!("0. Audio Buffer:     {} frames", settings.audio_buffer_frames),
+        SettingRow::Precache => format!("-. Pre-cache:        {}", bool_to_str(settings.precache)),
+        SettingRow::ConvertTo16Bit => format!("=. Convert to 16-bit:{}", bool_to_str(settings.convert_to_16bit)),
+        SettingRow::OriginalTuning => format!("+. Original Tuning:  {}", bool_to_str(settings.original_tuning)),
+        SettingRow::Start => "S. Start Rusty Pipes".to_string(),
+        SettingRow::Quit => "Q. Quit".to_string(),
     }
 }
 
@@ -145,8 +188,8 @@ pub fn run_config_ui(
                         }
                         KeyCode::Enter => {
                             if let Some(idx) = state.list_state.selected() {
-                                match idx {
-                                    0 => { // Organ File
+                                match SettingRow::from_index(idx).unwrap() {
+                                    SettingRow::OrganFile => { // Organ File
                                         let path = tui_filepicker::run_file_picker(
                                             &mut terminal,
                                             "Select Organ File",
@@ -156,16 +199,16 @@ pub fn run_config_ui(
                                             state.config_state.settings.organ_file = Some(p);
                                         }
                                     }
-                                    1 => { // Audio Device
+                                    SettingRow::AudioDevice => { // Audio Device
                                         state.mode = ConfigMode::AudioSelection;
                                     }
-                                    2 => { 
+                                    SettingRow::SampleRate => { 
                                         state.mode = ConfigMode::SampleRateSelection; 
                                     }
-                                    3 => { // MIDI Device
+                                    SettingRow::MidiDevice => { // MIDI Device
                                         state.mode = ConfigMode::MidiSelection;
                                     }
-                                    4 => { // MIDI File
+                                    SettingRow::MidiFile => { // MIDI File
                                         let path = tui_filepicker::run_file_picker(
                                             &mut terminal,
                                             "Select MIDI File (Optional)",
@@ -173,29 +216,29 @@ pub fn run_config_ui(
                                         )?;
                                         state.config_state.midi_file = path;
                                     }
-                                    5 => { // IR File
+                                    SettingRow::ReverbIRFile => { // IR File
                                         state.mode = ConfigMode::IrSelection;
                                     }
-                                    6 => { // Reverb Mix
+                                    SettingRow::ReverbMix => { // Reverb Mix
                                         let buffer = state.config_state.settings.reverb_mix.to_string();
                                         state.mode = ConfigMode::TextInput(idx, buffer);
                                     }
-                                    7 => { // Gain
+                                    SettingRow::Gain => { // Gain
                                         let gain = state.config_state.settings.gain.to_string();
                                         state.mode = ConfigMode::TextInput(idx, gain);
                                     }
-                                    8 => { // Polyphony
+                                    SettingRow::Polyphony => { // Polyphony
                                         let polyphony = state.config_state.settings.polyphony.to_string();
                                         state.mode = ConfigMode::TextInput(idx, polyphony);
                                     }
-                                    9 => { // Audio Buffer
+                                    SettingRow::AudioBuffer => { // Audio Buffer
                                         let buffer = state.config_state.settings.audio_buffer_frames.to_string();
                                         state.mode = ConfigMode::TextInput(idx, buffer);
                                     }
-                                    10 => state.config_state.settings.precache = !state.config_state.settings.precache,
-                                    11 => state.config_state.settings.convert_to_16bit = !state.config_state.settings.convert_to_16bit,
-                                    12 => state.config_state.settings.original_tuning = !state.config_state.settings.original_tuning,
-                                    13 => { // Start
+                                    SettingRow::Precache => state.config_state.settings.precache = !state.config_state.settings.precache,
+                                    SettingRow::ConvertTo16Bit => state.config_state.settings.convert_to_16bit = !state.config_state.settings.convert_to_16bit,
+                                    SettingRow::OriginalTuning => state.config_state.settings.original_tuning = !state.config_state.settings.original_tuning,
+                                    SettingRow::Start => { // Start
                                         if state.config_state.settings.organ_file.is_none() {
                                             state.config_state.error_msg = Some("Please select an Organ File to start.".to_string());
                                         } else {
@@ -219,8 +262,7 @@ pub fn run_config_ui(
                                             break 'config_loop;
                                         }
                                     }
-                                    14 => break 'config_loop, // Quit
-                                    _ => {}
+                                    SettingRow::Quit => break 'config_loop, // Quit
                                 }
                             }
                         }
@@ -361,23 +403,23 @@ pub fn run_config_ui(
                         KeyCode::Backspace => { buffer.pop(); }
                         KeyCode::Esc => state.mode = ConfigMode::Main,
                         KeyCode::Enter => {
-                            match *idx {
-                                5 => { // Reverb Mix
+                            match SettingRow::from_index(*idx).unwrap() {
+                                SettingRow::ReverbMix => { // Reverb Mix
                                     if let Ok(val) = buffer.parse::<f32>() {
                                         state.config_state.settings.reverb_mix = val.clamp(0.0, 1.0);
                                     }
                                 }
-                                6 => { // Gain
+                                SettingRow::Gain => { // Gain
                                     if let Ok(val) = buffer.parse::<f32>() {
                                         state.config_state.settings.gain = val.clamp(0.0, 1.0);
                                     }
                                 }
-                                7 => { // Polyphony
+                                SettingRow::Polyphony => { // Polyphony
                                     if let Ok(val) = buffer.parse::<usize>() {
                                         state.config_state.settings.polyphony = val.clamp(1, 1024);
                                     }
                                 }
-                                8 => { // Audio Buffer
+                                SettingRow::AudioBuffer => { // Audio Buffer
                                     if let Ok(val) = buffer.parse::<usize>() {
                                         state.config_state.settings.audio_buffer_frames = val;
                                     }
@@ -524,11 +566,11 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
              );
         }
         ConfigMode::TextInput(idx, buffer) => {
-            let title = match *idx {
-                5 => "Enter Reverb Mix (0.0 - 1.0)",
-                6 => "Enter Gain (0.0 - 1.0)",
-                7 => "Enter Polyphony (1 - 1024)",
-                8 => "Enter Audio Buffer Size",
+            let title = match SettingRow::from_index(*idx).unwrap() {
+                SettingRow::ReverbMix => "Enter Reverb Mix (0.0 - 1.0)",
+                SettingRow::Gain => "Enter Gain (0.0 - 1.0)",
+                SettingRow::Polyphony => "Enter Polyphony (1 - 1024)",
+                SettingRow::AudioBuffer => "Enter Audio Buffer Size",
                 _ => "Enter Value",
             };
             draw_text_input_modal(frame, title, buffer, 40, 3);
