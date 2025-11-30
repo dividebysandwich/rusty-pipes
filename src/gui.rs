@@ -648,11 +648,10 @@ impl EguiApp {
                         ui.group(|ui| {
                             // Use horizontal_wrapped to allow toggles to "scale"
                             ui.horizontal_wrapped(|ui| {
-                                for chan in 0..10u8 {
+                                for chan in 0..16u8 {
                                     let is_on = active_channels.contains(&chan);
-                                    let display_char = if chan == 9 { '0' } else { (b'1' + chan) as char };
-                                    
-                                    let toggle_text = egui::RichText::new(display_char.to_string())
+                                    let chan_label = (b'1'+chan).to_string();
+                                    let toggle_text = egui::RichText::new(chan_label)
                                         .size(18.0);
                                     
                                     if ui.selectable_label(is_on, toggle_text).clicked() {
