@@ -650,7 +650,7 @@ impl EguiApp {
                             ui.horizontal_wrapped(|ui| {
                                 for chan in 0..16u8 {
                                     let is_on = active_channels.contains(&chan);
-                                    let chan_label = (b'1'+chan).to_string();
+                                    let chan_label = (chan + 1).to_string();
                                     let toggle_text = egui::RichText::new(chan_label)
                                         .size(18.0);
                                     
