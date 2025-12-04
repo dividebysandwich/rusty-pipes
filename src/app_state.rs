@@ -90,6 +90,8 @@ pub struct AppState {
     pub octave_offset: i8, // Octave offset for computer keyboard input
     pub reverb_mix: f32,
     pub selected_reverb_index: Option<usize>,
+    /// Set of currently active tremulant IDs
+    pub active_tremulants: BTreeSet<String>,
 }
 
 pub fn get_preset_file_path() -> PathBuf {
@@ -128,6 +130,7 @@ impl AppState {
             octave_offset: 0,
             reverb_mix: 0.0,
             selected_reverb_index: None,
+            active_tremulants: BTreeSet::new(),
         })
     }
     
@@ -162,6 +165,15 @@ impl AppState {
         self.polyphony = new_val as usize;
         let _ = audio_tx.send(AppMessage::SetPolyphony(self.polyphony));
         self.persist_settings();
+    }
+
+    pub fn set_tremulant_active(&mut self, trem_id: String, active: bool, audio_tx: &Sender<AppMessage>) {
+        if active {
+            self.active_tremulants.insert(trem_id.clone());
+        } else {
+            self.active_tremulants.remove(&trem_id);
+        }
+        let _ = audio_tx.send(AppMessage::SetTremulantActive(trem_id, active));
     }
 
     /// Loads the MIDI channel mapping preset bank for the specified organ from the JSON file.
@@ -295,7 +307,7 @@ impl AppState {
                     }
                 }
             }
-        } else {
+            } else {
             // --- NOTE OFF ---
             
             // Update Visuals (Piano Roll)
@@ -314,8 +326,8 @@ impl AppState {
                 if let Some(channels) = self.stop_channels.get(&stop_idx) {
                     if channels.contains(&channel) {
                         let _ = audio_tx.send(AppMessage::NoteOff(note, stop.name.clone()));
-                    }
-                }
+        }
+    }
             }
         }
     }
@@ -333,7 +345,7 @@ impl AppState {
             stop_set.remove(&channel);
             
             // --- Send NoteOff for all active notes on this channel for this stop ---
-            if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
+             if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
                 if let Some(stop) = self.organ.stops.get(stop_index) {
                     let stop_name = stop.name.clone();
                     for &note in notes_to_stop {
@@ -346,7 +358,7 @@ impl AppState {
         };
         Ok(())
     }
-
+    
     /// Activates all channels (0-9) for the specified stop.
     pub fn select_all_channels_for_stop(&mut self, stop_index: usize) {
         let stop_set = self.stop_channels.entry(stop_index).or_default();
@@ -354,7 +366,7 @@ impl AppState {
             stop_set.insert(channel);
         }
     }
-
+    
     /// Deactivates all channels (0-9) for the specified stop.
     pub fn select_none_channels_for_stop(
         &mut self,
@@ -390,7 +402,7 @@ impl AppState {
         }
         Ok(())
     }
-
+    
     pub fn add_midi_log(&mut self, msg: String) {
         if self.midi_log.len() == MIDI_LOG_CAPACITY {
             self.midi_log.pop_front();
@@ -519,7 +531,7 @@ impl AppState {
         }
         Ok(())
     }
-
+    
     pub fn update_piano_roll_state(&mut self) {
         let now = Instant::now();
 
@@ -536,9 +548,9 @@ impl AppState {
 
             if is_off_screen {
                 self.finished_notes_display.pop_front();
-            } else {
+        } else {
                 break; // Stop when we find a note that's still on screen
+                    }
+                }
             }
         }
-    }
-}

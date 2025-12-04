@@ -16,6 +16,8 @@ pub enum AppMessage {
     SetReverbWetDry(f32),
     SetGain(f32),
     SetPolyphony(usize),
+    /// Activate or Deactivate a specific Tremulant (ID, Active)
+    SetTremulantActive(String, bool),
     /// TUI quit event.
     Quit,
 }

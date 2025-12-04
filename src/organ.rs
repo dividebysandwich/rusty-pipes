@@ -17,6 +17,8 @@ pub struct Organ {
     pub name: String,
     pub stops: Vec<Stop>,
     pub ranks: HashMap<String, Rank>, // Keyed by rank ID (e.g., "013")
+    pub windchest_groups: HashMap<String, WindchestGroup>, // Keyed by group ID (e.g. "001")
+    pub tremulants: HashMap<String, Tremulant>, // Keyed by tremulant ID (e.g. "001")
     pub base_path: PathBuf, // The directory containing the .organ file
     pub cache_path: PathBuf, // The directory for cached converted samples
     pub sample_cache: Option<HashMap<PathBuf, Arc<Vec<f32>>>>, // Cache for loaded samples
@@ -42,8 +44,29 @@ pub struct Rank {
     pub pipe_count: usize,
     pub gain_db: f32,
     pub tracker_delay_ms: u32,
+    pub windchest_group_id: Option<String>, // Link to a WindchestGroup
     /// Keyed by MIDI note number (e.g., 36)
     pub pipes: HashMap<u8, Pipe>,
+}
+
+/// Represents a Windchest Group (defines shared tremulants/enclosures).
+#[derive(Debug, Clone, Default)]
+pub struct WindchestGroup {
+    pub name: String,
+    pub id_str: String,
+    pub tremulant_ids: Vec<String>, // IDs of tremulants attached to this group
+}
+
+/// Represents a Tremulant definitions.
+#[derive(Debug, Clone, Default)]
+pub struct Tremulant {
+    pub name: String,
+    pub id_str: String,
+    pub period: f32,        // Period in ms
+    pub start_rate: f32,    
+    pub stop_rate: f32,
+    pub amp_mod_depth: f32, // Amplitude modulation depth
+    pub switch_ids: Vec<String>, // Switches that activate this tremulant
 }
 
 /// Represents a single pipe with its attack and release samples.
@@ -630,6 +653,7 @@ impl Organ {
                 first_midi_note: 0,
                 gain_db: 0.0,
                 tracker_delay_ms: 0,
+                windchest_group_id: None, // Hauptwerk parser default
             });
         }
 
@@ -1075,6 +1099,74 @@ impl Organ {
 
         let mut stops_map: HashMap<String, Stop> = HashMap::new();
         let mut ranks_map: HashMap<String, Rank> = HashMap::new();
+        let mut windchest_groups_map: HashMap<String, WindchestGroup> = HashMap::new();
+        let mut tremulants_map: HashMap<String, Tremulant> = HashMap::new();
+
+        // --- Build Tremulants ---
+        for (section_name, props) in conf.iter() {
+             let section_lower = section_name.to_lowercase();
+             if section_lower.starts_with("tremulant") {
+                 let get_prop = |key_upper: &str, key_lower: &str, default: &str| {
+                    props.get(key_upper).or_else(|| props.get(key_lower)).and_then(|opt| opt.as_deref()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string()).trim().replace("__HASH__", "#").to_string()
+                };
+
+                 let id_str = section_name.trim_start_matches("tremulant").trim_start_matches("Tremulant").to_string();
+                 let name = get_prop("Name", "name", "");
+                 let period: f32 = get_prop("Period", "period", "250").parse().unwrap_or(250.0);
+                 let start_rate: f32 = get_prop("StartRate", "startrate", "0").parse().unwrap_or(0.0);
+                 let stop_rate: f32 = get_prop("StopRate", "stoprate", "0").parse().unwrap_or(0.0);
+                 let amp_mod_depth: f32 = get_prop("AmpModDepth", "ampmoddepth", "0").parse().unwrap_or(0.0);
+                 
+                 let switch_count: usize = get_prop("SwitchCount", "switchcount", "0").parse().unwrap_or(0);
+                 let mut switch_ids = Vec::new();
+                 for i in 1..=switch_count {
+                     if let Some(sw_id) = get_prop(&format!("Switch{:03}", i), &format!("switch{:03}", i), "").non_empty_or(None) {
+                        switch_ids.push(sw_id);
+                     }
+                 }
+                 log::info!("Loaded Tremulant '{}' (ID: {}) with {} switches.", name, id_str, switch_ids.len());
+
+                 tremulants_map.insert(id_str.clone(), Tremulant {
+                     id_str,
+                     name,
+                     period,
+                     start_rate,
+                     stop_rate,
+                     amp_mod_depth,
+                     switch_ids,
+                 });
+             }
+        }
+
+        // --- Build Windchest Groups ---
+         for (section_name, props) in conf.iter() {
+             let section_lower = section_name.to_lowercase();
+             if section_lower.starts_with("windchestgroup") {
+                 let get_prop = |key_upper: &str, key_lower: &str, default: &str| {
+                    props.get(key_upper).or_else(|| props.get(key_lower)).and_then(|opt| opt.as_deref()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string()).trim().replace("__HASH__", "#").to_string()
+                };
+
+                 let id_str = section_name.trim_start_matches("windchestgroup").trim_start_matches("WindchestGroup").to_string();
+                 let name = get_prop("Name", "name", "");
+                 
+                 let tremulant_count: usize = get_prop("NumberOfTremulants", "numberoftremulants", "0").parse().unwrap_or(0);
+                 let mut tremulant_ids = Vec::new();
+                 for i in 1..=tremulant_count {
+                     // Usually formatted as Tremulant001=001
+                     if let Some(trem_id) = get_prop(&format!("Tremulant{:03}", i), &format!("tremulant{:03}", i), "").non_empty_or(None) {
+                         tremulant_ids.push(trem_id);
+                     }
+                 }
+
+                log::info!("Loaded Windchest Group '{}' (ID: {}) with {} tremulants.", name, id_str, tremulant_ids.len());
+
+                 windchest_groups_map.insert(id_str.clone(), WindchestGroup {
+                     id_str,
+                     name,
+                     tremulant_ids,
+                 });
+             }
+        }
 
         // --- Build Ranks ---
         // We look for sections that act as Ranks (either [Rank...] or [Stop...] with pipes)
@@ -1108,6 +1200,8 @@ impl Organ {
             // Convert GO "AmplitudeLevel" (usually %) to dB? Or just treat as gain factor. 
             // Rough approx: 100 = 0dB. Log scale. For now, let's normalize 100 -> 0.0dB.
             let gain_db = if gain_db > 0.0 { 20.0 * (gain_db / 100.0).log10() } else { -96.0 };
+            
+            let windchest_group_id = get_prop("WindchestGroup", "windchestgroup", "").non_empty_or(None);
 
             let tracker_delay_ms: u32 = 0; 
             let mut pipes = HashMap::new();
@@ -1181,7 +1275,17 @@ impl Organ {
                 }
             }
             let division_id = String::new(); // GrandOrgue does not have DivisionIDs
-            ranks_map.insert(id_str.clone(), Rank { name, id_str, division_id, first_midi_note, pipe_count, gain_db, tracker_delay_ms, pipes });
+            ranks_map.insert(id_str.clone(), Rank { 
+                name, 
+                id_str, 
+                division_id, 
+                first_midi_note, 
+                pipe_count, 
+                gain_db, 
+                tracker_delay_ms, 
+                windchest_group_id,
+                pipes 
+            });
         }
 
         // --- Build Stops ---
@@ -1223,6 +1327,8 @@ impl Organ {
         stops.sort_by(|a, b| a.id_str.cmp(&b.id_str));
         organ.stops = stops;
         organ.ranks = ranks_map;
+        organ.windchest_groups = windchest_groups_map;
+        organ.tremulants = tremulants_map;
 
         Ok(organ)
     }
@@ -1242,5 +1348,3 @@ impl NonEmpty for String {
         }
     }
 }
-
-

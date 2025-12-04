@@ -24,6 +24,13 @@ const VOICE_BUFFER_FRAMES: usize = 14400;
 const CROSSFADE_TIME: f32 = 0.10; // How long to crossfade from attack to release samples, in seconds
 const VOICE_STEALING_FADE_TIME: f32 = 1.00; // Fade out stolen release samples over 1s
 const MAX_NEW_VOICES_PER_BLOCK: usize = 28; // Limit how many new voices can be started per audio block
+const TREMULANT_DEPTH_BOOST: f32 = 3.0; // Extra depth added to tremulants for more pronounced effect
+
+// Helper struct to track phase for tremulants in audio thread
+struct TremulantLfo {
+    phase: f32, // 0.0 to 1.0 (Current position in the sine wave)
+    current_level: f32, // 0.0 to 1.0 (Current spin-up/spin-down intensity)
+}
 
 struct SpawnJob {
     path: PathBuf,
@@ -63,8 +70,8 @@ pub fn get_supported_sample_rates(device_name: Option<String>) -> Result<Vec<u32
             if rate >= min && rate <= max {
                 if !available_rates.contains(&rate) {
                     available_rates.push(rate);
-                }
-            }
+        }
+    }
         }
     }
     
@@ -139,6 +146,9 @@ struct Voice {
     note_on_time: Instant,
     is_attack_sample: bool,
     fade_increment: f32,
+    
+    // NEW: Tracks which windchest group this voice belongs to, for tremulant effects
+    windchest_group_id: Option<String>,
 }
 
 impl Voice {
@@ -152,7 +162,8 @@ impl Voice {
         is_attack_sample: bool, 
         note_on_time: Instant,
         preloaded_bytes: Option<Arc<Vec<f32>>>,
-        spawner_tx: &mpsc::Sender<SpawnJob>
+        spawner_tx: &mpsc::Sender<SpawnJob>,
+        windchest_group_id: Option<String>,
     ) -> Result<Self> {
         
         let fade_frames = (sample_rate as f32 * CROSSFADE_TIME) as usize;
@@ -212,6 +223,7 @@ impl Voice {
             note_on_time,
             is_attack_sample,
             fade_increment,
+            windchest_group_id,
         })
     }
 }
@@ -319,7 +331,7 @@ impl StereoConvolver {
             ir_r = ir_l.clone();
         } else {
             // Stereo IR: de-interleave
-            let num_frames = ir_samples_interleaved.len() / ir_channels;
+             let num_frames = ir_samples_interleaved.len() / ir_channels;
             ir_l.reserve(num_frames);
             ir_r.reserve(num_frames);
             for i in 0..num_frames {
@@ -368,9 +380,6 @@ impl StereoConvolver {
             block_size
         })
     }
-
-    /// Processes a block of stereo audio.
-    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn process(&mut self, dry_l: &[f32], dry_r: &[f32], wet_l: &mut [f32], wet_r: &mut [f32]) {
         if !self.is_loaded {
             // If no IR is loaded, fill output with silence
@@ -487,7 +496,8 @@ fn trigger_note_release(
                     false,
                     Instant::now(),
                     release.preloaded_bytes.clone(),
-                    spawner_tx
+                    spawner_tx,
+                    rank.windchest_group_id.clone() // Pass the group ID so tremulant affects release tail
                 ) {
                     Ok(mut voice) => {
                         voice.fade_level = 0.0;
@@ -594,6 +604,11 @@ fn spawn_audio_processing_thread<P>(
 
         let mut pending_note_queue: VecDeque<AppMessage> = VecDeque::with_capacity(64);
 
+        // --- Tremulant State ---
+        let mut active_tremulants_ids: HashMap<String, bool> = HashMap::new(); // State tracking
+        let mut tremulant_lfos: HashMap<String, TremulantLfo> = HashMap::new(); // Phase tracking
+        let mut prev_windchest_mods: HashMap<String, f32> = HashMap::new();
+
         loop {
             let start_time = Instant::now();
 
@@ -602,6 +617,10 @@ fn spawn_audio_processing_thread<P>(
             while let Ok(msg) = rx.try_recv() {
                 match msg {
                     AppMessage::NoteOn(..) => pending_note_queue.push_back(msg),
+                    // Set active status for tremulants
+                    AppMessage::SetTremulantActive(id, active) => {
+                        active_tremulants_ids.insert(id, active);
+                    },
                     // Handle control messages immediately to feel responsive
                     _ => process_message(msg, 
                         &mut wet_dry_ratio, 
@@ -642,10 +661,87 @@ fn spawn_audio_processing_thread<P>(
             }
 
             // Check IR Loader
-             if let Ok(Ok(conv)) = ir_loader_rx.try_recv() { convolver = conv; if wet_dry_ratio == 0.0 { wet_dry_ratio = 0.3; } }
+            if let Ok(Ok(conv)) = ir_loader_rx.try_recv() { convolver = conv; if wet_dry_ratio == 0.0 { wet_dry_ratio = 0.3; } }
 
             mix_buffer.fill(0.0);
             enforce_voice_limit(&mut voices, sample_rate, polyphony);
+
+            // --- Update Tremulant LFOs ---
+            // This calculates the modulation factor for each active tremulant
+            // and then maps those factors to Windchest Groups
+
+            let dt = buffer_size_frames as f32 / sample_rate as f32;
+            let mut current_windchest_mods: HashMap<String, f32> = HashMap::new();
+
+            for (trem_id, trem_def) in &organ.tremulants {
+                // Get active status (target level)
+                let is_active = *active_tremulants_ids.get(trem_id).unwrap_or(&false);
+                let target_level = if is_active { 1.0 } else { 0.0 };
+
+                // Get or create LFO state
+                let lfo = tremulant_lfos.entry(trem_id.clone()).or_insert(TremulantLfo { 
+                    phase: 0.0, 
+                    current_level: 0.0 
+                });
+
+                // Inertia / Ramping Logic
+                if lfo.current_level != target_level {
+                    let rate = if is_active {
+                        // Use StartRate (default to instant/infinity if 0)
+                        if trem_def.start_rate > 0.0 { trem_def.start_rate } else { 1000.0 }
+                    } else {
+                        // Use StopRate
+                        if trem_def.stop_rate > 0.0 { trem_def.stop_rate } else { 1000.0 }
+                    };
+
+                    let change = rate * dt;
+
+                    if lfo.current_level < target_level {
+                        lfo.current_level = (lfo.current_level + change).min(target_level);
+                    } else {
+                        lfo.current_level = (lfo.current_level - change).max(target_level);
+                    }
+                }
+
+                // If completely stopped and inactive, skip processing to save CPU
+                if lfo.current_level <= 0.0 && !is_active {
+                    continue;
+                }
+
+                // LFO Phase Calculation
+                // f = 1000 / period_ms
+                let freq = if trem_def.period > 0.0 { 1000.0 / trem_def.period } else { 0.0 };
+                let phase_inc = (freq * buffer_size_frames as f32) / sample_rate as f32;
+                lfo.phase = (lfo.phase + phase_inc) % 1.0;
+
+                // Modulation Calculation
+                // Standard Sine LFO (-1.0 to 1.0)
+                let sine_val = (lfo.phase * std::f32::consts::TAU).sin();
+                
+                // Exaggerated Depth:
+                // If depth is 20%, modulation swings +/- 20% * 0.01 * BOOST
+                let mod_swing = trem_def.amp_mod_depth * 0.01 * TREMULANT_DEPTH_BOOST;
+                
+                // Target Modulation when fully active (1.0 +/- swing)
+                let active_mod = 1.0 + (sine_val * mod_swing);
+                
+                // Interpolate based on inertia level
+                let final_mod = 1.0 + (active_mod - 1.0) * lfo.current_level;
+
+                // Apply to Windchests
+                for wc_group in organ.windchest_groups.values() {
+                    if wc_group.tremulant_ids.contains(trem_id) {
+                         let existing = *current_windchest_mods.get(&wc_group.id_str).unwrap_or(&1.0);
+                         let new_mod = existing * final_mod;
+                         current_windchest_mods.insert(wc_group.id_str.clone(), new_mod);
+                         
+                         let unpadded = wc_group.id_str.trim_start_matches('0');
+                         let key_unpadded = if unpadded.is_empty() { "0" } else { unpadded };
+                         if key_unpadded != wc_group.id_str { current_windchest_mods.insert(key_unpadded.to_string(), new_mod); }
+                    }
+                }
+            }
+
 
             // Crossfade Logic
              let mut crossfades_to_start: Vec<(u64, u64)> = Vec::with_capacity(16);
@@ -682,16 +778,27 @@ fn spawn_audio_processing_thread<P>(
                 let _ = voice.consumer.pop_slice(&mut voice_read_buffer[..samples_to_read]);
 
                 // Fade Logic
-                let initial = voice.fade_level;
-                let mut final_fl = initial;
-                if voice.is_fading_in { final_fl = (initial + voice.fade_increment * buffer_size_frames as f32).min(1.0); if final_fl >= 1.0 { voice.is_fading_in = false; } }
-                else if voice.is_fading_out { final_fl = (initial - voice.fade_increment * buffer_size_frames as f32).max(0.0); }
-                voice.fade_level = final_fl;
+                let env_start = voice.fade_level;
+                let mut env_end = env_start;
+                if voice.is_fading_in { env_end = (env_start + voice.fade_increment * buffer_size_frames as f32).min(1.0); if env_end >= 1.0 { voice.is_fading_in = false; } }
+                else if voice.is_fading_out { env_end = (env_start - voice.fade_increment * buffer_size_frames as f32).max(0.0); }
+                voice.fade_level = env_end;
 
-                let start_g = voice.gain * initial;
-                let end_g = voice.gain * final_fl;
-                let gain_step = (end_g - start_g) / buffer_size_frames as f32;
-                let mut cur_g = start_g;
+                // Apply Tremulant Modulation
+                let (trem_start, trem_end) = if let Some(wc_id) = &voice.windchest_group_id {
+                    let start = *prev_windchest_mods.get(wc_id).unwrap_or(&1.0);
+                    let end = *current_windchest_mods.get(wc_id).unwrap_or(&1.0);
+                    (start, end)
+                } else {
+                    (1.0, 1.0)
+                };
+
+                // Calculate total gain at start and end of block
+                let total_start = voice.gain * env_start * trem_start;
+                let total_end = voice.gain * env_end * trem_end;
+                
+                let gain_step = (total_end - total_start) / buffer_size_frames as f32;
+                let mut cur_g = total_start;
 
                 let mix_chunks = mix_buffer.chunks_exact_mut(CHANNEL_COUNT);
                 let voice_chunks = voice_read_buffer.chunks_exact(CHANNEL_COUNT).take(buffer_size_frames);
@@ -706,6 +813,8 @@ fn spawn_audio_processing_thread<P>(
                     voices_to_remove.push(*voice_id);
                 }
             }
+
+            prev_windchest_mods = current_windchest_mods;
 
             // Remove voices
              if !voices_to_remove.is_empty() {
@@ -747,7 +856,6 @@ fn spawn_audio_processing_thread<P>(
                  last_ui_update = Instant::now();
              }
 
-            // Push output
             let mut offset = 0;
             let needed = mix_buffer.len();
             while offset < needed {
@@ -788,7 +896,8 @@ fn process_note_on(
                             true,
                             note_on_time,
                             pipe.preloaded_bytes.clone(),
-                            spawner_tx
+                            spawner_tx,
+                            rank.windchest_group_id.clone(),
                         ) {
                             Ok(voice) => {
                                 let voice_id = *voice_counter;
@@ -844,7 +953,7 @@ fn process_message(
                         if *pending_note == n && *pending_stop == s {
                             removed_from_queue = true;
                             return false; // Remove this NoteOn!
-                        }
+                    }
                     }
                     true // Keep other messages
                 });
@@ -1194,10 +1303,10 @@ pub fn start_audio_playback(
                 
                 for ch in 2..out_channels {
                     output[out_idx + ch] = 0.0; // Fill unused channels with silence
-                }
+            }
                 in_idx += in_channels;
                 out_idx += out_channels;
-            }
+        }
         }
 
         // Fill remaining buffer with silence if we underrun.

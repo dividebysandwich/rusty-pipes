@@ -321,7 +321,7 @@ impl EguiApp {
         presets: &[std::option::Option<Preset>; 12],
     ) {
         self.draw_footer(ctx);
-        self.draw_preset_panel(ctx, presets);
+        self.draw_preset_panel(ctx, presets, organ.clone());
         self.draw_log_and_midi_indicator_panel( // Renamed and simplified call
             ctx, 
             midi_log, 
@@ -360,7 +360,12 @@ impl EguiApp {
     }
 
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
-    fn draw_preset_panel(&mut self, ctx: &egui::Context, presets: &[std::option::Option<Preset>; 12]) {
+    fn draw_preset_panel(
+        &mut self, 
+        ctx: &egui::Context, 
+        presets: &[std::option::Option<Preset>; 12],
+        organ: Arc<Organ>,
+    ) {
         egui::SidePanel::right("preset_panel").show(ctx, |ui| {
             ui.heading("Presets");
 
@@ -385,7 +390,42 @@ impl EguiApp {
                         if (i + 1) % 2 == 0 { ui.end_row(); }
                     }
                 });
+                ui.separator();
+
+                // --- Tremulant Controls ---
+                ui.heading("Tremulants");
+    
+                // Sort keys for stable display order
+                let mut trem_ids: Vec<_> = organ.tremulants.keys().collect();
+                trem_ids.sort();
+
+                if trem_ids.is_empty() {
+                    ui.label(egui::RichText::new("No tremulants found.").weak());
+                } else {
+                    egui::Grid::new("tremulant_grid").num_columns(2).show(ui, |ui| {
+                        for (i, trem_id) in trem_ids.iter().enumerate() {
+                            let trem = &organ.tremulants[*trem_id];
                 
+                            // Get state safely
+                            let is_active = self.app_state.lock().unwrap()
+                                .active_tremulants.contains(*trem_id);
+
+                            let button_text = if is_active {
+                                 egui::RichText::new(&trem.name).color(egui::Color32::GREEN)
+                            } else {
+                                 egui::RichText::new(&trem.name)
+                            };
+
+                            if ui.button(button_text).clicked() {
+                                let mut state = self.app_state.lock().unwrap();
+                                // Toggle state
+                                state.set_tremulant_active(trem_id.to_string(), !is_active, &self.audio_tx);
+                            }
+                
+                            if (i + 1) % 2 == 0 { ui.end_row(); }
+                        }
+                    });
+                }
                 ui.separator();
                 
                 ui.label("Save (Shift+F1-F12):");
