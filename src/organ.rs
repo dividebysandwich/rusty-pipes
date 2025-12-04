@@ -118,6 +118,7 @@ struct ObjectList {
     #[serde(rename = "@ObjectType")]
     object_type: String,
 
+    // --- V4 Specific Lists ---
     #[serde(rename = "Stop", default)]
     stops: Vec<XmlStop>,
     #[serde(rename = "Rank", default)]
@@ -126,22 +127,25 @@ struct ObjectList {
     stop_ranks: Vec<XmlStopRank>,
     #[serde(rename = "_General", default)]
     general: Vec<XmlGeneral>,
-
     #[serde(rename = "Pipe_SoundEngine01", default)]
     pipes: Vec<XmlPipe>,
-    
     #[serde(rename = "Pipe_SoundEngine01_Layer", default)]
     layers: Vec<XmlLayer>,
-    
     #[serde(rename = "Pipe_SoundEngine01_AttackSample", default)]
     attack_samples: Vec<XmlAttackSample>,
-    
     #[serde(rename = "Pipe_SoundEngine01_ReleaseSample", default)]
     release_samples: Vec<XmlReleaseSample>,
-
     #[serde(rename = "Sample", default)]
     samples: Vec<XmlSample>,
+    #[serde(rename = "Division", default)]
+    divisions: Vec<XmlDivision>,
 
+    // --- V7 Generic List ---
+    // V7 puts everything into generic <o> tags
+    #[serde(rename = "o", default)]
+    v7_objects: Vec<XmlV7Object>,
+
+    // Catch-all for other V4 tags to prevent errors
     #[serde(rename = "Combination", default)]
     combinations: Vec<serde::de::IgnoredAny>,
     #[serde(rename = "WindCompartmentLinkage", default)]
@@ -166,8 +170,6 @@ struct ObjectList {
     cc_linkages: Vec<serde::de::IgnoredAny>,
     #[serde(rename = "ContinuousControlStageSwitch", default)]
     cc_stage_switches: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "Division", default)]
-    divisions: Vec<XmlDivision>,
     #[serde(rename = "DivisionInput", default)]
     division_inputs: Vec<serde::de::IgnoredAny>,
     #[serde(rename = "ImageSet", default)]
@@ -190,17 +192,32 @@ struct ObjectList {
     wind_compartments: Vec<serde::de::IgnoredAny>
 }
 
+// --- V7 Generic Object ---
+#[derive(Debug, Deserialize, PartialEq)]
+struct XmlV7Object {
+    // V7 maps attributes to single letters
+    a: Option<String>,
+    b: Option<String>,
+    c: Option<String>,
+    d: Option<String>,
+    e: Option<String>,
+    f: Option<String>,
+    g: Option<String>,
+    // Add more if needed, but a-g covers most IDs/Names/Links
+}
+
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlDivision {
-    #[serde(rename = "DivisionID")]
+    #[serde(rename = "DivisionID", alias = "a")]
     id: String,
-    #[serde(rename = "Name", default = "default_string")]
+    #[serde(rename = "Name", alias = "b", default = "default_string")]
     name: String,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlGeneral {
-    #[serde(rename = "Name", default = "default_string")]
+    // V4 uses "Name", V7 uses "Identification_Name"
+    #[serde(rename = "Name", alias = "Identification_Name", default = "default_string")]
     name: String,
 }
 
@@ -232,7 +249,6 @@ struct XmlRank {
     division_id: String,
 }
 
-// From ObjectType="Pipe_SoundEngine01"
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlPipe {
     #[serde(rename = "PipeID")]
@@ -243,17 +259,14 @@ struct XmlPipe {
     midi_note: u8,
 }
 
-// From ObjectType="Pipe_SoundEngine01_Layer"
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlLayer {
-    //#[serde(rename = "Pipe_SoundEngine01_LayerID")]
     #[serde(rename = "LayerID")]
     id: String,
     #[serde(rename = "PipeID")]
     pipe_id: String,
 }
 
-// From ObjectType="Sample"
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlSample {
     #[serde(rename = "SampleID")]
@@ -266,20 +279,17 @@ struct XmlSample {
     pitch_normal_midi_note_number: Option<u8>,
 }
 
-// From ObjectType="Pipe_SoundEngine01_AttackSample"
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlAttackSample {
     #[serde(rename = "LayerID")]
     layer_id: String,
     #[serde(rename = "SampleID")]
     sample_id: String,
-    // The "path" field is removed
 }
 
-// From ObjectType="Pipe_SoundEngine01_ReleaseSample"
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlReleaseSample {
-    #[serde(rename = "LayerID")] // Assuming it links to Layer
+    #[serde(rename = "LayerID")]
     layer_id: String,
     #[serde(rename = "MaxKeypressTimeMilliseconds", default = "default_i64")]
     max_key_press_time_ms: i64,
@@ -596,16 +606,108 @@ impl Organ {
 
         for list in xml_data.object_lists {
             match list.object_type.as_str() {
-                "Stop" => xml_stops.extend(list.stops),
-                "Rank" => xml_ranks.extend(list.ranks),
-                "StopRank" => xml_stop_ranks.extend(list.stop_ranks),
-                "_General" => xml_generals.extend(list.general),
-                "Pipe_SoundEngine01" => xml_pipes.extend(list.pipes),
-                "Pipe_SoundEngine01_Layer" => xml_layers.extend(list.layers),
-                "Pipe_SoundEngine01_AttackSample" => xml_attack_samples.extend(list.attack_samples),
-                "Pipe_SoundEngine01_ReleaseSample" => xml_release_samples.extend(list.release_samples),
-                "Sample" => xml_samples.extend(list.samples),
-                "Division" => xml_divisions.extend(list.divisions),
+                "Stop" => {
+                    xml_stops.extend(list.stops);
+                    // V7 Mapping: a=ID, b=Name, c=DivisionID
+                    for o in list.v7_objects {
+                        xml_stops.push(XmlStop {
+                            id: o.a.unwrap_or_default(),
+                            name: o.b.unwrap_or_default(),
+                            division_id: o.c.unwrap_or_default(),
+                        });
+                    }
+                },
+                "Rank" => {
+                    xml_ranks.extend(list.ranks);
+                    // V7 Mapping: a=ID, b=Name. DivisionID is often not explicit in V7 rank objects.
+                    for o in list.v7_objects {
+                        xml_ranks.push(XmlRank {
+                            id: o.a.unwrap_or_default(),
+                            name: o.b.unwrap_or_default(),
+                            division_id: "".to_string(), // Will be inferred or skipped
+                        });
+                    }
+                },
+                "StopRank" => {
+                    xml_stop_ranks.extend(list.stop_ranks);
+                    // V7 Mapping: a=StopID, d=RankID (observed in V7 schemas)
+                    for o in list.v7_objects {
+                        if let (Some(stop_id), Some(rank_id)) = (o.a, o.d) {
+                            xml_stop_ranks.push(XmlStopRank { stop_id, rank_id });
+                        }
+                    }
+                },
+                "_General" => {
+                    xml_generals.extend(list.general);
+                    // _General is usually not minified into <o>, but retains ObjectType="_General" with readable tags.
+                    // The XmlGeneral struct handles aliases (Name vs Identification_Name).
+                },
+                "Pipe_SoundEngine01" => {
+                    xml_pipes.extend(list.pipes);
+                    // V7 Mapping: a=PipeID, b=RankID, d=MidiNote
+                    for o in list.v7_objects {
+                        let midi_note = o.d.as_deref().unwrap_or("0").parse::<u8>().unwrap_or(0);
+                        xml_pipes.push(XmlPipe {
+                            id: o.a.unwrap_or_default(),
+                            rank_id: o.b.unwrap_or_default(),
+                            midi_note,
+                        });
+                    }
+                },
+                "Pipe_SoundEngine01_Layer" => {
+                    xml_layers.extend(list.layers);
+                    // V7 Mapping: a=LayerID, b=PipeID
+                    for o in list.v7_objects {
+                        xml_layers.push(XmlLayer {
+                            id: o.a.unwrap_or_default(),
+                            pipe_id: o.b.unwrap_or_default(),
+                        });
+                    }
+                },
+                "Pipe_SoundEngine01_AttackSample" => {
+                    xml_attack_samples.extend(list.attack_samples);
+                    // V7 Mapping: b=LayerID, c=SampleID (a is usually just ID)
+                    for o in list.v7_objects {
+                        xml_attack_samples.push(XmlAttackSample {
+                            layer_id: o.b.unwrap_or_default(),
+                            sample_id: o.c.unwrap_or_default(),
+                        });
+                    }
+                },
+                "Pipe_SoundEngine01_ReleaseSample" => {
+                    xml_release_samples.extend(list.release_samples);
+                    // V7 Mapping: b=LayerID, c=SampleID. Time is harder to pin down in V7 minification, defaulting to -1.
+                    for o in list.v7_objects {
+                        xml_release_samples.push(XmlReleaseSample {
+                            layer_id: o.b.unwrap_or_default(),
+                            sample_id: o.c.unwrap_or_default(),
+                            max_key_press_time_ms: -1, 
+                        });
+                    }
+                },
+                "Sample" => {
+                    xml_samples.extend(list.samples);
+                    // V7 Mapping: a=SampleID, b=PackageID, c=Path
+                    for o in list.v7_objects {
+                        xml_samples.push(XmlSample {
+                            id: o.a.unwrap_or_default(),
+                            installation_package_id: o.b.unwrap_or_default(),
+                            path: o.c.unwrap_or_default(),
+                            pitch_exact_sample_pitch: None, // Often omitted in V7 minified
+                            pitch_normal_midi_note_number: None,
+                        });
+                    }
+                },
+                "Division" => {
+                    xml_divisions.extend(list.divisions);
+                    // V7 Mapping: a=ID, b=Name
+                    for o in list.v7_objects {
+                        xml_divisions.push(XmlDivision {
+                            id: o.a.unwrap_or_default(),
+                            name: o.b.unwrap_or_default(),
+                        });
+                    }
+                },
                 _ => {} 
             }
         }
@@ -672,9 +774,19 @@ impl Organ {
         for rel in &xml_release_samples { release_map.entry(rel.layer_id.clone()).or_default().push(rel); }
 
         let mut conversion_tasks: HashSet<ConversionTask> = HashSet::new();
+        let mut seen_pipes: HashSet<(String, u8)> = HashSet::new();
+
         for layer in &xml_layers {
             let Some(pipe_info) = pipe_map.get(&layer.pipe_id) else { continue; };
             if !ranks_map.contains_key(&pipe_info.rank_id) { continue; }
+            
+            // This is a duplicate (e.g., tremulant layer or secondary perspective)
+            // we skip it to strictly enforce "one pipe per note per rank"
+            if seen_pipes.contains(&(pipe_info.rank_id.clone(), pipe_info.midi_note)) {
+                continue;
+            }
+            seen_pipes.insert((pipe_info.rank_id.clone(), pipe_info.midi_note));
+
             let Some(attack_link) = attack_map.get(&layer.id) else { continue; };
             let Some(attack_sample_info) = sample_map.get(&attack_link.sample_id) else { continue; };
             
@@ -726,6 +838,12 @@ impl Organ {
                 log::debug!("Pipe {} references non-existent RankID {}", pipe_info.id, pipe_info.rank_id);
                 continue;
             };
+
+            if rank.pipes.contains_key(&pipe_info.midi_note) {
+                // We already loaded the primary layer (e.g. "Direct") for this note.
+                // Skip secondary layers (e.g. "Diffuse", "Rear", "Tremulant").
+                continue;
+            }
 
             // Find the Attack linking object (LayerID -> SampleID)
             let Some(attack_link) = attack_map.get(&layer.id) else {
@@ -796,14 +914,20 @@ impl Organ {
             
             log::debug!("Processing LayerID {}: midi note {}, Attack sample path '{}'", layer.id, target_midi_note, attack_sample_path_relative.display());
             
-            let final_attack_path = wav_converter::process_sample_file(
+            let final_attack_path = match wav_converter::process_sample_file(
                 &attack_sample_path_relative,
                 &organ.base_path,
                 &organ.cache_path,
                 final_pitch_tuning_cents,
                 convert_to_16_bit,
                 target_sample_rate,
-            )?;
+            ) {
+                Ok(path) => path,
+                Err(e) => {
+                    log::warn!("Skipping Pipe (LayerID {}) due to sample error: {:?} - {}", layer.id, attack_sample_path_relative, e);
+                    continue;
+                }
+            };
 
             if final_pitch_tuning_cents != 0.0 {
                 log::debug!("Pipe (LayerID {}) attack sample '{}' retuned by {:.2} cents (Target MIDI: {}, Original MIDI: {}). File: {}",
@@ -816,19 +940,26 @@ impl Organ {
                 for release_link in xml_release_links {
                     if let Some(release_sample_info) = sample_map.get(&release_link.sample_id) {
                         let rel_path_str = format!("OrganInstallationPackages/{:0>6}/{}", release_sample_info.installation_package_id, release_sample_info.path.replace('\\', "/"));
-                        let final_rel_path = wav_converter::process_sample_file(
+                        match wav_converter::process_sample_file(
                             &PathBuf::from(&rel_path_str),
                             &organ.base_path,
                             &organ.cache_path,
                             final_pitch_tuning_cents,
                             convert_to_16_bit,
                             target_sample_rate,
-                        )?;
-                        releases.push(ReleaseSample {
-                            path: final_rel_path,
-                            max_key_press_time_ms: release_link.max_key_press_time_ms,
-                            preloaded_bytes: None,
-                        });
+                        ) {
+                            Ok(final_rel_path) => {
+                                releases.push(ReleaseSample {
+                                    path: final_rel_path,
+                                    max_key_press_time_ms: release_link.max_key_press_time_ms,
+                                    preloaded_bytes: None,
+                                });
+                            },
+                            Err(e) => {
+                                // If a release sample fails, we just skip the release, but keep the pipe.
+                                log::warn!("Skipping release sample for LayerID {} due to error: {} - {}", layer.id, rel_path_str, e);
+                            }
+                        }
                     }
                 }
             }
@@ -953,6 +1084,41 @@ impl Organ {
                 }
             }
 
+            if rank_ids.len() > 1 {
+                // We must pick the "Best" rank to keep.
+                // Heuristic: Prefer "Front", "Direct", "Main". Avoid "Rear", "Diffuse".
+                
+                rank_ids.sort_by(|a_id, b_id| {
+                    let get_score = |id: &str| -> i32 {
+                        let Some(r) = ranks_map.get(id) else { return -9999; };
+                        let n = r.name.to_lowercase();
+                        let mut score = 0;
+                        
+                        // Priority 1: Perspectives
+                        if n.contains("front") || n.contains("direct") || n.contains("main") || n.contains("dry") { score += 100; }
+                        if n.contains("rear") || n.contains("diffuse") || n.contains("surround") || n.contains("wet") { score -= 100; }
+                        
+                        // Priority 2: Avoid "Tremulant" ranks if a non-trem version exists (usually preferred for the base stop)
+                        if n.contains("trem") { score -= 20; }
+                        
+                        score
+                    };
+
+                    let score_a = get_score(a_id);
+                    let score_b = get_score(b_id);
+                    
+                    // Sort Descending (Highest score first)
+                    // If scores are equal, we rely on the original XML order (stable sort implied or insignificant)
+                    score_b.cmp(&score_a)
+                });
+
+                // Take the winner (index 0 after sort)
+                if let Some(winner) = rank_ids.first().cloned() {
+                    log::info!("Stop '{}': Forced to single rank. Selected ID {} (from {} candidates).", xs.name, winner, rank_ids.len());
+                    rank_ids = vec![winner];
+                }
+            }
+            
             let final_has_pipes = rank_ids.iter().any(|rid| {
                 ranks_map.get(rid).map(|r| !r.pipes.is_empty()).unwrap_or(false)
             });
@@ -1224,14 +1390,20 @@ impl Organ {
                     if original_tuning && pitch_tuning_cents.abs() <= 20.0 { pitch_tuning_cents = 0.0; }
 
                     // Process Attack (This will find it in cache instantly)
-                    let final_attack_path = wav_converter::process_sample_file(
+                    let final_attack_path = match wav_converter::process_sample_file(
                         &attack_sample_path_relative,
                         &organ.base_path,
                         &organ.cache_path,
                         pitch_tuning_cents,
                         convert_to_16_bit,
                         target_sample_rate
-                    )?;
+                    ) {
+                        Ok(path) => path,
+                        Err(e) => {
+                            log::warn!("GrandOrgue: Skipping Pipe {:?} due to sample error: {}", attack_sample_path_relative, e);
+                            continue;
+                        }
+                    };
 
                     let release_count: usize = get_prop(&format!("{}ReleaseCount", pipe_key_prefix_upper), &format!("{}releasecount", pipe_key_prefix_lower), "0").parse().unwrap_or(0);
                     let mut releases = Vec::new();
@@ -1244,22 +1416,26 @@ impl Organ {
 
                             let rel_path_relative = PathBuf::from(rel_path_str.replace('\\', "/"));
                             
-                            let final_rel_path = wav_converter::process_sample_file(
+                            match wav_converter::process_sample_file(
                                 &rel_path_relative,
                                 &organ.base_path,
                                 &organ.cache_path,
                                 pitch_tuning_cents,
                                 convert_to_16_bit,
                                 target_sample_rate
-                            )?;
-
-                            let max_time: i64 = get_prop(&format!("{}MaxKeyPressTime", rel_key_upper), &format!("{}maxkeypresstime", rel_key_lower), "-1").parse().unwrap_or(-1);
-                            releases.push(ReleaseSample { 
-                                path: final_rel_path, 
-                                max_key_press_time_ms: 
-                                max_time,
-                                preloaded_bytes: None,
-                             });
+                            ) {
+                                Ok(final_rel_path) => {
+                                    let max_time: i64 = get_prop(&format!("{}MaxKeyPressTime", rel_key_upper), &format!("{}maxkeypresstime", rel_key_lower), "-1").parse().unwrap_or(-1);
+                                    releases.push(ReleaseSample { 
+                                        path: final_rel_path, 
+                                        max_key_press_time_ms: max_time,
+                                        preloaded_bytes: None,
+                                     });
+                                },
+                                Err(e) => {
+                                    log::warn!("GrandOrgue: Skipping release sample {:?} due to error: {}", rel_path_relative, e);
+                                }
+                             }
                         }
                     }
                     releases.sort_by_key(|r| if r.max_key_press_time_ms == -1 { i64::MAX } else { r.max_key_press_time_ms });

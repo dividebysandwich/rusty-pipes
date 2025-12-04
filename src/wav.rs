@@ -63,7 +63,7 @@ pub fn parse_wav_metadata<R: Read + Seek>(
         let chunk_size = reader.read_u32::<LittleEndian>()?;
         let chunk_data_start_pos = reader.stream_position()?;
         let next_chunk_aligned_pos =
-            chunk_data_start_pos + (chunk_size as u64 + (chunk_size % 2) as u64);
+            chunk_data_start_pos + (chunk_size as u64 + ((chunk_size as u64) % 2));
 
         match &chunk_id {
             b"fmt " => {
