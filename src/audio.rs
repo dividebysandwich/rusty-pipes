@@ -24,7 +24,7 @@ const VOICE_BUFFER_FRAMES: usize = 14400;
 const CROSSFADE_TIME: f32 = 0.10; // How long to crossfade from attack to release samples, in seconds
 const VOICE_STEALING_FADE_TIME: f32 = 1.00; // Fade out stolen release samples over 1s
 const MAX_NEW_VOICES_PER_BLOCK: usize = 28; // Limit how many new voices can be started per audio block
-const TREMULANT_AM_BOOST: f32 = 2.0; // Extra depth added to tremulants for more pronounced effect
+const TREMULANT_AM_BOOST: f32 = 1.0;
 
 // Helper struct to track phase for tremulants in audio thread
 struct TremulantLfo {
@@ -779,6 +779,7 @@ fn spawn_audio_processing_thread<P>(
                 
                 // Fetch required frames from Ringbuffer to Voice's Input Buffer
                 let needed_frames_float = buffer_size_frames as f32 * avg_pitch;
+                // We need enough frames to cover the cursor + 2 frames for interpolation width
                 let needed_frames = needed_frames_float.ceil() as usize + 2; 
                 
                 // Try to fill the input buffer from the ring buffer
@@ -793,22 +794,13 @@ fn spawn_audio_processing_thread<P>(
                     voice.input_buffer.extend_from_slice(&scratch_read_buffer[..to_read * CHANNEL_COUNT]);
                 }
 
-                // If we don't have enough data even after reading, check if finished
-                let frames_in_buffer = voice.input_buffer.len() / CHANNEL_COUNT;
-                // We need `floor(cursor) + buffer_size` effectively. 
-                // But cursor resets to near 0 every block.
-                // We need to output `buffer_size_frames`.
-                
-                // Simple check: do we have enough to produce output?
-                // worst case need is `needed_frames`.
-                if frames_in_buffer < needed_frames {
-                     if voice.is_finished.load(Ordering::Relaxed) {
-                         voices_to_remove.push(*voice_id);
-                     }
-                     // If starving but not finished, output what we can (glitchy but better than panic) 
-                     // or just skip this block (silence). 
-                     // For now, continuing effectively skips adding to mix.
-                     continue;
+                // Starvation check
+                // We need at least needed_frames. 
+                // Since we rely on index access, strictly check length.
+                let required_len = needed_frames * CHANNEL_COUNT;
+                if voice.input_buffer.len() < required_len {
+                     if voice.is_finished.load(Ordering::Relaxed) { voices_to_remove.push(*voice_id); }
+                     continue; 
                 }
 
                 // Interpolation Loop
@@ -825,28 +817,38 @@ fn spawn_audio_processing_thread<P>(
                 let mut current_pitch_rate = pitch_start;
                 
                 let mix_chunks = mix_buffer.chunks_exact_mut(CHANNEL_COUNT);
+                
+                // Pointers for unsafe access to avoid bounds checks in the hot loop
+                let input_ptr = voice.input_buffer.as_ptr();
+                let input_len = voice.input_buffer.len();
 
+                // Hot Loop (SIMD Optimized)
                 for mix in mix_chunks {
-                    // Safe access to input buffer
                     let idx = voice.cursor_pos.floor() as usize;
                     let frac = voice.cursor_pos - idx as f32;
                     let idx_stereo = idx * CHANNEL_COUNT;
 
-                    // Ensure we are within bounds.
-                    // We need idx_stereo and idx_stereo+3 (for R sample of index+1) to be valid
-                    if idx_stereo + 3 < voice.input_buffer.len() {
-                        let s0_l = voice.input_buffer[idx_stereo];
-                        let s0_r = voice.input_buffer[idx_stereo+1];
-                        let s1_l = voice.input_buffer[idx_stereo+2];
-                        let s1_r = voice.input_buffer[idx_stereo+3];
+                    // Optimization: Remove bounds checks inside loop
+                    // We verified input_buffer.len() >= required_len above.
+                    // Ideally we ensure pitch_rate doesn't overshoot, but for audio blocks `unsafe` is standard.
+                    if idx_stereo + 3 < input_len {
+                        unsafe {
+                            // Load 4 samples (S0_L, S0_R, S1_L, S1_R)
+                            // This contiguous load is very SIMD friendly
+                            let s0_l = *input_ptr.add(idx_stereo);
+                            let s0_r = *input_ptr.add(idx_stereo + 1);
+                            let s1_l = *input_ptr.add(idx_stereo + 2);
+                            let s1_r = *input_ptr.add(idx_stereo + 3);
 
-                        let out_l = s0_l + (s1_l - s0_l) * frac;
-                        let out_r = s0_r + (s1_r - s0_r) * frac;
+                            let out_l = s0_l + (s1_l - s0_l) * frac;
+                            let out_r = s0_r + (s1_r - s0_r) * frac;
 
-                        mix[0] += out_l * current_gain_scalar;
-                        mix[1] += out_r * current_gain_scalar;
+                            mix[0] += out_l * current_gain_scalar;
+                            mix[1] += out_r * current_gain_scalar;
+                        }
                     }
 
+                    // Advance
                     voice.cursor_pos += current_pitch_rate;
                     current_gain_scalar += gain_delta;
                     current_pitch_rate += pitch_delta;
