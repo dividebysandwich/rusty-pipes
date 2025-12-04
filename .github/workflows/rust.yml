@@ -37,9 +37,6 @@ jobs:
     name: Build Linux Flatpak
     runs-on: ubuntu-latest
     needs: test
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
-      options: --privileged
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,6 +52,8 @@ jobs:
           manifest-path: com.dividebysandwich.rustypipes.yml
           bundle: rusty-pipes.flatpak
           cache-key: flatpak-builder-${{ github.sha }}
+          image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
+          docker-options: --privileged
 
       - name: Upload Flatpak Bundle
         uses: actions/upload-artifact@v4
