@@ -41,12 +41,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Flatpak Builder
+      - name: Install Flatpak Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y flatpak flatpak-builder elfutils
-          # Add Flathub so the builder can download the runtime (SDK 25.08)
           sudo flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y flathub org.freedesktop.Sdk//25.08 \
+                                          org.freedesktop.Platform//25.08 \
+                                          org.freedesktop.Sdk.Extension.rust-stable//25.08
 
       - name: Vendor Dependencies
         run: |
