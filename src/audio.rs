@@ -24,7 +24,7 @@ const VOICE_BUFFER_FRAMES: usize = 14400;
 const CROSSFADE_TIME: f32 = 0.10; // How long to crossfade from attack to release samples, in seconds
 const VOICE_STEALING_FADE_TIME: f32 = 1.00; // Fade out stolen release samples over 1s
 const MAX_NEW_VOICES_PER_BLOCK: usize = 28; // Limit how many new voices can be started per audio block
-const TREMULANT_DEPTH_BOOST: f32 = 3.0; // Extra depth added to tremulants for more pronounced effect
+const TREMULANT_AM_BOOST: f32 = 2.0; // Extra depth added to tremulants for more pronounced effect
 
 // Helper struct to track phase for tremulants in audio thread
 struct TremulantLfo {
@@ -147,8 +147,11 @@ struct Voice {
     is_attack_sample: bool,
     fade_increment: f32,
     
-    // NEW: Tracks which windchest group this voice belongs to, for tremulant effects
+    // Tracks which windchest group this voice belongs to, for tremulant effects
     windchest_group_id: Option<String>,
+
+    input_buffer: Vec<f32>, 
+    cursor_pos: f32, // Fractional position within input_buffer (in frames)
 }
 
 impl Voice {
@@ -224,6 +227,8 @@ impl Voice {
             is_attack_sample,
             fade_increment,
             windchest_group_id,
+            input_buffer: Vec::with_capacity(2048),
+            cursor_pos: 0.0,
         })
     }
 }
@@ -584,9 +589,6 @@ fn spawn_audio_processing_thread<P>(
         let mut wet_buffer_l: Vec<f32> = vec![0.0; buffer_size_frames];
         let mut wet_buffer_r: Vec<f32> = vec![0.0; buffer_size_frames];
         
-        // --- This buffer is for popping from the voice's ringbuf ---
-        let mut voice_read_buffer: Vec<f32> = vec![0.0; buffer_size_frames * CHANNEL_COUNT];
-
         // Initialize the StereoConvolver with the correct block size
         let mut convolver = StereoConvolver::new(buffer_size_frames);
         let mut wet_dry_ratio: f32 = 0.0; // Start 100% dry
@@ -608,6 +610,7 @@ fn spawn_audio_processing_thread<P>(
         let mut active_tremulants_ids: HashMap<String, bool> = HashMap::new(); // State tracking
         let mut tremulant_lfos: HashMap<String, TremulantLfo> = HashMap::new(); // Phase tracking
         let mut prev_windchest_mods: HashMap<String, f32> = HashMap::new();
+        let mut scratch_read_buffer: Vec<f32> = vec![0.0; buffer_size_frames * CHANNEL_COUNT * 2];
 
         loop {
             let start_time = Instant::now();
@@ -674,65 +677,35 @@ fn spawn_audio_processing_thread<P>(
             let mut current_windchest_mods: HashMap<String, f32> = HashMap::new();
 
             for (trem_id, trem_def) in &organ.tremulants {
-                // Get active status (target level)
                 let is_active = *active_tremulants_ids.get(trem_id).unwrap_or(&false);
                 let target_level = if is_active { 1.0 } else { 0.0 };
+                let lfo = tremulant_lfos.entry(trem_id.clone()).or_insert(TremulantLfo { phase: 0.0, current_level: 0.0 });
 
-                // Get or create LFO state
-                let lfo = tremulant_lfos.entry(trem_id.clone()).or_insert(TremulantLfo { 
-                    phase: 0.0, 
-                    current_level: 0.0 
-                });
-
-                // Inertia / Ramping Logic
                 if lfo.current_level != target_level {
-                    let rate = if is_active {
-                        // Use StartRate (default to instant/infinity if 0)
-                        if trem_def.start_rate > 0.0 { trem_def.start_rate } else { 1000.0 }
-                    } else {
-                        // Use StopRate
-                        if trem_def.stop_rate > 0.0 { trem_def.stop_rate } else { 1000.0 }
-                    };
-
+                    let rate = if is_active { if trem_def.start_rate > 0.0 { trem_def.start_rate } else { 1000.0 } } else { if trem_def.stop_rate > 0.0 { trem_def.stop_rate } else { 1000.0 } };
                     let change = rate * dt;
-
-                    if lfo.current_level < target_level {
-                        lfo.current_level = (lfo.current_level + change).min(target_level);
-                    } else {
-                        lfo.current_level = (lfo.current_level - change).max(target_level);
-                    }
+                    if lfo.current_level < target_level { lfo.current_level = (lfo.current_level + change).min(target_level); } else { lfo.current_level = (lfo.current_level - change).max(target_level); }
                 }
 
-                // If completely stopped and inactive, skip processing to save CPU
-                if lfo.current_level <= 0.0 && !is_active {
-                    continue;
-                }
+                if lfo.current_level <= 0.0 && !is_active { continue; }
 
-                // LFO Phase Calculation
-                // f = 1000 / period_ms
                 let freq = if trem_def.period > 0.0 { 1000.0 / trem_def.period } else { 0.0 };
                 let phase_inc = (freq * buffer_size_frames as f32) / sample_rate as f32;
                 lfo.phase = (lfo.phase + phase_inc) % 1.0;
 
-                // Modulation Calculation
-                // Standard Sine LFO (-1.0 to 1.0)
                 let sine_val = (lfo.phase * std::f32::consts::TAU).sin();
-                
-                // Exaggerated Depth:
-                // If depth is 20%, modulation swings +/- 20% * 0.01 * BOOST
-                let mod_swing = trem_def.amp_mod_depth * 0.01 * TREMULANT_DEPTH_BOOST;
-                
-                // Target Modulation when fully active (1.0 +/- swing)
-                let active_mod = 1.0 + (sine_val * mod_swing);
-                
-                // Interpolate based on inertia level
-                let final_mod = 1.0 + (active_mod - 1.0) * lfo.current_level;
+                let inertia = lfo.current_level;
 
-                // Apply to Windchests
+                // Subtractive Volume Modulation
+                let am_swing = trem_def.amp_mod_depth * 0.01 * TREMULANT_AM_BOOST;
+                let lfo_01 = (sine_val + 1.0) * 0.5; // 0.0 to 1.0
+                let active_am = 1.0 - (am_swing * (1.0 - lfo_01));
+                let final_am = 1.0 + (active_am - 1.0) * inertia;
+
                 for wc_group in organ.windchest_groups.values() {
                     if wc_group.tremulant_ids.contains(trem_id) {
                          let existing = *current_windchest_mods.get(&wc_group.id_str).unwrap_or(&1.0);
-                         let new_mod = existing * final_mod;
+                         let new_mod = existing * final_am;
                          current_windchest_mods.insert(wc_group.id_str.clone(), new_mod);
                          
                          let unpadded = wc_group.id_str.trim_start_matches('0');
@@ -742,50 +715,55 @@ fn spawn_audio_processing_thread<P>(
                 }
             }
 
-
             // Crossfade Logic
-             let mut crossfades_to_start: Vec<(u64, u64)> = Vec::with_capacity(16);
+            // Checks if any attack voices are waiting for their release samples to be ready
+            let mut crossfades_to_start: Vec<(u64, u64)> = Vec::with_capacity(16);
+            
             for (attack_id, attack_voice) in voices.iter() { 
                 if attack_voice.is_awaiting_release_sample {
                     if let Some(release_id) = attack_voice.release_voice_id {
                         if let Some(rv) = voices.get(&release_id) {
-                            if !rv.consumer.is_empty() { 
+                            // Check if the release voice has buffered enough data to start playing
+                            // We need at least one buffer worth of data to be safe
+                            let frames_buffered = rv.input_buffer.len() / CHANNEL_COUNT;
+                            let rb_available = rv.consumer.occupied_len() / CHANNEL_COUNT;
+                            
+                            // Condition: Either we have data in the input buffer, 
+                            // OR the ringbuffer has enough to fill it.
+                            if frames_buffered > 0 || rb_available > buffer_size_frames { 
                                 crossfades_to_start.push((*attack_id, release_id)); 
                             } else if rv.is_finished.load(Ordering::Relaxed) {
-                                // Don't wait forever on slow or buggy reads.
+                                // If the loader finished but gave us no data, abort the wait
                                 crossfades_to_start.push((*attack_id, u64::MAX));
                             }
                         } else {
+                            // Release voice died?
                             crossfades_to_start.push((*attack_id, u64::MAX)); 
                         }
                     }
                 }
             }
+
+            // Apply the crossfade state changes
             for (aid, rid) in crossfades_to_start {
-                if let Some(av) = voices.get_mut(&aid) { av.is_fading_out = true; av.is_awaiting_release_sample = false; av.release_voice_id = None; }
-                if rid != u64::MAX { if let Some(rv) = voices.get_mut(&rid) { rv.is_fading_in = true; } }
+                if let Some(av) = voices.get_mut(&aid) { 
+                    av.is_fading_out = true; 
+                    av.is_awaiting_release_sample = false; 
+                    av.release_voice_id = None; 
+                }
+                if rid != u64::MAX { 
+                    if let Some(rv) = voices.get_mut(&rid) { 
+                        rv.is_fading_in = true; 
+                    } 
+                }
             }
 
-            // Processing Loop
+            // --- Voice Processing Loop ---
             for (voice_id, voice) in voices.iter_mut() {
                 if voice.is_fading_out && voice.fade_level <= 0.0001 { voices_to_remove.push(*voice_id); continue; }
-                let samples_to_read = buffer_size_frames * CHANNEL_COUNT;
-                if voice.consumer.occupied_len() < samples_to_read {
-                    if voice.is_finished.load(Ordering::Relaxed) { voices_to_remove.push(*voice_id); }
-                    continue;
-                }
                 
-                let _ = voice.consumer.pop_slice(&mut voice_read_buffer[..samples_to_read]);
-
-                // Fade Logic
-                let env_start = voice.fade_level;
-                let mut env_end = env_start;
-                if voice.is_fading_in { env_end = (env_start + voice.fade_increment * buffer_size_frames as f32).min(1.0); if env_end >= 1.0 { voice.is_fading_in = false; } }
-                else if voice.is_fading_out { env_end = (env_start - voice.fade_increment * buffer_size_frames as f32).max(0.0); }
-                voice.fade_level = env_end;
-
-                // Apply Tremulant Modulation
-                let (trem_start, trem_end) = if let Some(wc_id) = &voice.windchest_group_id {
+                // Determine Pitch and Amp target
+                let (trem_start_am, trem_end_am) = if let Some(wc_id) = &voice.windchest_group_id {
                     let start = *prev_windchest_mods.get(wc_id).unwrap_or(&1.0);
                     let end = *current_windchest_mods.get(wc_id).unwrap_or(&1.0);
                     (start, end)
@@ -793,23 +771,105 @@ fn spawn_audio_processing_thread<P>(
                     (1.0, 1.0)
                 };
 
-                // Calculate total gain at start and end of block
-                let total_start = voice.gain * env_start * trem_start;
-                let total_end = voice.gain * env_end * trem_end;
+                // Approximate Pitch Shift from Amp Shift
+                // Amplitude dips (<= 1.0), so Pitch will dip (go flat).
+                let pitch_start = 1.0 + (trem_start_am - 1.0) * 0.1; 
+                let pitch_end = 1.0 + (trem_end_am - 1.0) * 0.1;
+                let avg_pitch = (pitch_start + pitch_end) * 0.5;
                 
-                let gain_step = (total_end - total_start) / buffer_size_frames as f32;
-                let mut cur_g = total_start;
+                // Fetch required frames from Ringbuffer to Voice's Input Buffer
+                let needed_frames_float = buffer_size_frames as f32 * avg_pitch;
+                let needed_frames = needed_frames_float.ceil() as usize + 2; 
+                
+                // Try to fill the input buffer from the ring buffer
+                let available = voice.consumer.occupied_len() / CHANNEL_COUNT;
+                let to_read = available.min(needed_frames * 2); // Read extra if available to be safe
+                
+                if to_read > 0 {
+                    if scratch_read_buffer.len() < to_read * CHANNEL_COUNT {
+                        scratch_read_buffer.resize(to_read * CHANNEL_COUNT, 0.0);
+                    }
+                    let _ = voice.consumer.pop_slice(&mut scratch_read_buffer[..to_read * CHANNEL_COUNT]);
+                    voice.input_buffer.extend_from_slice(&scratch_read_buffer[..to_read * CHANNEL_COUNT]);
+                }
 
+                // If we don't have enough data even after reading, check if finished
+                let frames_in_buffer = voice.input_buffer.len() / CHANNEL_COUNT;
+                // We need `floor(cursor) + buffer_size` effectively. 
+                // But cursor resets to near 0 every block.
+                // We need to output `buffer_size_frames`.
+                
+                // Simple check: do we have enough to produce output?
+                // worst case need is `needed_frames`.
+                if frames_in_buffer < needed_frames {
+                     if voice.is_finished.load(Ordering::Relaxed) {
+                         voices_to_remove.push(*voice_id);
+                     }
+                     // If starving but not finished, output what we can (glitchy but better than panic) 
+                     // or just skip this block (silence). 
+                     // For now, continuing effectively skips adding to mix.
+                     continue;
+                }
+
+                // Interpolation Loop
+                let env_start = voice.fade_level;
+                let mut env_end = env_start;
+                if voice.is_fading_in { env_end = (env_start + voice.fade_increment * buffer_size_frames as f32).min(1.0); if env_end >= 1.0 { voice.is_fading_in = false; } }
+                else if voice.is_fading_out { env_end = (env_start - voice.fade_increment * buffer_size_frames as f32).max(0.0); }
+                voice.fade_level = env_end;
+
+                let gain_delta = (trem_end_am * env_end - trem_start_am * env_start) / buffer_size_frames as f32;
+                let pitch_delta = (pitch_end - pitch_start) / buffer_size_frames as f32;
+                
+                let mut current_gain_scalar = trem_start_am * env_start * voice.gain;
+                let mut current_pitch_rate = pitch_start;
+                
                 let mix_chunks = mix_buffer.chunks_exact_mut(CHANNEL_COUNT);
-                let voice_chunks = voice_read_buffer.chunks_exact(CHANNEL_COUNT).take(buffer_size_frames);
-                for (mix, v) in mix_chunks.zip(voice_chunks) {
-                    mix[0] += v[0] * cur_g;
-                    mix[1] += v[1] * cur_g;
-                    cur_g += gain_step;
+
+                for mix in mix_chunks {
+                    // Safe access to input buffer
+                    let idx = voice.cursor_pos.floor() as usize;
+                    let frac = voice.cursor_pos - idx as f32;
+                    let idx_stereo = idx * CHANNEL_COUNT;
+
+                    // Ensure we are within bounds.
+                    // We need idx_stereo and idx_stereo+3 (for R sample of index+1) to be valid
+                    if idx_stereo + 3 < voice.input_buffer.len() {
+                        let s0_l = voice.input_buffer[idx_stereo];
+                        let s0_r = voice.input_buffer[idx_stereo+1];
+                        let s1_l = voice.input_buffer[idx_stereo+2];
+                        let s1_r = voice.input_buffer[idx_stereo+3];
+
+                        let out_l = s0_l + (s1_l - s0_l) * frac;
+                        let out_r = s0_r + (s1_r - s0_r) * frac;
+
+                        mix[0] += out_l * current_gain_scalar;
+                        mix[1] += out_r * current_gain_scalar;
+                    }
+
+                    voice.cursor_pos += current_pitch_rate;
+                    current_gain_scalar += gain_delta;
+                    current_pitch_rate += pitch_delta;
+                }
+
+                // Cleanup
+                // Remove consumed samples from the front of the input buffer
+                let samples_consumed_int = voice.cursor_pos.floor() as usize;
+                
+                // Optimize: simple drain
+                if samples_consumed_int > 0 {
+                    let elements_to_remove = samples_consumed_int * CHANNEL_COUNT;
+                    if elements_to_remove < voice.input_buffer.len() {
+                        voice.input_buffer.drain(0..elements_to_remove);
+                        voice.cursor_pos -= samples_consumed_int as f32;
+                    } else {
+                        // Consumed everything
+                        voice.input_buffer.clear();
+                        voice.cursor_pos = 0.0;
+                    }
                 }
 
                  if voice.is_fading_out && voice.fade_level == 0.0 {
-                    voice.consumer.skip(voice.consumer.occupied_len());
                     voices_to_remove.push(*voice_id);
                 }
             }

@@ -50,6 +50,7 @@ pub struct Rank {
 }
 
 /// Represents a Windchest Group (defines shared tremulants/enclosures).
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct WindchestGroup {
     pub name: String,
@@ -58,6 +59,7 @@ pub struct WindchestGroup {
 }
 
 /// Represents a Tremulant definitions.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Default)]
 pub struct Tremulant {
     pub name: String,
