@@ -34,6 +34,7 @@ Cesar Franck - Chorale No. 3 - Frisach organ: [[FLAC](https://playspoon.com/file
 * Extremely low memory requirements (in streaming mode)
 * Polyphony limited only by CPU power
 * MIDI controlled
+* Multiple MIDI input device support with flexible channel mapping
 * On-the-fly configurable MIDI channel mapping
 * MIDI mappings can be quickly saved into one of 10 slots and recalled
 * MIDI mappings are saved to disk for each organ (by name)
@@ -101,11 +102,13 @@ Command line example: ```rusty-pipes /path/to/name.organ /path/to/file.mid```
 
 ### MIDI device
 
-When not selecting a MIDI file, it is assumed that some form of MIDI input device shall be used. This is the main mode of operation for RustyPipes, and you can either select a midi device from the list that's shown, or specify one as a command line parameter.
+ Select one or more MIDI input devices that shall be used to play. For each device you can choose whether all of its 16 MIDI channels shall be mapped to one "virtual" MIDI channel in RustyPipes (which can in turn be mapped to one or more organ stops), or you can select "Complex mapping" to select the mapping for each of the MIDI devices' channels separately.
+
+ When not selecting a MIDI file, it is assumed that some form of MIDI input device shall be used. This is the main mode of operation for RustyPipes.
 
 #### Selecting a MIDI device via command line parameter
 
-Instead of having to manually choose the MIDI input device from a list everytime the program starts, you can pass the desired input device via the command line. To do this, first use ```--list-midi-devices``` to display a list, and then pass it as parameter with ```--midi-device``` like so:
+Instead of having to manually choose the MIDI input device from a list when the program starts, you can pass the desired input device via the command line. To do this, first use ```--list-midi-devices``` to display a list, and then pass it as parameter with ```--midi-device``` like so:
 
 ```bash
 $ rusty-pipes --list-midi-devices
@@ -127,6 +130,10 @@ Starting audio engine...
 
 > [!NOTE]
 > Don't use "2: LUMI...", only use the part after "2: "
+
+The selected MIDI device will be used in "simple channel mapping" mode, in other words, all MIDI events from that device will be forwarded to the respective channel in RustyPipes, so MIDI channel 1 will be channel 1 in RustyPipes, MIDI channel 2 will be channel 2 in RustyPipes, etc.
+
+Multiple MIDI input devices are not supported via the command line. Start RustyPipes normally and configure them within the GUI.
 
 ### Convolution Reverb
 
