@@ -185,28 +185,25 @@ impl App for ConfigApp {
                             if self.state.system_midi_ports.is_empty() {
                                 ui.label(egui::RichText::new("No devices found").weak());
                             } else {
-                                egui::ScrollArea::vertical().id_salt("midi_list_scroll").max_height(150.0).show(ui, |ui| {
-                                    // Iterate available system ports
-                                    for (_port, name) in &self.state.system_midi_ports {
-                                        ui.horizontal(|ui| {
-                                            // Find corresponding config entry
-                                            if let Some(cfg_idx) = self.state.settings.midi_devices.iter().position(|d| d.name == *name) {
-                                                
-                                                // Checkbox for Enable/Disable
-                                                ui.checkbox(&mut self.state.settings.midi_devices[cfg_idx].enabled, "");
-                                                
-                                                // Name Label
-                                                ui.label(name);
-                                                
-                                                // Mapping Button
-                                                if ui.button("⚙ Map").clicked() {
-                                                    self.midi_mapping_window.device_index = cfg_idx;
-                                                    self.midi_mapping_window.visible = true;
-                                                }
+                                for (_port, name) in &self.state.system_midi_ports {
+                                    ui.horizontal(|ui| {
+                                        // Find corresponding config entry
+                                        if let Some(cfg_idx) = self.state.settings.midi_devices.iter().position(|d| d.name == *name) {
+                                            
+                                            // Checkbox for Enable/Disable
+                                            ui.checkbox(&mut self.state.settings.midi_devices[cfg_idx].enabled, "");
+                                            
+                                            // Name Label
+                                            ui.label(name);
+                                            
+                                            // Mapping Button
+                                            if ui.button("⚙ Map").clicked() {
+                                                self.midi_mapping_window.device_index = cfg_idx;
+                                                self.midi_mapping_window.visible = true;
                                             }
-                                        });
-                                    }
-                                });
+                                        }
+                                    });
+                                }
                             }
                         });
                         ui.end_row();
