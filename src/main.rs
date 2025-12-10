@@ -248,6 +248,7 @@ fn main() -> Result<()> {
     }
 
     let organ: Arc<Organ>; 
+    let shared_midi_recorder = Arc::new(Mutex::new(None));
 
     let reverb_files = config::get_available_ir_files();
 
@@ -366,6 +367,7 @@ fn main() -> Result<()> {
         config.audio_device_name,
         config.sample_rate,
         tui_tx.clone(),
+        shared_midi_recorder.clone(),
     )?;
     if tui_mode { println!("Audio engine running."); }
      
@@ -437,7 +439,7 @@ fn main() -> Result<()> {
                     Ok(client) => {
                         if tui_mode { println!("Connecting to MIDI device: {}", dev_config.name); }
                         
-                        match connect_to_midi(client, &port, &dev_config.name, &tui_tx, dev_config.clone()) {
+                        match connect_to_midi(client, &port, &dev_config.name, &tui_tx, dev_config.clone(), Arc::clone(&shared_midi_recorder)) {
                             Ok(conn) => {
                                 midi_connections.push(conn);
                                 app_state.lock().unwrap().add_midi_log(format!("Connected: {}", dev_config.name));

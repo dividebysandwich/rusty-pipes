@@ -355,7 +355,50 @@ impl EguiApp {
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn draw_footer(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
-            ui.label("Tip: F1-F12 to Recall, Shift+F1-F12 to Save, 'P' for Panic, Arrows to Navigate, 1-0 to Toggle, E/R for Octave, +/- for Gain, [ / ] for Polyphony");
+            ui.horizontal(|ui| {
+                ui.label("Tip: F1-F12 to Recall, Shift+F1-F12 to Save, 'P' for Panic, Arrows to Navigate, 1-0 to Toggle, E/R for Octave, +/- for Gain, [ / ] for Polyphony");
+                ui.separator();
+                
+                // NEW: Recording Controls
+                let (is_rec_midi, is_rec_audio) = {
+                    let state = self.app_state.lock().unwrap();
+                    (state.is_recording_midi, state.is_recording_audio)
+                };
+
+                // MIDI Rec
+                let midi_btn_text = if is_rec_midi { "⏹ Stop MIDI Rec" } else { "⏺ Rec MIDI" };
+                let midi_btn = egui::Button::new(midi_btn_text)
+                    .fill(if is_rec_midi { egui::Color32::RED } else { egui::Color32::from_gray(60) });
+                
+                if ui.add(midi_btn).clicked() {
+                    let new_state = !is_rec_midi;
+                    self.app_state.lock().unwrap().is_recording_midi = new_state;
+                    if new_state {
+                        let _ = self.audio_tx.send(AppMessage::StartMidiRecording);
+                    } else {
+                        let _ = self.audio_tx.send(AppMessage::StopMidiRecording);
+                    }
+                }
+
+                // Audio Rec
+                let audio_btn_text = if is_rec_audio { "⏹ Stop WAV Rec" } else { "⏺ Rec WAV" };
+                let audio_btn = egui::Button::new(audio_btn_text)
+                    .fill(if is_rec_audio { egui::Color32::RED } else { egui::Color32::from_gray(60) });
+
+                if ui.add(audio_btn).clicked() {
+                    let new_state = !is_rec_audio;
+                    self.app_state.lock().unwrap().is_recording_audio = new_state;
+                    if new_state {
+                        let _ = self.audio_tx.send(AppMessage::StartAudioRecording);
+                    } else {
+                        let _ = self.audio_tx.send(AppMessage::StopAudioRecording);
+                    }
+                }
+                
+                if is_rec_midi || is_rec_audio {
+                    ui.label(egui::RichText::new("RECORDING").color(egui::Color32::RED).strong());
+                }
+            });
         });
     }
 

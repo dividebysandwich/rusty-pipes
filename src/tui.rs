@@ -211,6 +211,24 @@ pub fn run_tui_loop(
                                             KeyCode::Char('p') => {
                                                 audio_tx.send(AppMessage::AllNotesOff)?;
                                             }
+                                            KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                                                let mut state = tui_state.app_state.lock().unwrap();
+                                                state.is_recording_midi = !state.is_recording_midi;
+                                                if state.is_recording_midi {
+                                                    audio_tx.send(AppMessage::StartMidiRecording)?;
+                                                } else {
+                                                    audio_tx.send(AppMessage::StopMidiRecording)?;
+                                                }
+                                            },
+                                            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                                                let mut state = tui_state.app_state.lock().unwrap();
+                                                state.is_recording_audio = !state.is_recording_audio;
+                                                if state.is_recording_audio {
+                                                    audio_tx.send(AppMessage::StartAudioRecording)?;
+                                                } else {
+                                                    audio_tx.send(AppMessage::StopAudioRecording)?;
+                                                }
+                                            },
                                             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                                                 tui_state.select_all_channels_for_stop();
                                             }
@@ -308,6 +326,17 @@ fn draw_main_app_ui(
     };
 
     // --- Footer Help Text / Error ---
+
+    let rec_status = if app_state.is_recording_midi && app_state.is_recording_audio {
+        " [REC MIDI+WAV] "
+    } else if app_state.is_recording_midi {
+        " [REC MIDI] "
+    } else if app_state.is_recording_audio {
+        " [REC WAV] "
+    } else {
+        ""
+    };
+
     let footer_widget = if let Some(err) = &app_state.error_msg {
         Paragraph::new(err.as_str())
             .style(Style::default().fg(Color::White).bg(Color::Red))
@@ -317,7 +346,8 @@ fn draw_main_app_ui(
             .style(Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD))
     } else {
         let status = format!(
-            "CPU: {:.1}% | Gain: {:.0}% | Voices: {}/{} | [Q]uit | [P]anic | +/-:Gain | E/R:Octave | [/]:Poly | F1-12:Recall | Shift+F1-12:Save", 
+            "{}CPU: {:.1}% | Gain: {:.0}% | Voices: {}/{} | [Q]uit | [P]anic | +/-:Gain | E/R:Octave | [/]:Poly | F1-12:Recall | Shift+F1-12:Save", 
+            rec_status,
             app_state.cpu_load * 100.0,
             app_state.gain * 100.0, 
             app_state.active_voice_count,

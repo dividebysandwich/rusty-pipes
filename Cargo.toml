@@ -1,7 +1,7 @@
 [package]
 name = "rusty-pipes"
 description = "Virtual pipe organ simulator"
-version = "1.0.4"
+version = "1.1.0"
 license = "GPL-2.0-or-later"
 authors = ["dividebysandwich"]
 repository = "https://github.com/dividebysandwich/rusty-pipes"
@@ -40,6 +40,7 @@ rayon = "1.11"
 symphonia = { version = "0.5", features = ["wav"] }
 sys-locale = "0.3.2"
 open = "5.3.3"
+chrono = "0.4"
 
 [features]
 hotpath = ["dep:hotpath", "hotpath/hotpath"]
@@ -61,7 +62,7 @@ assets = [
 name = "Rusty Pipes"
 identifier = "com.dividebysandwich.rustypipes"
 icon = ["assets/rusty-pipes.icns"]
-version = "1.0.4" 
+version = "1.1.0" 
 copyright = "Copyright 2025 Dividebysandwich"
 category = "Music"
 short_description = "Virtual pipe organ simulator"

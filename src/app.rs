@@ -18,6 +18,10 @@ pub enum AppMessage {
     SetPolyphony(usize),
     /// Activate or Deactivate a specific Tremulant (ID, Active)
     SetTremulantActive(String, bool),
+    StartAudioRecording,
+    StopAudioRecording,
+    StartMidiRecording,
+    StopMidiRecording,
     /// TUI quit event.
     Quit,
 }

@@ -6,9 +6,8 @@ use std::{
     fs::File,
     io::{BufReader, BufWriter},
     path::PathBuf,
-    sync::mpsc::Sender,
+    sync::{mpsc::Sender, Arc, Mutex},
     time::{Duration, Instant},
-    sync::Arc,
 };
 use crate::{
     app::{AppMessage, TuiMessage},
@@ -16,6 +15,7 @@ use crate::{
     organ::Organ,
     config::{load_settings, save_settings, MidiDeviceConfig},
     input::KeyboardLayout,
+    midi::MidiRecorder,
 };
 
 // --- Shared Constants & Types ---
@@ -49,10 +49,11 @@ pub fn connect_to_midi(
     port_name: &str,
     tui_tx: &Sender<TuiMessage>,
     config: MidiDeviceConfig, // New Argument
+    shared_midi_recorder: Arc<Mutex<Option<MidiRecorder>>>,
 ) -> Result<MidiInputConnection<()>> {
     // We delegate to the logic in midi.rs, which sets up the callback 
     // with the specific channel mapping rules found in `config`.
-    midi::connect_to_midi(midi_input, port, port_name, tui_tx, config)
+    midi::connect_to_midi(midi_input, port, port_name, tui_tx, config, shared_midi_recorder)
 }
 
 // --- Shared State Struct ---
@@ -85,6 +86,8 @@ pub struct AppState {
     pub selected_reverb_index: Option<usize>,
     /// Set of currently active tremulant IDs
     pub active_tremulants: BTreeSet<String>,
+    pub is_recording_midi: bool,
+    pub is_recording_audio: bool,
 }
 
 pub fn get_preset_file_path() -> PathBuf {
@@ -124,6 +127,8 @@ impl AppState {
             reverb_mix: 0.0,
             selected_reverb_index: None,
             active_tremulants: BTreeSet::new(),
+            is_recording_midi: false,
+            is_recording_audio: false,
         })
     }
     

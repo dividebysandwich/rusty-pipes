@@ -39,6 +39,7 @@ Cesar Franck - Chorale No. 3 - Frisach organ: [[FLAC](https://playspoon.com/file
 * MIDI mappings can be quickly saved into one of 10 slots and recalled
 * MIDI mappings are saved to disk for each organ (by name)
 * MIDI file playback
+* MIDI and Audio recording of performances
 * Graphical and text mode (TUI) user interface
 
 ## Missing features / Limitations / Known Issues
@@ -257,6 +258,8 @@ When you start the program for the first time, no stop will have any MIDI channe
 | F1..F10 | Load MIDI mapping of given slot |
 | Shift-A | Enable all MIDI channels on selected stop |
 | Shift-N | Disable all MIDI channels on selected stop |
+| Shift-R | Start/Stop audio recording |
+| Shift-M | Start/Stop midi recording |
 | - + | Decrease/Increase gain |
 | [ ] | Decrease/Increase polyphony |
 | P | Panic (All notes turn off) |

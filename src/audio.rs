@@ -6,18 +6,21 @@ use ringbuf::traits::{Observer, Consumer, Producer, Split};
 use fft_convolver::FFTConvolver;
 use ringbuf::{HeapCons, HeapRb, HeapProd};
 use std::collections::{HashMap, VecDeque};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::BufReader;
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Instant, Duration};
 use std::path::{Path, PathBuf};
+use chrono::Local;
+use hound;
 
 use crate::app::{ActiveNote, AppMessage};
 use crate::organ::Organ;
 use crate::wav::{parse_wav_metadata, WavSampleReader, parse_smpl_chunk};
 use crate::TuiMessage;
+use crate::midi::MidiRecorder;
 
 const CHANNEL_COUNT: usize = 2; // Stereo
 const VOICE_BUFFER_FRAMES: usize = 14400; 
@@ -25,6 +28,76 @@ const CROSSFADE_TIME: f32 = 0.10; // How long to crossfade from attack to releas
 const VOICE_STEALING_FADE_TIME: f32 = 1.00; // Fade out stolen release samples over 1s
 const MAX_NEW_VOICES_PER_BLOCK: usize = 28; // Limit how many new voices can be started per audio block
 const TREMULANT_AM_BOOST: f32 = 1.0;
+
+struct AudioRecorder {
+    sender: mpsc::Sender<Vec<f32>>,
+    thread_handle: Option<thread::JoinHandle<()>>,
+}
+
+impl AudioRecorder {
+    fn start(organ_name: String, sample_rate: u32) -> Result<Self> {
+        let config_path = confy::get_configuration_file_path("rusty-pipes", "settings")?;
+        let parent = config_path.parent().ok_or_else(|| anyhow::anyhow!("No config parent dir"))?;
+        let recording_dir = parent.join("recordings");
+        if !recording_dir.exists() {
+            fs::create_dir_all(&recording_dir)?;
+        }
+
+        let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S");
+        let filename = format!("{}_{}.wav", organ_name, timestamp);
+        let path = recording_dir.join(filename);
+
+        let spec = hound::WavSpec {
+            channels: 2,
+            sample_rate,
+            bits_per_sample: 32,
+            sample_format: hound::SampleFormat::Float,
+        };
+
+        let (tx, rx) = mpsc::channel::<Vec<f32>>();
+        let path_clone = path.clone();
+
+        let handle = thread::spawn(move || {
+            let mut writer = match hound::WavWriter::create(path_clone, spec) {
+                Ok(w) => w,
+                Err(e) => {
+                    log::error!("Failed to create WAV writer: {}", e);
+                    return;
+                }
+            };
+
+            for buffer in rx {
+                for sample in buffer {
+                    if let Err(e) = writer.write_sample(sample) {
+                        log::error!("Error writing sample: {}", e);
+                    }
+                }
+            }
+            // Writer finalizes on drop
+            log::info!("WAV recording saved.");
+        });
+        
+        log::info!("Started recording audio to {:?}", path);
+
+        Ok(Self {
+            sender: tx,
+            thread_handle: Some(handle),
+        })
+    }
+
+    fn push(&mut self, buffer: &[f32]) {
+        // Send a clone of the buffer to the writer thread
+        // In high-performance scenarios, we might recycle these vecs
+        let _ = self.sender.send(buffer.to_vec());
+    }
+
+    fn stop(self) {
+        drop(self.sender); // Close channel
+        if let Some(h) = self.thread_handle {
+            let _ = h.join();
+        }
+    }
+}
 
 // Helper struct to track phase for tremulants in audio thread
 struct TremulantLfo {
@@ -550,6 +623,7 @@ fn spawn_audio_processing_thread<P>(
     mut system_gain: f32,
     mut polyphony: usize,
     tui_tx: mpsc::Sender<TuiMessage>,
+    shared_midi_recorder: Arc<Mutex<Option<MidiRecorder>>>,
 ) where
     P: Producer<Item = f32> + Send + 'static,
 {
@@ -615,6 +689,8 @@ fn spawn_audio_processing_thread<P>(
         let mut prev_windchest_mods: HashMap<String, f32> = HashMap::new();
         let mut scratch_read_buffer: Vec<f32> = vec![0.0; buffer_size_frames * CHANNEL_COUNT * 2];
 
+        let mut audio_recorder: Option<AudioRecorder> = None;
+
         loop {
             let start_time = Instant::now();
 
@@ -626,6 +702,39 @@ fn spawn_audio_processing_thread<P>(
                     // Set active status for tremulants
                     AppMessage::SetTremulantActive(id, active) => {
                         active_tremulants_ids.insert(id, active);
+                    },
+                    AppMessage::StartAudioRecording => {
+                        match AudioRecorder::start(organ.name.clone(), sample_rate) {
+                            Ok(rec) => { 
+                                audio_recorder = Some(rec); 
+                                let _ = tui_tx.send(TuiMessage::MidiLog("Audio Recording Started".into()));
+                            },
+                            Err(e) => { 
+                                let _ = tui_tx.send(TuiMessage::Error(format!("Rec Error: {}", e))); 
+                            }
+                        }
+                    },
+                    AppMessage::StopAudioRecording => {
+                         if let Some(rec) = audio_recorder.take() {
+                             rec.stop();
+                             let _ = tui_tx.send(TuiMessage::MidiLog("Audio Recording Stopped/Saved".into()));
+                         }
+                    },
+                    AppMessage::StartMidiRecording => {
+                        let mut guard = shared_midi_recorder.lock().unwrap();
+                        if guard.is_none() {
+                            *guard = Some(MidiRecorder::new(organ.name.clone()));
+                            let _ = tui_tx.send(TuiMessage::MidiLog("MIDI Recording Started (Virtual Chs)".into()));
+                        }
+                    },
+                    AppMessage::StopMidiRecording => {
+                        let mut guard = shared_midi_recorder.lock().unwrap();
+                        if let Some(recorder) = guard.take() {
+                            match recorder.save() {
+                                Ok(path) => { let _ = tui_tx.send(TuiMessage::MidiLog(format!("Saved: {}", path))); },
+                                Err(e) => { let _ = tui_tx.send(TuiMessage::Error(format!("MIDI Save Error: {}", e))); }
+                            }
+                        }
                     },
                     // Handle control messages immediately to feel responsive
                     _ => process_message(msg, 
@@ -920,6 +1029,10 @@ fn spawn_audio_processing_thread<P>(
                 }
             } else {
                  for s in mix_buffer.iter_mut() { *s *= system_gain; }
+            }
+
+            if let Some(rec) = &mut audio_recorder {
+                rec.push(&mix_buffer);
             }
 
             // Load reporting
@@ -1264,6 +1377,7 @@ pub fn start_audio_playback(
     audio_device_name: Option<String>,
     sample_rate: u32,
     tui_tx: mpsc::Sender<TuiMessage>,
+    shared_midi_recorder: Arc<Mutex<Option<MidiRecorder>>>,
 ) -> Result<Stream> {
     let available_hosts = cpal::available_hosts();
     log::info!("[Cpal] Available audio hosts:");
@@ -1349,7 +1463,7 @@ pub fn start_audio_playback(
     let (producer, mut consumer) = ring_buf.split();
 
     // Spawn the audio processing thread
-    spawn_audio_processing_thread(rx, producer, organ, sample_rate, buffer_size_frames, gain, polyphony, tui_tx.clone());
+    spawn_audio_processing_thread(rx, producer, organ, sample_rate, buffer_size_frames, gain, polyphony, tui_tx.clone(), shared_midi_recorder);
 
     let mut stereo_read_buffer: Vec<f32> = vec![0.0; buffer_size_frames * 2];
 
