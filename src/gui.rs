@@ -17,6 +17,7 @@ use crate::{
     app_state::{AppState, Preset},
     organ::Organ,
     input::MusicCommand,
+    gui_midi_learn::{MidiLearnState, draw_midi_learn_modal},
 };
 
 #[allow(dead_code)]
@@ -39,6 +40,7 @@ pub struct EguiApp {
     preset_save_name: String,
     reverb_files: Vec<(String, PathBuf)>,
     selected_reverb_index: Option<usize>,
+    midi_learn_state: MidiLearnState,
 }
 
 /// Runs the main GUI loop.
@@ -79,6 +81,7 @@ pub fn run_gui_loop(
         preset_save_name: String::new(),
         reverb_files,
         selected_reverb_index,
+        midi_learn_state: MidiLearnState::default(),
     };
 
     let native_options = eframe::NativeOptions {
@@ -294,8 +297,10 @@ impl App for EguiApp {
             &presets
         );
 
-        // Draw preset save modal if needed
+        // Draw modals if needed
         self.draw_preset_save_modal(ctx);
+        draw_midi_learn_modal(ctx, self.app_state.clone(), &mut self.midi_learn_state);
+
     }
 
     // Handle quit request (e.g., pressing 'X' on window)
@@ -720,6 +725,10 @@ impl EguiApp {
                             self.selected_stop_index = Some(i);
                             // User clicked, don't auto-scroll
                             self.selection_changed_by_key = false; 
+                            self.midi_learn_state.is_open = true;
+                            self.midi_learn_state.target_stop_index = i;
+                            self.midi_learn_state.target_stop_name = stop.name.clone();
+                            self.midi_learn_state.learning_slot = None;
                         }
                         
                         // Auto-scroll if selection changed by key

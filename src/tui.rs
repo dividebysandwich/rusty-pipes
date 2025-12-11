@@ -19,6 +19,7 @@ use std::{
 use crate::app::{AppMessage};
 use crate::app_state::AppState;
 use crate::input::MusicCommand;
+use crate::tui_midi_learn::{MidiLearnTuiState, draw_midi_learn_modal};
 
 const NUM_COLUMNS: usize = 3; // Number of columns for the stop list
 
@@ -26,6 +27,7 @@ const NUM_COLUMNS: usize = 3; // Number of columns for the stop list
 enum AppMode {
     MainApp,
     PresetSaveName(usize, String), // Holds (slot_index, current_name_buffer)
+    MidiLearn,
 }
 
 /// Holds the state specific to the TUI.
@@ -35,6 +37,7 @@ struct TuiState {
     list_state: ListState, // TUI-specific selection state
     items_per_column: usize,
     stops_count: usize,
+    midi_learn_state: MidiLearnTuiState,
 }
 
 impl TuiState {
@@ -56,6 +59,7 @@ impl TuiState {
             list_state,
             items_per_column,
             stops_count,
+            midi_learn_state: MidiLearnTuiState::default(),
         })
     }
     
@@ -132,6 +136,12 @@ pub fn run_tui_loop(
 
     loop {
         thread::sleep(Duration::from_millis(10));
+
+        // Check for incoming MIDI if in Learn Mode
+        if tui_state.mode == AppMode::MidiLearn {
+            tui_state.midi_learn_state.check_for_midi_input(&tui_state.app_state);
+        }
+
         // Update piano roll state before drawing
         tui_state.app_state.lock().unwrap().update_piano_roll_state();
 
@@ -235,6 +245,17 @@ pub fn run_tui_loop(
                                             KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::SHIFT) => {
                                                 tui_state.select_none_channels_for_stop(&audio_tx)?;
                                             }
+                                            // Open MIDI learn dialog
+                                            KeyCode::Char('i') => {
+                                                if let Some(idx) = tui_state.list_state.selected() {
+                                                    let stop_name = {
+                                                        let state = tui_state.app_state.lock().unwrap();
+                                                        state.organ.stops[idx].name.clone()
+                                                    };
+                                                    tui_state.midi_learn_state.reset(idx, stop_name);
+                                                    tui_state.mode = AppMode::MidiLearn;
+                                                }
+                                            }
                                             KeyCode::F(n) if (1..=12).contains(&n) && key.modifiers.contains(KeyModifiers::SHIFT) => {
                                                 let slot = (n - 1) as usize;
                                                 let current_name = tui_state.app_state.lock().unwrap().presets[slot]
@@ -286,6 +307,13 @@ pub fn run_tui_loop(
                                             tui_state.mode = AppMode::MainApp;
                                         }
                                         _ => {} // Ignore other keys
+                                    }
+                                },
+                                // Handle MIDI Learn Input
+                                AppMode::MidiLearn => {
+                                    let keep_open = tui_state.midi_learn_state.handle_input(key.code, &tui_state.app_state);
+                                    if !keep_open {
+                                        tui_state.mode = AppMode::MainApp;
                                     }
                                 }
                             }
@@ -346,7 +374,7 @@ fn draw_main_app_ui(
             .style(Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD))
     } else {
         let status = format!(
-            "{}CPU: {:.1}% | Gain: {:.0}% | Voices: {}/{} | [Q]uit | [P]anic | +/-:Gain | E/R:Octave | [/]:Poly | F1-12:Recall | Shift+F1-12:Save", 
+            "{}CPU: {:.1}% | Gain: {:.0}% | Voices: {}/{} | [Q]uit [P]anic +/-:Gain E/R:Octave [/]:Poly F1-12:Recall Shift+F1-12:Save [I]:MIDI Learn", 
             rec_status,
             app_state.cpu_load * 100.0,
             app_state.gain * 100.0, 
@@ -545,7 +573,10 @@ fn ui(frame: &mut Frame, state: &mut TuiState) {
             );
             // Draw the modal on top
             draw_preset_save_modal(frame, slot, &name_buffer);
-        }
+        },
+        AppMode::MidiLearn => {
+            draw_midi_learn_modal(frame, &state.midi_learn_state, &app_state_locked);
+        },
     }
 }
 

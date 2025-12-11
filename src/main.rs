@@ -12,20 +12,23 @@ use midir::MidiInput;
 
 mod app;
 mod audio;
+mod config;
 mod midi;
+mod midi_control;
 mod organ;
 mod tui;
 mod wav;
 mod wav_converter;
 mod app_state;
 mod gui;
+mod gui_midi_learn;
 mod gui_filepicker;
-mod tui_filepicker;
-mod config;
-mod tui_config;
-mod tui_midi;
 mod gui_config;
 mod gui_midi;
+mod tui_filepicker;
+mod tui_config;
+mod tui_midi;
+mod tui_midi_learn;
 mod loading_ui;
 mod input;
 

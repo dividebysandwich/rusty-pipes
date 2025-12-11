@@ -16,6 +16,7 @@ use crate::{
     config::{load_settings, save_settings, MidiDeviceConfig},
     input::KeyboardLayout,
     midi::MidiRecorder,
+    midi_control::{MidiControlMap, MidiEventSpec},
 };
 
 // --- Shared Constants & Types ---
@@ -88,6 +89,9 @@ pub struct AppState {
     pub active_tremulants: BTreeSet<String>,
     pub is_recording_midi: bool,
     pub is_recording_audio: bool,
+    pub midi_control_map: MidiControlMap,
+    // Stores the last raw midi event received and when, used by the Learn UI
+    pub last_midi_event_received: Option<(MidiEventSpec, Instant)>,
 }
 
 pub fn get_preset_file_path() -> PathBuf {
@@ -106,6 +110,7 @@ impl AppState {
     ) -> Result<Self> {
 
         let presets = Self::load_presets(&organ.name);
+        let midi_control_map = MidiControlMap::load(&organ.name);
 
         Ok(Self {
             organ,
@@ -129,6 +134,8 @@ impl AppState {
             active_tremulants: BTreeSet::new(),
             is_recording_midi: false,
             is_recording_audio: false,
+            midi_control_map,
+            last_midi_event_received: None,
         })
     }
     
@@ -216,6 +223,24 @@ impl AppState {
          match msg {
             // --- Raw MIDI events ---
             TuiMessage::MidiNoteOn(note, vel, channel) => {
+                // MIDI control learning
+                self.last_midi_event_received = Some((
+                    MidiEventSpec { channel, note, is_note_off: false },
+                    Instant::now()
+                ));
+                
+                // Check if this triggers any stop changes
+                let actions = self.midi_control_map.check_event(channel, note, false);
+                for (stop_idx, internal_ch, set_active) in actions {
+                    if set_active {
+                        let _ = self.toggle_stop_channel(stop_idx, internal_ch, audio_tx); // Reuse logic, though toggle logic needs care
+                        // Actually, toggle_stop_channel toggles. We want explicit Set.
+                        self.set_stop_channel_state(stop_idx, internal_ch, true, audio_tx)?;
+                    } else {
+                        self.set_stop_channel_state(stop_idx, internal_ch, false, audio_tx)?;
+                    }
+                }
+
                 // Track the active note
                 self.channel_active_notes.entry(channel).or_default().insert(note);
                 // Find all stops mapped to this channel and send AppMessage
@@ -229,6 +254,17 @@ impl AppState {
                 }
             },
             TuiMessage::MidiNoteOff(note, channel) => {
+                // MIDI control learning
+                self.last_midi_event_received = Some((
+                    MidiEventSpec { channel, note, is_note_off: true },
+                    Instant::now()
+                ));
+                // Check if this triggers any stop changes
+                let actions = self.midi_control_map.check_event(channel, note, true);
+                for (stop_idx, internal_ch, set_active) in actions {
+                     self.set_stop_channel_state(stop_idx, internal_ch, set_active, audio_tx)?;
+                }
+                
                 // Stop tracking the active note
                 if let Some(notes) = self.channel_active_notes.get_mut(&channel) {
                     notes.remove(&note);
@@ -274,6 +310,34 @@ impl AppState {
         Ok(())
     }
 
+    // Helper to explicit set (not toggle) channel state
+    pub fn set_stop_channel_state(
+        &mut self,
+        stop_index: usize,
+        channel: u8,
+        active: bool,
+        audio_tx: &Sender<AppMessage>
+    ) -> Result<()> {
+        let stop_set = self.stop_channels.entry(stop_index).or_default();
+        let was_active = stop_set.contains(&channel);
+
+        if active && !was_active {
+            stop_set.insert(channel);
+        } else if !active && was_active {
+            stop_set.remove(&channel);
+            // Cut notes if disabling
+            if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
+                if let Some(stop) = self.organ.stops.get(stop_index) {
+                    let stop_name = stop.name.clone();
+                    for &note in notes_to_stop {
+                        audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    
     /// Simulates a MIDI event from the computer keyboard on Channel 1 (Index 0).
     /// handles audio dispatching and visual state updates.
     pub fn handle_keyboard_note(&mut self, note: u8, velocity: u8, audio_tx: &Sender<AppMessage>) {
