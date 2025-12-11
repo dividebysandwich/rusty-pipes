@@ -15,7 +15,7 @@ use crate::{
     organ::Organ,
     config::{load_settings, save_settings, MidiDeviceConfig},
     input::KeyboardLayout,
-    midi::MidiRecorder,
+    midi_recorder::MidiRecorder,
     midi_control::{MidiControlMap, MidiEventSpec},
 };
 
@@ -337,7 +337,7 @@ impl AppState {
         }
         Ok(())
     }
-    
+
     /// Simulates a MIDI event from the computer keyboard on Channel 1 (Index 0).
     /// handles audio dispatching and visual state updates.
     pub fn handle_keyboard_note(&mut self, note: u8, velocity: u8, audio_tx: &Sender<AppMessage>) {

@@ -20,7 +20,7 @@ use crate::app::{ActiveNote, AppMessage};
 use crate::organ::Organ;
 use crate::wav::{parse_wav_metadata, WavSampleReader, parse_smpl_chunk};
 use crate::TuiMessage;
-use crate::midi::MidiRecorder;
+use crate::midi_recorder::MidiRecorder;
 
 const CHANNEL_COUNT: usize = 2; // Stereo
 const VOICE_BUFFER_FRAMES: usize = 14400; 

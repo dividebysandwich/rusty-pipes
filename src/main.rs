@@ -15,6 +15,7 @@ mod audio;
 mod config;
 mod midi;
 mod midi_control;
+mod midi_recorder;
 mod organ;
 mod tui;
 mod wav;
