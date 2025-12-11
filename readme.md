@@ -276,6 +276,8 @@ Options:
           How many audio frames to pre-load for each pipe's samples (uses RAM, prevents buffer underruns)
       --tui
           Run in terminal UI (TUI) mode as a fallback
+      --api-server-port <API_PORT>
+          HTTP Port that the REST API server will listen on [default: 8080]
   -h, --help
           Print help
   -V, --version
@@ -287,6 +289,13 @@ Options:
 This example loads the Hauptwerk sample set "GreenPositiv", using convolutional reverb at a 70% wet, 30% dry mix, and using an impulse response file from [Lars Virtual Pipe Organ Site](https://familjenpalo.se/vpo/ir-recordings/)
 
 ```rusty-pipes --ir-file BureaChurchRev1at24-48.wav --reverb-mix 0.7 /home/user/Hauptwerk/Organs/GreenPositiv/OrganDefinitions/GreenPositiv.Organ_Hauptwerk_xml```
+
+## REST API
+
+RustyPipes can be controlled via HTTP/REST requests. The default port for the API is 8080 but can be changed with a command line parameter. Accessing http://localhost:8080/ with a web browser will display a Swagger UI that documents the available API functions and also lets you try them out directly.
+
+> [!NOTE]
+> The REST API is only available once an organ has been loaded and RustyPipes is ready to play.
 
 ## Compiling
 
