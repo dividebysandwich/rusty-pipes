@@ -40,6 +40,7 @@ Cesar Franck - Chorale No. 3 - Frisach organ: [[FLAC](https://playspoon.com/file
 * MIDI mappings are saved to disk for each organ (by name)
 * MIDI file playback
 * MIDI and Audio recording of performances
+* MIDI-learning for control of stops, saved to file for each organ
 * Graphical and text mode (TUI) user interface
 
 ## Missing features / Limitations / Known Issues
@@ -260,10 +261,26 @@ When you start the program for the first time, no stop will have any MIDI channe
 | Shift-N | Disable all MIDI channels on selected stop |
 | Shift-R | Start/Stop audio recording |
 | Shift-M | Start/Stop midi recording |
+| I | Set up MIDI control for selected organ stop |
 | - + | Decrease/Increase gain |
 | [ ] | Decrease/Increase polyphony |
 | P | Panic (All notes turn off) |
 | Q | Quit |
+
+## MIDI Control of Organ Stops
+
+Rusty Pipes supports the activation/deactivation of organ stops via MIDI events. In GUI mode, click on a Stop name to open the configuration dialog. In TUI mode, press the [i] key.
+
+Each of the 16 virtual organ MIDI channels can be assigned a MIDI event to enable or disable the current organ Stop on that channel. It does not matter which physical MIDI device or MIDI channel that event comes from. Clicking the learn button will start listening for a midi event. Learned events can be forgotten via the clear button.
+
+These MIDI event assignments are saved to a JSON file for each organ.
+
+## MIDI and Audio recording of performances
+
+Live performances can be recorded as MIDI and Audio. Both recording types can be active at the same time.
+The recordings are saved in the user's config directory in the "recordings" subfolder, and are named with the organ name and the current timestamp.
+
+The record buttons are at the bottom of the window in GUI mode. In TUI mode use the keyboard shortcuts to start/stop recording.
 
 ## Compiling
 
