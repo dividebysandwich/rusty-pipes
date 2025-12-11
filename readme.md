@@ -76,6 +76,53 @@ Apple's OS prevents users from running unsigned programs. To bypass this mechani
 2. Access System Settings: Go to Apple menu > System Settings > Privacy & Security.
 3. Allow the App: Scroll down to find RustyPipes and click "Open Anyway." You may need to enter your password to confirm.
 
+## Main User Interface
+
+RustyPipes defaults to a graphical user interface, but it also supports a text-based console user interface.
+Both work the same: You assign MIDI channels to individual stops, and you can store those in one of 10 presets and recall them at any time.
+When you start the program for the first time, no stop will have any MIDI channel assigned so no sound will be heard until this is done.
+
+<img width="1693" height="879" alt="image" src="https://github.com/user-attachments/assets/e9a0ec69-5645-4033-a47b-a01f9d25348b" />
+
+
+| Input | Action |
+| ----------- | ----------- |
+| Cursor keys| Select organ stop / register |
+| Z,S,X,D,C... | Play notes on keyboard | 
+| 1,2,3...0 | Map MIDI channel to selected stop |
+| Shift+F1..Shift+F10 | Save current MIDI mapping into one of 10 slots |
+| F1..F10 | Load MIDI mapping of given slot |
+| Shift-A | Enable all MIDI channels on selected stop |
+| Shift-N | Disable all MIDI channels on selected stop |
+| Shift-R | Start/Stop audio recording |
+| Shift-M | Start/Stop midi recording |
+| I | Set up MIDI control for selected organ stop |
+| - + | Decrease/Increase gain |
+| [ ] | Decrease/Increase polyphony |
+| P | Panic (All notes turn off) |
+| Q | Quit |
+
+## MIDI Control of Organ Stops
+
+Rusty Pipes supports the activation/deactivation of organ stops via MIDI events. In GUI mode, click on a Stop name to open the configuration dialog. In TUI mode, press the [i] key.
+
+<img width="403" height="575" alt="image" src="https://github.com/user-attachments/assets/665ce46f-6554-4bbe-8a11-341b29c678bc" />
+
+<img width="997" height="123" alt="image" src="https://github.com/user-attachments/assets/2457f2a7-46d1-4977-a2ee-79b6e63b96e5" />
+
+Each of the 16 virtual organ MIDI channels can be assigned a MIDI event to enable or disable the current organ Stop on that channel. It does not matter which physical MIDI device or MIDI channel that event comes from. Clicking the learn button will start listening for a midi event. Learned events can be forgotten via the clear button.
+
+These MIDI event assignments are saved to a JSON file for each organ.
+
+## MIDI and Audio recording of performances
+
+Live performances can be recorded as MIDI and Audio. Both recording types can be active at the same time.
+The recordings are saved in the user's config directory in the "recordings" subfolder, and are named with the organ name and the current timestamp.
+
+<img width="344" height="91" alt="image" src="https://github.com/user-attachments/assets/4d4e4ba9-4862-435a-b8d3-a3eb389ac97e" />
+
+The record buttons are at the bottom of the window in GUI mode. In TUI mode use the keyboard shortcuts to start/stop recording.
+
 ## Configuration Options
 
 The configuration dialog is shown on startup in both text and graphical mode, the settings are the same for both.
@@ -240,53 +287,6 @@ Options:
 This example loads the Hauptwerk sample set "GreenPositiv", using convolutional reverb at a 70% wet, 30% dry mix, and using an impulse response file from [Lars Virtual Pipe Organ Site](https://familjenpalo.se/vpo/ir-recordings/)
 
 ```rusty-pipes --ir-file BureaChurchRev1at24-48.wav --reverb-mix 0.7 /home/user/Hauptwerk/Organs/GreenPositiv/OrganDefinitions/GreenPositiv.Organ_Hauptwerk_xml```
-
-## Main User Interface
-
-RustyPipes defaults to a graphical user interface, but it also supports a text-based console user interface.
-Both work the same: You assign MIDI channels to individual stops, and you can store those in one of 10 presets and recall them at any time.
-When you start the program for the first time, no stop will have any MIDI channel assigned so no sound will be heard until this is done.
-
-<img width="1693" height="879" alt="image" src="https://github.com/user-attachments/assets/e9a0ec69-5645-4033-a47b-a01f9d25348b" />
-
-
-| Input | Action |
-| ----------- | ----------- |
-| Cursor keys| Select organ stop / register |
-| Z,S,X,D,C... | Play notes on keyboard | 
-| 1,2,3...0 | Map MIDI channel to selected stop |
-| Shift+F1..Shift+F10 | Save current MIDI mapping into one of 10 slots |
-| F1..F10 | Load MIDI mapping of given slot |
-| Shift-A | Enable all MIDI channels on selected stop |
-| Shift-N | Disable all MIDI channels on selected stop |
-| Shift-R | Start/Stop audio recording |
-| Shift-M | Start/Stop midi recording |
-| I | Set up MIDI control for selected organ stop |
-| - + | Decrease/Increase gain |
-| [ ] | Decrease/Increase polyphony |
-| P | Panic (All notes turn off) |
-| Q | Quit |
-
-## MIDI Control of Organ Stops
-
-Rusty Pipes supports the activation/deactivation of organ stops via MIDI events. In GUI mode, click on a Stop name to open the configuration dialog. In TUI mode, press the [i] key.
-
-<img width="403" height="575" alt="image" src="https://github.com/user-attachments/assets/665ce46f-6554-4bbe-8a11-341b29c678bc" />
-
-<img width="997" height="123" alt="image" src="https://github.com/user-attachments/assets/2457f2a7-46d1-4977-a2ee-79b6e63b96e5" />
-
-Each of the 16 virtual organ MIDI channels can be assigned a MIDI event to enable or disable the current organ Stop on that channel. It does not matter which physical MIDI device or MIDI channel that event comes from. Clicking the learn button will start listening for a midi event. Learned events can be forgotten via the clear button.
-
-These MIDI event assignments are saved to a JSON file for each organ.
-
-## MIDI and Audio recording of performances
-
-Live performances can be recorded as MIDI and Audio. Both recording types can be active at the same time.
-The recordings are saved in the user's config directory in the "recordings" subfolder, and are named with the organ name and the current timestamp.
-
-<img width="344" height="91" alt="image" src="https://github.com/user-attachments/assets/4d4e4ba9-4862-435a-b8d3-a3eb389ac97e" />
-
-The record buttons are at the bottom of the window in GUI mode. In TUI mode use the keyboard shortcuts to start/stop recording.
 
 ## Compiling
 
