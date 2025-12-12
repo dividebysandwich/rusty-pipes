@@ -1221,11 +1221,6 @@ impl Organ {
                 props.get(key_upper).or_else(|| props.get(key_lower)).and_then(|opt| opt.as_deref()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string()).trim().replace("__HASH__", "#").to_string()
             };
             
-            let name = get_prop("Name", "name", "");
-            // If it's the "Release" part of a key action, the main pipe is usually "BlankLoop.wav". 
-            // We strictly want the release samples, but we might skip the attack sample processing if it's blank.
-            let is_blank_attack = name.contains("Key action") && name.contains("Release");
-
             let pipe_count: usize = get_prop("NumberOfLogicalPipes", "numberoflogicalpipes", "0").parse().unwrap_or(0);
             
             for i in 1..=pipe_count {
