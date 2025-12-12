@@ -700,19 +700,13 @@ impl EguiApp {
                 // Render all stops for this column
                 for i in start_idx..end_idx {
                     let is_selected = self.selected_stop_index == Some(i);
-                    let active_channels = stop_channels
-                        .get(&i)
-                        .cloned()
-                        .unwrap_or_default();
+                    let active_channels = stop_channels.get(&i).cloned().unwrap_or_default();
                     let is_active = !active_channels.is_empty();
                     let stop = &stops[i];
 
                     ui.vertical(|ui| { 
-                            
-                        // Stop Name (on top)
-                        let label_text = egui::RichText::new(&stop.name)
-                            .size(18.0); 
-                            
+                        // --- Stop Name ---
+                        let label_text = egui::RichText::new(&stop.name).size(18.0); 
                         let label_text = if is_active {
                             label_text.color(egui::Color32::from_rgb(100, 255, 100))
                         } else {
@@ -738,23 +732,52 @@ impl EguiApp {
                         
                         // Toggles (below)
                         ui.group(|ui| {
-                            // Use horizontal_wrapped to allow toggles to "scale"
-                            ui.horizontal_wrapped(|ui| {
-                                for chan in 0..16u8 {
-                                    let is_on = active_channels.contains(&chan);
-                                    let chan_label = (chan + 1).to_string();
-                                    let toggle_text = egui::RichText::new(chan_label)
-                                        .size(18.0);
-                                    
-                                    if ui.selectable_label(is_on, toggle_text).clicked() {
-                                        let mut app_state = self.app_state.lock().unwrap();
-                                        if let Err(e) = app_state.toggle_stop_channel(i, chan, &self.audio_tx) {
-                                            app_state.add_midi_log(format!("ERROR: {}", e));
-                                        }
+                            let available_width = ui.available_width();
+                            let spacing = ui.spacing().item_spacing.x;
+                            
+                            // Check if we have room for 16 buttons side-by-side.
+                            // Assuming ~24px minimum per button: 16 * 24 = 384px.
+                            let breakpoint = 380.0;
+                            let is_wide = available_width > breakpoint;
+
+                            // Calculate exact button width to fill the space perfectly
+                            let buttons_per_row = if is_wide { 16.0 } else { 8.0 };
+                            let total_spacing = (buttons_per_row - 1.0) * spacing;
+                            let btn_width = (available_width - total_spacing) / buttons_per_row;
+                            
+                            // We use a fixed height (e.g., 20.0) so rows align perfectly
+                            let btn_size = egui::vec2(btn_width, 20.0);
+
+                            // Helper to draw a specific button
+                            let draw_btn = |ui: &mut egui::Ui, chan: u8| {
+                                let is_on = active_channels.contains(&chan);
+                                let text = (chan + 1).to_string();
+                                
+                                // add_sized forces the layout to respect our calculated width
+                                if ui.add_sized(
+                                    btn_size, 
+                                    egui::Button::new(text).selected(is_on)
+                                ).clicked() {
+                                    let mut app_state = self.app_state.lock().unwrap();
+                                    if let Err(e) = app_state.toggle_stop_channel(i, chan, &self.audio_tx) {
+                                        app_state.add_midi_log(format!("ERROR: {}", e));
                                     }
                                 }
-                            });
-                        }); // End toggle group
+                            };
+
+                            if is_wide {
+                                // Wide screen: One single row of 16 buttons (No gap in middle)
+                                ui.horizontal(|ui| {
+                                    for c in 0..16 { draw_btn(ui, c); }
+                                });
+                            } else {
+                                // Narrow screen: Two stacked rows of 8 buttons
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| { for c in 0..8 { draw_btn(ui, c); } });
+                                    ui.horizontal(|ui| { for c in 8..16 { draw_btn(ui, c); } });
+                                });
+                            }
+                        }); 
                     });
 
                     ui.add_space(2.0); // Add a small gap between stops
