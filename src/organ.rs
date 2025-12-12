@@ -47,6 +47,7 @@ pub struct Rank {
     pub windchest_group_id: Option<String>, // Link to a WindchestGroup
     /// Keyed by MIDI note number (e.g., 36)
     pub pipes: HashMap<u8, Pipe>,
+    pub is_percussive: bool,
 }
 
 /// Represents a Windchest Group (defines shared tremulants/enclosures).
@@ -758,6 +759,7 @@ impl Organ {
                 gain_db: 0.0,
                 tracker_delay_ms: 0,
                 windchest_group_id: None, // Hauptwerk parser default
+                is_percussive: false,
             });
         }
 
@@ -1219,6 +1221,11 @@ impl Organ {
                 props.get(key_upper).or_else(|| props.get(key_lower)).and_then(|opt| opt.as_deref()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string()).trim().replace("__HASH__", "#").to_string()
             };
             
+            let name = get_prop("Name", "name", "");
+            // If it's the "Release" part of a key action, the main pipe is usually "BlankLoop.wav". 
+            // We strictly want the release samples, but we might skip the attack sample processing if it's blank.
+            let is_blank_attack = name.contains("Key action") && name.contains("Release");
+
             let pipe_count: usize = get_prop("NumberOfLogicalPipes", "numberoflogicalpipes", "0").parse().unwrap_or(0);
             
             for i in 1..=pipe_count {
@@ -1230,15 +1237,18 @@ impl Organ {
                     // Ignore "REF:" entries (GrandOrgue aliases)
                     if attack_path_str.starts_with("REF:") { continue; }
 
-                    let attack_path_str = attack_path_str.replace('\\', "/");
                     let mut pitch_tuning_cents: f32 = get_prop(&format!("{}PitchTuning", pipe_key_prefix_upper), &format!("{}pitchtuning", pipe_key_prefix_lower), "0.0").parse().unwrap_or(0.0);
-                    if original_tuning && pitch_tuning_cents.abs() <= 20.0 { pitch_tuning_cents = 0.0; }
 
-                    conversion_tasks.insert(ConversionTask {
-                        relative_path: PathBuf::from(&attack_path_str),
-                        tuning_cents_int: (pitch_tuning_cents * 100.0) as i32,
-                        to_16bit: convert_to_16_bit,
-                    });
+                    if !attack_path_str.contains("BlankLoop") {
+                        let attack_path_str = attack_path_str.replace('\\', "/");
+                        if original_tuning && pitch_tuning_cents.abs() <= 20.0 { pitch_tuning_cents = 0.0; }
+
+                        conversion_tasks.insert(ConversionTask {
+                            relative_path: PathBuf::from(&attack_path_str),
+                            tuning_cents_int: (pitch_tuning_cents * 100.0) as i32,
+                            to_16bit: convert_to_16_bit,
+                        });
+                    }
 
                     let release_count: usize = get_prop(&format!("{}ReleaseCount", pipe_key_prefix_upper), &format!("{}releasecount", pipe_key_prefix_lower), "0").parse().unwrap_or(0);
                     for r_idx in 1..=release_count {
@@ -1307,33 +1317,33 @@ impl Organ {
         }
 
         // --- Build Windchest Groups ---
-         for (section_name, props) in conf.iter() {
-             let section_lower = section_name.to_lowercase();
-             if section_lower.starts_with("windchestgroup") {
-                 let get_prop = |key_upper: &str, key_lower: &str, default: &str| {
+        for (section_name, props) in conf.iter() {
+            let section_lower = section_name.to_lowercase();
+            if section_lower.starts_with("windchestgroup") {
+                let get_prop = |key_upper: &str, key_lower: &str, default: &str| {
                     props.get(key_upper).or_else(|| props.get(key_lower)).and_then(|opt| opt.as_deref()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string()).trim().replace("__HASH__", "#").to_string()
                 };
-
-                 let id_str = section_name.trim_start_matches("windchestgroup").trim_start_matches("WindchestGroup").to_string();
-                 let name = get_prop("Name", "name", "");
+                
+                let id_str = section_name.trim_start_matches("windchestgroup").trim_start_matches("WindchestGroup").to_string();
+                let name = get_prop("Name", "name", "");
                  
-                 let tremulant_count: usize = get_prop("NumberOfTremulants", "numberoftremulants", "0").parse().unwrap_or(0);
-                 let mut tremulant_ids = Vec::new();
-                 for i in 1..=tremulant_count {
-                     // Usually formatted as Tremulant001=001
-                     if let Some(trem_id) = get_prop(&format!("Tremulant{:03}", i), &format!("tremulant{:03}", i), "").non_empty_or(None) {
-                         tremulant_ids.push(trem_id);
-                     }
-                 }
+                let tremulant_count: usize = get_prop("NumberOfTremulants", "numberoftremulants", "0").parse().unwrap_or(0);
+                let mut tremulant_ids = Vec::new();
+                for i in 1..=tremulant_count {
+                    // Usually formatted as Tremulant001=001
+                    if let Some(trem_id) = get_prop(&format!("Tremulant{:03}", i), &format!("tremulant{:03}", i), "").non_empty_or(None) {
+                        tremulant_ids.push(trem_id);
+                    }
+                }
 
                 log::info!("Loaded Windchest Group '{}' (ID: {}) with {} tremulants.", name, id_str, tremulant_ids.len());
 
-                 windchest_groups_map.insert(id_str.clone(), WindchestGroup {
-                     id_str,
-                     name,
-                     tremulant_ids,
-                 });
-             }
+                windchest_groups_map.insert(id_str.clone(), WindchestGroup {
+                    id_str,
+                    name,
+                    tremulant_ids,
+                });
+            }
         }
 
         // --- Build Ranks ---
@@ -1351,6 +1361,8 @@ impl Organ {
             let get_prop = |key_upper: &str, key_lower: &str, default: &str| {
                 props.get(key_upper).or_else(|| props.get(key_lower)).and_then(|opt| opt.as_deref()).map(|s| s.to_string()).unwrap_or_else(|| default.to_string()).trim().replace("__HASH__", "#").to_string()
             };
+
+            let is_percussive = get_prop("Percussive", "percussive", "N").eq_ignore_ascii_case("Y");
 
             // Extract ID: "Rank001" -> "001", "Stop001" -> "001"
             let id_str = if is_explicit_rank {
@@ -1462,9 +1474,72 @@ impl Organ {
                 gain_db, 
                 tracker_delay_ms, 
                 windchest_group_id,
-                pipes 
+                pipes,
+                is_percussive,
             });
         }
+
+        log::info!("Scanning for Key Action noise pairs to merge...");
+
+        // Identify pairs. Map key is the "Base Name" (e.g., "Key action Manual 1").
+        // Value is (Option<AttackRankID>, Option<ReleaseRankID>)
+        let mut noise_pairs: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+
+        for rank in ranks_map.values() {
+            if rank.name.contains("Key action") {
+                let name_lower = rank.name.to_lowercase();
+                // Determine base name by stripping " attack" or " release"
+                let base_name = if name_lower.ends_with(" attack") {
+                    rank.name[..rank.name.len() - 7].trim().to_string()
+                } else if name_lower.ends_with(" release") {
+                    rank.name[..rank.name.len() - 8].trim().to_string()
+                } else {
+                    rank.name.clone()
+                };
+
+                let entry = noise_pairs.entry(base_name).or_insert((None, None));
+                if name_lower.contains("attack") {
+                    entry.0 = Some(rank.id_str.clone());
+                } else if name_lower.contains("release") {
+                    entry.1 = Some(rank.id_str.clone());
+                }
+            }
+        }
+
+        // Perform Merge
+        let mut ranks_to_remove = Vec::new();
+
+        for (base_name, (attack_id_opt, release_id_opt)) in noise_pairs {
+            if let (Some(attack_id), Some(release_id)) = (attack_id_opt, release_id_opt) {
+                log::info!("Merging Noise Ranks: '{}' <- '{}' (Base: {})", attack_id, release_id, base_name);
+        
+                // We need to extract the release rank to steal its pipes
+                // Note: We cannot borrow ranks_map mutably twice, so we remove the release rank now.
+                if let Some(mut release_rank) = ranks_map.remove(&release_id) {
+                    if let Some(attack_rank) = ranks_map.get_mut(&attack_id) {
+                        // Update the name to the base name (remove " Attack")
+                        attack_rank.name = base_name;
+                
+                        // Merge pipes
+                        for (note, release_pipe) in release_rank.pipes.drain() {
+                            if let Some(attack_pipe) = attack_rank.pipes.get_mut(&note) {
+                                // Move the releases from the release_rank pipe to the attack_rank pipe
+                                attack_pipe.releases.extend(release_pipe.releases);
+                        
+                                // Sort releases by time again to be safe
+                                attack_pipe.releases.sort_by_key(|r| if r.max_key_press_time_ms == -1 { i64::MAX } else { r.max_key_press_time_ms });
+                            } else {
+                                // If attack rank doesn't have this key, but release does, we might want to add it.
+                                // However, for key actions, they usually match 1:1.
+                                // If we add it, we must ensure the attack_sample_path is valid (not blank) or handled by engine.
+                            }
+                        }
+                    }
+                    ranks_to_remove.push(release_id); // Track ID to clean up Stop references later
+                }
+            }
+        }
+
 
         // --- Build Stops ---
         for (section_name, props) in conf.iter() {
@@ -1474,10 +1549,18 @@ impl Organ {
 
             if section_name.to_lowercase().starts_with("stop") {
                 let id_str = section_name.trim_start_matches("stop").trim_start_matches("Stop").to_string();
-                let name = get_prop("Name", "name", "");
+                let mut name = get_prop("Name", "name", "");
                 
-                if name.contains("Key action") || name.contains("noise") || name.is_empty() { continue; }
+                if name.contains("noise") || name.is_empty() { continue; }
                 
+                let rank_count: usize = get_prop("NumberOfRanks", "numberofranks", "0").parse().unwrap_or(0);
+                let mut rank_ids = Vec::new();
+                for i in 1..=rank_count {
+                    if let Some(rank_id) = get_prop(&format!("Rank{:03}", i), &format!("rank{:03}", i), "").non_empty_or(None) {
+                        rank_ids.push(rank_id.to_string());
+                    }
+                }
+
                 // Try to find explicitly linked ranks (Standard GO)
                 let rank_count: usize = get_prop("NumberOfRanks", "numberofranks", "0").parse().unwrap_or(0);
                 let mut rank_ids = Vec::new();
@@ -1494,6 +1577,15 @@ impl Organ {
                     }
                 }
 
+                if rank_ids.len() == 1 {
+                    if let Some(rank) = ranks_map.get(&rank_ids[0]) {
+                        // If the Rank is percussive/noise, use the Rank's clean name
+                        // (e.g. "Key action Manual 1" instead of "Key action Manual 1 Attack")
+                        if rank.is_percussive {
+                            name = rank.name.clone();
+                        }
+                    }
+                }
                 // Only add stop if it actually triggers something
                 if !rank_ids.is_empty() {
                     stops_map.insert(id_str.clone(), Stop { name, id_str, rank_ids });
