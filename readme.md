@@ -42,13 +42,13 @@ Cesar Franck - Chorale No. 3 - Frisach organ: [[FLAC](https://playspoon.com/file
 * MIDI and Audio recording of performances
 * MIDI-learning for control of stops, saved to file for each organ
 * Graphical and text mode (TUI) user interface
+* REST API for remote control and physical organ consoles
 
 ## Missing features / Limitations / Known Issues
 
 * Streaming mode will not work well on HDDs or slow SSDs (use precaching in such cases)
 * No support for split manuals and switches
 * Does not work as a plugin in DAWs
-* No support for percussive sound effects
 
 *Contributions to add the above or other features are welcome!*
 
