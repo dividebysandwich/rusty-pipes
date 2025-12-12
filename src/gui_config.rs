@@ -112,7 +112,7 @@ impl App for ConfigApp {
                     .show(ui, |ui| {
                         
                         // --- Organ File ---
-                        ui.label("Organ File:");
+                        ui.label("Organ File:").on_hover_text("Select the Hauptwerk organ file (.organ or Organ_Hauptwerk_xml) to load.");
                         ui.horizontal(|ui| {
                             let organ_text = path_to_str_truncated(self.state.settings.organ_file.as_deref());
                             let full_path = path_to_str_full(self.state.settings.organ_file.as_deref());
@@ -130,7 +130,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Audio Device ---
-                        ui.label("Audio Device:");
+                        ui.label("Audio Device:").on_hover_text("The audio device that shall be used for audio output");
                         let selected_audio_text = self.selected_audio_device_index
                             .and_then(|idx| self.state.available_audio_devices.get(idx))
                             .map_or("Default", |name| name.as_str());
@@ -167,7 +167,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Sample Rate ---
-                        ui.label("Sample Rate:");
+                        ui.label("Sample Rate:").on_hover_text("The sample rate at which the audio shall be mixed. Higher values use more CPU.");
                         egui::ComboBox::from_id_salt("sample_rate_combo")
                             .selected_text(format!("{} Hz", self.state.settings.sample_rate))
                             .show_ui(ui, |ui| {
@@ -180,7 +180,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- MIDI Device ---
-                        ui.label("MIDI Inputs:");
+                        ui.label("MIDI Inputs:").on_hover_text("Select which MIDI devices shall be used to control and play the organ.");
                         ui.vertical(|ui| {
                             if self.state.system_midi_ports.is_empty() {
                                 ui.label(egui::RichText::new("No devices found").weak());
@@ -209,7 +209,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- MIDI File ---
-                        ui.label("MIDI File (Play):");
+                        ui.label("MIDI File (Play):").on_hover_text("Select a MIDI file to play. This file will be played back through the virtual organ.");
                         ui.horizontal(|ui| {
                              let midi_text = path_to_str_truncated(self.state.midi_file.as_deref());
                              let full_path = path_to_str_full(self.state.midi_file.as_deref());
@@ -230,7 +230,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- IR File ---
-                        ui.label("Reverb (IR):");
+                        ui.label("Reverb (IR):").on_hover_text("Convolution reverb impulse response file. Select an IR (WAV) file to apply reverb to the output.");
             
                         let current_ir_name = self.selected_ir_index
                             .and_then(|idx| self.state.available_ir_files.get(idx))
@@ -261,7 +261,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Reverb Mix ---
-                        ui.label("Reverb Mix:");
+                        ui.label("Reverb Mix:").on_hover_text("Amount of convolution reverb applied to the output. 0.0 = dry (no reverb), 1.0 = fully wet (only reverb). Adjust to taste.");
                         // Make slider fill available width
                         ui.add(egui::Slider::new(&mut self.state.settings.reverb_mix, 0.0..=1.0)
                             .show_value(true)
@@ -270,7 +270,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Gain ---
-                        ui.label("Gain:");
+                        ui.label("Gain:").on_hover_text("Overall output volume. Adjust this to prevent clipping or to increase loudness.");
                         // Make slider fill available width
                         ui.add(egui::Slider::new(&mut self.state.settings.gain, 0.0..=1.0)
                             .show_value(true)
@@ -279,7 +279,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Polyphony ---
-                        ui.label("Polyphony:");
+                        ui.label("Polyphony:").on_hover_text("Maximum number of simultaneous voices. Voices past this limit will have a very short release tail. Lower values reduce the fullness of the organ but reduce CPU usage and risk of audio dropouts.");
                         // Make slider fill available width
                         ui.add(egui::Slider::new(&mut self.state.settings.polyphony, 1..=1024)
                             .show_value(true)
@@ -288,21 +288,22 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Audio Buffer ---
-                        ui.label("Audio Buffer (frames):");
+                        ui.label("Audio Buffer (frames):").on_hover_text("Number of audio frames per buffer. Higher values can reduce audio glitches on slower systems, but also increase audio latency.");
                         ui.add(egui::DragValue::new(&mut self.state.settings.audio_buffer_frames).speed(32.0).range(32..=4096));
                         ui.end_row();
 
                         // --- Preload Frames ---
-                        ui.label("Preload Frames:");
+                        ui.label("Preload Frames:").on_hover_text("Each sample's first few frames will be pre-loaded into RAM. Higher values give your disk more time to stream the remaining sample data, but this also uses more RAM. Increase this value if you have a slower SSD.");
                         ui.add(egui::DragValue::new(&mut self.state.settings.preload_frames).speed(32.0).range(1024..=99999999));
+
                         ui.end_row();
 
                         // --- Boolean Options ---
                         ui.label("Options:");
                         ui.vertical(|ui| {
-                            ui.checkbox(&mut self.state.settings.precache, "Pre-cache Samples");
-                            ui.checkbox(&mut self.state.settings.convert_to_16bit, "Convert to 16-bit");
-                            ui.checkbox(&mut self.state.settings.original_tuning, "Use Original Tuning");
+                            ui.checkbox(&mut self.state.settings.precache, "Pre-cache Samples").on_hover_text("Enable this to completely load all samples into RAM instead of streaming them from disk.");
+                            ui.checkbox(&mut self.state.settings.convert_to_16bit, "Convert to 16-bit").on_hover_text("Enable this to convert all samples to 16-bit depth for lower RAM usage and potentially better performance.");
+                            ui.checkbox(&mut self.state.settings.original_tuning, "Use Original Tuning").on_hover_text("Enable this to use the original tuning of the organ samples, as long as they are not off by more than 20 cents. Can help to preserve the original character of some organs.");
                         });
                         ui.end_row();
                     });
