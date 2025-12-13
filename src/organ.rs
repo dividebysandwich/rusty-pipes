@@ -569,14 +569,15 @@ impl Organ {
         target_sample_rate: u32,
         progress_tx: &Option<mpsc::Sender<(f32, String)>>,
     ) -> Result<Self> {
-        println!("Loading Hauptwerk organ from: {:?}", path);
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+        println!("Loading Hauptwerk organ from: {:?}", canonical_path);
         if let Some(tx) = progress_tx { let _ = tx.send((0.0, "Parsing XML...".to_string())); }
         
-        let organ_root_path = path.parent().and_then(|p| p.parent())
+        let organ_root_path = canonical_path.parent().and_then(|p| p.parent())
             .ok_or_else(|| anyhow!("Invalid Hauptwerk file path structure."))?;
-        let file_content = Self::read_file_tolerant(path)?;
-
-        let organ_name = path.file_stem().unwrap_or_default().to_string_lossy().replace(".Organ_Hauptwerk_xml", "");
+        let file_content = Self::read_file_tolerant(&canonical_path)?;
+        let organ_name = canonical_path.file_stem().unwrap_or_default().to_string_lossy().replace(".Organ_Hauptwerk_xml", "");
         let cache_path = Self::get_organ_cache_dir(&organ_name)?;
 
         let mut organ = Organ {
@@ -1176,17 +1177,18 @@ impl Organ {
         target_sample_rate: u32,
         progress_tx: &Option<mpsc::Sender<(f32, String)>>,
     ) -> Result<Self> {
-        println!("Loading GrandOrgue organ from: {:?}", path);
+        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        println!("Loading GrandOrgue organ from: {:?}", canonical_path);
         if let Some(tx) = progress_tx { let _ = tx.send((0.0, "Parsing GrandOrgue INI...".to_string())); }
 
-        let base_path = path.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
+        let base_path = canonical_path.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
         
-        let file_content = Self::read_file_tolerant(path)?;
+        let file_content = Self::read_file_tolerant(&canonical_path)?;
         
         let safe_content = file_content.replace('#', "__HASH__");
         let conf = inistr!(&safe_content);
 
-        let organ_name = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let organ_name = canonical_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
         let cache_path = Self::get_organ_cache_dir(&organ_name)?;
 
         let mut organ = Organ {
