@@ -186,6 +186,71 @@ fn scale_smpl_chunk_loops(
     Ok(())
 }
 
+/// Helper function to scale markers within a 'cue ' chunk's binary data.
+fn scale_cue_chunk_markers(
+    cue_data: &mut Vec<u8>,
+    ratio: f64
+) -> Result<()> {
+    // A 'cue ' chunk structure:
+    // dwCuePoints (4 bytes)
+    // CuePoints array (24 bytes each)
+    
+    if cue_data.len() < 4 {
+        return Err(anyhow!("'cue ' chunk too small (< 4 bytes)"));
+    }
+
+    let mut cursor = Cursor::new(cue_data);
+
+    // Read number of cue points
+    let num_points = cursor.read_u32::<LittleEndian>()?;
+    
+    // Validate size
+    let expected_size = 4 + (num_points as u64 * 24);
+    if (cursor.get_ref().len() as u64) < expected_size {
+        return Err(anyhow!("'cue ' chunk too small for {} points", num_points));
+    }
+
+    for i in 0..num_points {
+        let _point_start_pos = cursor.position();
+        
+        // Structure of a CuePoint (24 bytes):
+        // 0: dwName (ID) - u32
+        // 4: dwPosition (Play Order Position) - u32 <-- NEEDS SCALING
+        // 8: fccChunk (Chunk ID, e.g. 'data') - [u8; 4]
+        // 12: dwChunkStart (Chunk Start) - u32
+        // 16: dwBlockStart (Block Start) - u32
+        // 20: dwSampleOffset (Sample Offset) - u32 <-- NEEDS SCALING
+
+        // Skip dwName (4 bytes)
+        cursor.seek(SeekFrom::Current(4))?; 
+
+        // Read & Scale dwPosition
+        let pos = cursor.read_u32::<LittleEndian>()?;
+        let new_pos = (pos as f64 * ratio).round() as u32;
+        
+        // Write back dwPosition
+        cursor.seek(SeekFrom::Current(-4))?;
+        cursor.write_u32::<LittleEndian>(new_pos)?;
+
+        // Skip fccChunk (4), dwChunkStart (4), dwBlockStart (4) -> 12 bytes total
+        cursor.seek(SeekFrom::Current(12))?;
+
+        // Read & Scale dwSampleOffset
+        // In simple PCM WAVs, this is usually identical to dwPosition.
+        let offset = cursor.read_u32::<LittleEndian>()?;
+        let new_offset = (offset as f64 * ratio).round() as u32;
+
+        // Write back dwSampleOffset
+        cursor.seek(SeekFrom::Current(-4))?;
+        cursor.write_u32::<LittleEndian>(new_offset)?;
+
+        // Loop is done, cursor is naturally at the start of the next point
+        log::debug!("[WavConvert] Scaled Cue Point {}: {} -> {}", i, pos, new_pos);
+    }
+
+    Ok(())
+}
+
 // --- WAVPACK SUPPORT ---
 
 /// Fast probe to get metadata without decoding the whole file.
@@ -513,15 +578,53 @@ pub fn process_sample_file(
             oversampling_factor: 160,
             window: WindowFunction::BlackmanHarris,
         };
+
+        // FIXED: Process in chunks instead of one massive buffer
+        let chunk_size = 1024;
         let mut resampler = SincFixedIn::<f32>::new(
             resample_ratio,
             1.0,
             params,
-            input_waves[0].len(),
+            chunk_size,
             input_waves.len(),
         )?;
+
+        let num_frames = input_waves[0].len();
+        let num_chunks = (num_frames + chunk_size - 1) / chunk_size;
         
-        resampler.process(&input_waves, None)?
+        // Pre-allocate output with estimated size
+        let mut result_waves = vec![Vec::with_capacity((num_frames as f64 * resample_ratio).ceil() as usize + chunk_size); input_waves.len()];
+        
+        for i in 0..num_chunks {
+            let start = i * chunk_size;
+            let end = (start + chunk_size).min(num_frames);
+            let actual_len = end - start;
+            
+            // Prepare chunk input (channels -> chunk)
+            let mut chunk_input: Vec<Vec<f32>> = Vec::with_capacity(input_waves.len());
+            
+            for ch in 0..input_waves.len() {
+                // Slice the input
+                let mut channel_chunk = input_waves[ch][start..end].to_vec();
+                // Pad with zeros if this is the last chunk and it's smaller than chunk_size
+                if actual_len < chunk_size {
+                    channel_chunk.resize(chunk_size, 0.0);
+                }
+                chunk_input.push(channel_chunk);
+            }
+            
+            // Process the chunk
+            let chunk_output = resampler.process(&chunk_input, None)?;
+            
+            // Append result
+            for ch in 0..input_waves.len() {
+                result_waves[ch].extend_from_slice(&chunk_output[ch]);
+            }
+        }
+        
+        // Note: The last chunk might have added a tiny bit of silence due to padding, 
+        // but for organ samples (which decay), this is preferable to clicking.
+        result_waves
     } else {
         input_waves 
     };
@@ -532,6 +635,10 @@ pub fn process_sample_file(
         for chunk in other_chunks.iter_mut() {
             if &chunk.id == b"smpl" {
                 let _ = scale_smpl_chunk_loops(&mut chunk.data, resample_ratio, target_sample_rate);
+            } else if &chunk.id == b"cue " {
+                if let Err(e) = scale_cue_chunk_markers(&mut chunk.data, resample_ratio) {
+                     log::warn!("Failed to scale cue markers: {}", e);
+                }
             }
         }
     }

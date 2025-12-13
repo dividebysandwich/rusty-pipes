@@ -347,7 +347,7 @@ impl Organ {
         // Parse the organ definition and build the struct
         let mut organ = if extension == "organ" {
             Self::load_grandorgue(path, convert_to_16_bit, false, original_tuning, target_sample_rate, &loader_tx)?
-        } else if extension == "Organ_Hauptwerk_xml" {
+        } else if extension == "Organ_Hauptwerk_xml" || extension == "xml" {
             Self::load_hauptwerk(path, convert_to_16_bit, false, original_tuning, target_sample_rate, &loader_tx)?
         } else {
             return Err(anyhow!("Unsupported organ file format: {:?}", path));

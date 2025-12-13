@@ -121,7 +121,7 @@ impl App for ConfigApp {
                             if ui.button("Browse...").clicked() {
                                 if let Ok(Some(path)) = gui_filepicker::pick_file(
                                     "Select Organ File",
-                                    &[("Organ Files", &["organ", "Organ_Hauptwerk_xml"])]
+                                    &[("Organ Files", &["organ", "Organ_Hauptwerk_xml", "xml"])]
                                 ) {
                                     self.state.settings.organ_file = Some(path);
                                 }
