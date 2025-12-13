@@ -942,31 +942,81 @@ impl Organ {
             if let Some(xml_release_links) = release_map.get(&layer.id) {
                 for release_link in xml_release_links {
                     if let Some(release_sample_info) = sample_map.get(&release_link.sample_id) {
+                        
+                        // Construct the full relative path for the release
                         let rel_path_str = format!("OrganInstallationPackages/{:0>6}/{}", release_sample_info.installation_package_id, release_sample_info.path.replace('\\', "/"));
-                        match wav_converter::process_sample_file(
-                            &PathBuf::from(&rel_path_str),
-                            &organ.base_path,
-                            &organ.cache_path,
-                            final_pitch_tuning_cents,
-                            convert_to_16_bit,
-                            target_sample_rate,
-                        ) {
-                            Ok(final_rel_path) => {
+                        let rel_path_buf = PathBuf::from(&rel_path_str);
+
+                        // If the release points to the exact same file as the attack, 
+                        // we must try to extract the release tail using CUE markers.
+                        let is_self_reference = release_sample_info.path == attack_sample_info.path 
+                                             && release_sample_info.installation_package_id == attack_sample_info.installation_package_id;
+
+                        if is_self_reference {
+                            // Try to slice the file at the CUE marker
+                            if let Ok(Some(extracted_path)) = wav_converter::try_extract_release_sample(
+                                &rel_path_buf,
+                                &organ.base_path,
+                                &organ.cache_path,
+                                final_pitch_tuning_cents,
+                                convert_to_16_bit,
+                                target_sample_rate
+                            ) {
                                 releases.push(ReleaseSample {
-                                    path: final_rel_path,
+                                    path: extracted_path,
                                     max_key_press_time_ms: release_link.max_key_press_time_ms,
                                     preloaded_bytes: None,
                                 });
-                            },
-                            Err(e) => {
-                                // If a release sample fails, we just skip the release, but keep the pipe.
-                                log::warn!("Skipping release sample for LayerID {} due to error: {} - {}", layer.id, rel_path_str, e);
+                            } else {
+                                log::warn!("Layer {}: Self-referencing release has no valid CUE/Loop. Skipping to avoid double-attack.", layer.id);
+                            }
+                        } else {
+                            // Standard Processing: It's a separate file
+                            match wav_converter::process_sample_file(
+                                &rel_path_buf,
+                                &organ.base_path,
+                                &organ.cache_path,
+                                final_pitch_tuning_cents,
+                                convert_to_16_bit,
+                                target_sample_rate,
+                            ) {
+                                Ok(final_rel_path) => {
+                                    releases.push(ReleaseSample {
+                                        path: final_rel_path,
+                                        max_key_press_time_ms: release_link.max_key_press_time_ms,
+                                        preloaded_bytes: None,
+                                    });
+                                },
+                                Err(e) => {
+                                    log::warn!("Skipping release sample for LayerID {} due to error: {} - {}", layer.id, rel_path_str, e);
+                                }
                             }
                         }
                     }
                 }
             }
             releases.sort_by_key(|r| if r.max_key_press_time_ms == -1 { i64::MAX } else { r.max_key_press_time_ms });
+
+            // If no releases were found in XML, try to extract from the attack sample's CUE markers
+            if releases.is_empty() {
+                log::info!("Hauptwerk: No release samples defined for Pipe {:?}. Checking for embedded releases...", attack_sample_path_relative);
+                // We reuse the relative path and tuning from the attack sample logic
+                if let Ok(Some(extracted_path)) = wav_converter::try_extract_release_sample(
+                    &attack_sample_path_relative,
+                    &organ.base_path,
+                    &organ.cache_path,
+                    final_pitch_tuning_cents,
+                    convert_to_16_bit,
+                    target_sample_rate
+                ) {
+                    log::info!("Found embedded release sample for Pipe ID {}", pipe_info.id);
+                    releases.push(ReleaseSample {
+                        path: extracted_path,
+                        max_key_press_time_ms: -1, // Default release
+                        preloaded_bytes: None,
+                    });
+                }
+            }
 
             rank.pipes.insert(pipe_info.midi_note, Pipe {
                 attack_sample_path: final_attack_path,
@@ -1419,35 +1469,81 @@ impl Organ {
                     for r_idx in 1..=release_count {
                         let rel_key_upper = format!("{}Release{:03}", pipe_key_prefix_upper, r_idx);
                         let rel_key_lower = format!("{}release{:03}", pipe_key_prefix_lower, r_idx);
+                        
                         if let Some(rel_path_str) = get_prop(&rel_key_upper, &rel_key_lower, "").non_empty_or(None) {
-                            
                             if rel_path_str.starts_with("REF:") { continue; }
-
-                            let rel_path_relative = PathBuf::from(rel_path_str.replace('\\', "/"));
                             
-                            match wav_converter::process_sample_file(
-                                &rel_path_relative,
-                                &organ.base_path,
-                                &organ.cache_path,
-                                pitch_tuning_cents,
-                                convert_to_16_bit,
-                                target_sample_rate
-                            ) {
-                                Ok(final_rel_path) => {
+                            let rel_path_clean = rel_path_str.replace('\\', "/");
+                            let rel_path_buf = PathBuf::from(&rel_path_clean);
+
+                            // Check if release sample points to the same file as the attack sample
+                            // Compare the raw strings from the INI (normalized slashes)
+                            let is_self_reference = rel_path_clean == attack_path_str;
+
+                            if is_self_reference {
+                                if let Ok(Some(extracted_path)) = wav_converter::try_extract_release_sample(
+                                    &rel_path_buf,
+                                    &organ.base_path,
+                                    &organ.cache_path,
+                                    pitch_tuning_cents,
+                                    convert_to_16_bit,
+                                    target_sample_rate
+                                ) {
                                     let max_time: i64 = get_prop(&format!("{}MaxKeyPressTime", rel_key_upper), &format!("{}maxkeypresstime", rel_key_lower), "-1").parse().unwrap_or(-1);
                                     releases.push(ReleaseSample { 
-                                        path: final_rel_path, 
+                                        path: extracted_path, 
                                         max_key_press_time_ms: max_time,
                                         preloaded_bytes: None,
                                      });
-                                },
-                                Err(e) => {
-                                    log::warn!("GrandOrgue: Skipping release sample {:?} due to error: {}", rel_path_relative, e);
                                 }
-                             }
+                            } else {
+                                // Standard Processing
+                                match wav_converter::process_sample_file(
+                                    &rel_path_buf,
+                                    &organ.base_path,
+                                    &organ.cache_path,
+                                    pitch_tuning_cents,
+                                    convert_to_16_bit,
+                                    target_sample_rate
+                                ) {
+                                    Ok(final_rel_path) => {
+                                        let max_time: i64 = get_prop(&format!("{}MaxKeyPressTime", rel_key_upper), &format!("{}maxkeypresstime", rel_key_lower), "-1").parse().unwrap_or(-1);
+                                        releases.push(ReleaseSample { 
+                                            path: final_rel_path, 
+                                            max_key_press_time_ms: max_time,
+                                            preloaded_bytes: None,
+                                         });
+                                    },
+                                    Err(e) => {
+                                        log::warn!("GrandOrgue: Skipping release sample {:?} due to error: {}", rel_path_buf, e);
+                                    }
+                                 }
+                            }
                         }
                     }
+
                     releases.sort_by_key(|r| if r.max_key_press_time_ms == -1 { i64::MAX } else { r.max_key_press_time_ms });
+
+                    // If no releases were found in INI, try to extract from the attack sample's CUE markers
+                    if releases.is_empty() {
+                        log::info!("GrandOrgue: No release samples defined for Pipe {:?}. Checking for embedded releases...", attack_sample_path_relative);
+                        if let Ok(Some(extracted_path)) = wav_converter::try_extract_release_sample(
+                            &attack_sample_path_relative,
+                            &organ.base_path,
+                            &organ.cache_path,
+                            pitch_tuning_cents,
+                            convert_to_16_bit,
+                            target_sample_rate
+                        ) {
+                            log::info!("Found embedded release sample for Pipe MIDI Note {}", midi_note);
+                            releases.push(ReleaseSample {
+                                path: extracted_path,
+                                max_key_press_time_ms: -1,
+                                preloaded_bytes: None,
+                            });
+                        }
+                    }
+
                     pipes.insert(midi_note, 
                         Pipe { 
                             attack_sample_path: 

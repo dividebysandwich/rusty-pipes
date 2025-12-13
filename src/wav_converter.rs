@@ -802,3 +802,168 @@ pub fn load_sample_head(path: &Path, target_sample_rate: u32, max_frames: usize)
         Err(e) => Err(e).with_context(|| format!("Failed to parse metadata for head load: {:?}", path)),
     }
 }
+
+/// Attempts to extract a release tail from the attack sample if a valid CUE marker exists.
+/// Returns Ok(Some(PathBuf)) if a release sample was generated.
+pub fn try_extract_release_sample(
+    relative_path: &Path,
+    base_dir: &Path,
+    cache_dir: &Path,
+    pitch_tuning_cents: f32,
+    convert_to_16_bit: bool,
+    target_sample_rate: u32,
+) -> Result<Option<PathBuf>> {
+    
+    let full_source_path = base_dir.join(relative_path);
+    if !full_source_path.exists() { return Ok(None); }
+
+    // Parse Metadata to find Loops and Cues
+    let file = File::open(&full_source_path)?;
+    let mut reader = BufReader::new(file);
+    
+    // We only support this for standard WAV files (legacy sets are usually WAV)
+    let (fmt, chunks, data_offset, data_size) = match crate::wav::parse_wav_metadata(&mut reader, &full_source_path) {
+        Ok(res) => res,
+        Err(_) => return Ok(None), // Skip if not a valid WAV or is WavPack
+    };
+
+    // Find Loop End
+    let mut loop_end = 0;
+    for chunk in &chunks {
+        if &chunk.id == b"smpl" {
+            if let Some((_, end)) = crate::wav::parse_smpl_chunk(&chunk.data) {
+                loop_end = end;
+            }
+        }
+    }
+
+    // If no loop, we probably shouldn't try to split it (it might be a one-shot percussive)
+    if loop_end == 0 { return Ok(None); }
+
+    // Find a valid Split Point (Cue)
+    let mut split_point = None;
+    for chunk in &chunks {
+        if &chunk.id == b"cue " {
+            let cues = crate::wav::parse_cue_chunk(&chunk.data);
+            // We look for the first marker that is >= loop_end
+            // This handles cases where the marker is exactly at the end of the loop
+            for pos in cues {
+                if pos >= loop_end {
+                    split_point = Some(pos);
+                    break;
+                }
+            }
+        }
+    }
+
+    let Some(split_frame) = split_point else { return Ok(None); };
+
+    // Generate Cache Filename (Distinct from the attack)
+    let original_stem = relative_path.file_stem().unwrap_or_default().to_string_lossy();
+    // We add ".rel" to the filename
+    let target_bits = if convert_to_16_bit { 16 } else { fmt.bits_per_sample };
+    let new_file_name = format!("{}.rel.{}hz.p{:+0.1}.{}b.wav", original_stem, target_sample_rate, pitch_tuning_cents, target_bits);
+    
+    let parent_in_cache = if let Some(parent) = relative_path.parent() {
+        cache_dir.join(parent)
+    } else {
+        cache_dir.to_path_buf()
+    };
+    let cache_full_path = parent_in_cache.join(new_file_name);
+
+    if cache_full_path.exists() {
+        return Ok(Some(cache_full_path));
+    }
+
+    log::info!("[WavConvert] Extracting legacy release -> {:?}", cache_full_path.file_name().unwrap_or_default());
+
+    // Read and Slice Audio
+    reader.seek(SeekFrom::Start(data_offset))?;
+    let full_waves = read_f32_waves(reader, fmt, data_size)?;
+
+    if full_waves.is_empty() || split_frame as usize >= full_waves[0].len() {
+        return Ok(None);
+    }
+
+    // Slice from split_point to end
+    let mut sliced_waves = Vec::with_capacity(full_waves.len());
+    for ch_data in &full_waves {
+        sliced_waves.push(ch_data[split_frame as usize..].to_vec());
+    }
+
+    // Resample
+    let needs_resample = fmt.sample_rate != target_sample_rate || pitch_tuning_cents.abs() > 0.0;
+
+    let resample_ratio = if needs_resample {
+        let pitch_factor = 2.0f64.powf(-pitch_tuning_cents as f64 / 1200.0);
+        let effective_input_rate = fmt.sample_rate as f64 / pitch_factor;
+        target_sample_rate as f64 / effective_input_rate
+    } else {
+        1.0
+    };
+
+    let output_waves = if needs_resample {
+        let params = SincInterpolationParameters {
+            sinc_len: 64, f_cutoff: 0.95, interpolation: SincInterpolationType::Linear,
+            oversampling_factor: 160, window: WindowFunction::BlackmanHarris,
+        };
+
+        // Reuse the chunking logic pattern here for safety
+        let chunk_size = 1024;
+        let mut resampler = SincFixedIn::<f32>::new(resample_ratio, 1.0, params, chunk_size, sliced_waves.len())?;
+        
+        let num_frames = sliced_waves[0].len();
+        let num_chunks = (num_frames + chunk_size - 1) / chunk_size;
+        let mut result_waves = vec![Vec::new(); sliced_waves.len()];
+
+        for i in 0..num_chunks {
+            let start = i * chunk_size;
+            let end = (start + chunk_size).min(num_frames);
+            let actual_len = end - start;
+            let mut chunk_input = Vec::new();
+            for ch in 0..sliced_waves.len() {
+                let mut c = sliced_waves[ch][start..end].to_vec();
+                if actual_len < chunk_size { c.resize(chunk_size, 0.0); }
+                chunk_input.push(c);
+            }
+            let chunk_out = resampler.process(&chunk_input, None)?;
+            for ch in 0..sliced_waves.len() { result_waves[ch].extend_from_slice(&chunk_out[ch]); }
+        }
+        result_waves
+    } else {
+        sliced_waves
+    };
+
+    // Write to Cache
+    fs::create_dir_all(&parent_in_cache)?;
+    let target_is_float = fmt.audio_format == 3 && !convert_to_16_bit;
+    let target_bits = if target_is_float { 32 } else { target_bits }; // Ensure 32 for float
+
+    let final_data = write_f32_waves_to_bytes(&output_waves, target_bits, target_is_float)?;
+    
+    let out_file = File::create(&cache_full_path)?;
+    let mut writer = BufWriter::new(out_file);
+    
+    // Write minimal WAV header (no extra chunks needed for release tail)
+    let channels = fmt.num_channels;
+    let block_align = channels * (target_bits / 8);
+    let byte_rate = target_sample_rate * block_align as u32;
+    let riff_size = 36 + final_data.len() as u32;
+
+    writer.write_all(b"RIFF")?;
+    writer.write_u32::<LittleEndian>(riff_size)?;
+    writer.write_all(b"WAVEfmt ")?;
+    writer.write_u32::<LittleEndian>(16)?;
+    writer.write_u16::<LittleEndian>(if target_is_float { 3 } else { 1 })?;
+    writer.write_u16::<LittleEndian>(channels)?;
+    writer.write_u32::<LittleEndian>(target_sample_rate)?;
+    writer.write_u32::<LittleEndian>(byte_rate)?;
+    writer.write_u16::<LittleEndian>(block_align)?;
+    writer.write_u16::<LittleEndian>(target_bits)?;
+    writer.write_all(b"data")?;
+    writer.write_u32::<LittleEndian>(final_data.len() as u32)?;
+    writer.write_all(&final_data)?;
+    writer.flush()?;
+
+    Ok(Some(cache_full_path))
+}

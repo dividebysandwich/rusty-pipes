@@ -235,3 +235,50 @@ pub fn parse_smpl_chunk(data: &[u8]) -> Option<(u32, u32)> {
     // We'll use a check `current_frame >= loop_end`
     Some((loop_start, loop_end))
 }
+
+/// Parses a 'cue ' chunk's data and returns a list of sample offsets.
+pub fn parse_cue_chunk(data: &[u8]) -> Vec<u32> {
+    let mut positions = Vec::new();
+    
+    if data.len() < 4 { return positions; }
+    let mut cursor = Cursor::new(data);
+
+    // Read num_points
+    let num_points = match cursor.read_u32::<LittleEndian>() {
+        Ok(n) => n,
+        Err(_) => return positions,
+    };
+
+    // Each CuePoint is 24 bytes.
+    // Offset 4 (dwPosition) and 20 (dwSampleOffset) are relevant. 
+    // Usually dwSampleOffset is the most reliable for PCM.
+    
+    for _ in 0..num_points {
+        // Safe check for remaining data
+        let current_pos = cursor.position();
+        if (data.len() as u64 - current_pos) < 24 { break; }
+
+        // Skip Name (4)
+        if cursor.seek(SeekFrom::Current(4)).is_err() { break; }
+        
+        // Read dwPosition (4) - roughly the sample index
+        let _dw_position = match cursor.read_u32::<LittleEndian>() {
+            Ok(n) => n,
+            Err(_) => break,
+        };
+        
+        // Skip fccChunk(4), dwChunkStart(4), dwBlockStart(4) -> 12 bytes
+        if cursor.seek(SeekFrom::Current(12)).is_err() { break; }
+        
+        // Read dwSampleOffset (4)
+        let sample_offset = match cursor.read_u32::<LittleEndian>() {
+            Ok(n) => n,
+            Err(_) => break,
+        };
+
+        positions.push(sample_offset);
+    }
+    
+    positions.sort();
+    positions
+}
