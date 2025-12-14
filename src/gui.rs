@@ -868,15 +868,21 @@ impl EguiApp {
         const PIANO_HIGH_NOTE: u8 = 108; // C8
         const BLACK_KEY_MODS: [u8; 5] = [1, 3, 6, 8, 10]; // C#, D#, F#, G#, A#
 
-        let desired_size = egui::vec2(ui.available_width(), 50.0);
+        let desired_size = egui::vec2(ui.available_width(), 65.0);
         let (response, painter) = ui.allocate_painter(
             desired_size,
             egui::Sense::hover(),
         );
         let rect = response.rect;
 
+        // Define the area strictly for keys (top 50px)
+        let keys_area = egui::Rect::from_min_size(
+            rect.min, 
+            egui::vec2(rect.width(), 50.0)
+        );
+
         let note_range = (PIANO_HIGH_NOTE - PIANO_LOW_NOTE + 1) as f32;
-        let key_width = rect.width() / note_range;
+        let key_width = keys_area.width() / note_range;
 
         for note in PIANO_LOW_NOTE..=PIANO_HIGH_NOTE {
             let note_mod = note % 12;
@@ -885,12 +891,12 @@ impl EguiApp {
             let x_start = egui::remap(
                 note as f64, 
                 PIANO_LOW_NOTE as f64..=(PIANO_HIGH_NOTE + 1) as f64, 
-                rect.left() as f64..=rect.right() as f64
+                keys_area.left() as f64..=keys_area.right() as f64
             ) as f32;
             
             let key_rect = egui::Rect::from_x_y_ranges(
                 x_start..=(x_start + key_width), 
-                rect.y_range()
+                keys_area.y_range()
             );
 
             // Draw Background
@@ -950,30 +956,20 @@ impl EguiApp {
                 }
             }
 
-            // Draw Piano Note Labels (Bottom of C keys)
+            // Draw Octave Labels below the keys
             if !is_black_key && note_mod == 0 { 
-                let note_rel = note.rem_euclid(12);
                 let octave = (note / 12) - 1;
-                let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-                let note_label = format!("{}{}", note_names[note_rel as usize], octave);
+                let note_label = format!("C{}", octave);
                 
-                let pos = key_rect.center_bottom() - egui::vec2(0.0, 5.0);
+                // Position text below the key rect
+                let pos = egui::pos2(key_rect.center().x, keys_area.bottom() + 8.0);
                 
-                // Add a small background for visibility if note is active
-                if active_notes.contains_key(&note) {
-                     painter.rect_filled(
-                        egui::Rect::from_center_size(pos, egui::vec2(18.0, 10.0)), 
-                        2.0, 
-                        egui::Color32::from_black_alpha(180)
-                    );
-                }
-
                 painter.text(
                     pos,
-                    egui::Align2::CENTER_BOTTOM,
+                    egui::Align2::CENTER_CENTER,
                     note_label,
                     egui::FontId::proportional(10.0),
-                    egui::Color32::WHITE,
+                    egui::Color32::from_gray(180), // Softer gray for labels
                 );
             }
         }

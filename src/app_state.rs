@@ -385,6 +385,8 @@ impl AppState {
                 self.finished_notes_display.push_back(finished);
             }
 
+            self.active_midi_notes.remove(&(channel, note));
+            
             // Update Log
             self.add_midi_log(format!("Key Off: {} (Ch 1)", note_name));
 
