@@ -351,3 +351,8 @@ Please be reasonable and ask for permission before popping balloons in churches.
 1. Reduce the buffer size on the config dialog. If the audio starts to crackle, increase it a bit. 256 should work on most modern systems, fast systems may use 128. Note that if you want to use reverb, use sizes like 64, 128, 256, 512, 1024 for better performance. Arbitrary sizes work too but cause reverb to use more CPU.
 2. Use a wired MIDI controller, not Bluetooth. Same for headphones, bluetooth usually adds a lot of delay. Finally, make sure you enable the "Pro Audio" mode on your device, and if you're on Linux don't use native ALSA. Instead use PulseAudio or Jack.
 
+### Q: I am trying to install on an arch based distro but I am getting a linker error involving "zstd"
+
+If you're using yay or paru, try this:
+
+```ZSTD_SYS_USE_PKG_CONFIG=1 yay -S rusty-pipes```
