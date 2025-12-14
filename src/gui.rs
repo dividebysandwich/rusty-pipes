@@ -147,9 +147,26 @@ impl App for EguiApp {
                 app_state.stop_channels.clone(),
                 app_state.midi_log.clone(),
                 app_state.presets.clone(),
-                app_state.currently_playing_notes.clone(),
+                app_state.active_midi_notes.clone(),
             )
         };
+
+        let mut active_notes_display: HashMap<u8, Vec<u8>> = HashMap::new();
+        
+        // The key is now a tuple: (_key_channel, note)
+        // We ignore the key_channel here because we can get it from played_note.channel,
+        // or just use the one from the tuple.
+        for ((_key_channel, note), played_note) in &active_notes {
+            active_notes_display
+                .entry(*note)
+                .or_default()
+                .push(played_note.channel);
+        }
+
+        // Sort channels to ensure consistent color stacking (e.g. Channel 1 always above Channel 3)
+        for channels in active_notes_display.values_mut() {
+            channels.sort(); 
+        }
 
         if !self.show_preset_save_modal {
             let input = ctx.input(|i| i.clone());
@@ -294,7 +311,7 @@ impl App for EguiApp {
         self.draw_main_app_ui(
             ctx,
             &midi_log,
-            &active_notes,
+            &active_notes_display,
             organ.clone(),
             stop_channels.clone(),
             &presets
@@ -323,7 +340,7 @@ impl EguiApp {
         &mut self, 
         ctx: &egui::Context, 
         midi_log: &VecDeque<std::string::String>, 
-        active_notes: &std::collections::HashMap<u8, crate::app_state::PlayedNote>, 
+        active_notes: &HashMap<u8, Vec<u8>>,
         organ: Arc<Organ>,
         stop_channels: HashMap<usize, BTreeSet<u8>>,
         presets: &[std::option::Option<Preset>; 12],
@@ -796,7 +813,7 @@ impl EguiApp {
         &mut self,
         ctx: &egui::Context,
         midi_log: &std::collections::VecDeque<String>,
-        active_notes: &std::collections::HashMap<u8, crate::app_state::PlayedNote>,
+        active_notes: &HashMap<u8, Vec<u8>>,
     ){
         const LOG_WIDTH: f32 = 300.0;
 
@@ -845,7 +862,7 @@ impl EguiApp {
     fn draw_midi_indicator(
         &self,
         ui: &mut egui::Ui,
-        active_notes: &std::collections::HashMap<u8, crate::app_state::PlayedNote>,
+        active_notes: &HashMap<u8, Vec<u8>>,
     ) {
         const PIANO_LOW_NOTE: u8 = 21; // A0
         const PIANO_HIGH_NOTE: u8 = 108; // C8
@@ -860,9 +877,7 @@ impl EguiApp {
 
         let note_range = (PIANO_HIGH_NOTE - PIANO_LOW_NOTE + 1) as f32;
         let key_width = rect.width() / note_range;
-        let _key_height = rect.height();
 
-        // Iterate over the note range to draw all keys
         for note in PIANO_LOW_NOTE..=PIANO_HIGH_NOTE {
             let note_mod = note % 12;
             let is_black_key = BLACK_KEY_MODS.contains(&note_mod);
@@ -872,50 +887,91 @@ impl EguiApp {
                 PIANO_LOW_NOTE as f64..=(PIANO_HIGH_NOTE + 1) as f64, 
                 rect.left() as f64..=rect.right() as f64
             ) as f32;
-            let note_rect = egui::Rect::from_x_y_ranges(
+            
+            let key_rect = egui::Rect::from_x_y_ranges(
                 x_start..=(x_start + key_width), 
                 rect.y_range()
             );
 
+            // Draw Background
             let base_color = if is_black_key {
                 egui::Color32::from_gray(50) 
             } else {
                 egui::Color32::from_gray(100) 
             };
-
-            let mut fill_color = base_color;
-            let mut stroke_color = egui::Color32::BLACK;
-
-            // Activity Logic: Use PlayedNote's channel for color
-            if let Some(played_note) = active_notes.get(&note) {
-                // Key is active: use the color corresponding to the channel
-                let active_color = Self::get_channel_color(played_note.channel);
-                fill_color = active_color; 
-                stroke_color = active_color; // Match border for better visibility
-            }
-
-            // Draw the key
+            
             painter.add(egui::Shape::Rect(egui::epaint::RectShape::new(
-                note_rect,
+                key_rect,
                 egui::CornerRadius::ZERO,
-                fill_color, 
-                Stroke::new(1.0, stroke_color),
+                base_color, 
+                Stroke::new(1.0, egui::Color32::BLACK),
                 egui::StrokeKind::Middle,
             )));
 
-            // Draw note labels for white keys only
-            if !is_black_key && note_mod == 0 { // C notes
-            // Convert note number to name
+            // Draw Active Slices & Channel Numbers
+            if let Some(channels) = active_notes.get(&note) {
+                let count = channels.len();
+                if count > 0 {
+                    let slice_height = key_rect.height() / count as f32;
+                    
+                    for (i, &channel) in channels.iter().enumerate() {
+                        let active_color = Self::get_channel_color(channel);
+                        
+                        let y_start = key_rect.top() + (i as f32 * slice_height);
+                        let slice_rect = egui::Rect::from_min_size(
+                            egui::pos2(key_rect.left(), y_start),
+                            egui::vec2(key_rect.width(), slice_height)
+                        );
+
+                        // Draw Color Slice
+                        painter.add(egui::Shape::Rect(egui::epaint::RectShape::new(
+                            slice_rect,
+                            egui::CornerRadius::ZERO,
+                            active_color,
+                            Stroke::new(0.5, egui::Color32::BLACK), 
+                            egui::StrokeKind::Middle,
+                        )));
+
+                        // Only draw channel number if the slice is tall enough to be readable (> 10px)
+                        if slice_height > 10.0 {
+                            // Calculate contrast color: if background is bright, use black text
+                            let brightness = (active_color.r() as u32 + active_color.g() as u32 + active_color.b() as u32) / 3;
+                            let text_color = if brightness > 128 { egui::Color32::BLACK } else { egui::Color32::WHITE };
+
+                            painter.text(
+                                slice_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                (channel + 1).to_string(),
+                                egui::FontId::proportional(10.0), // Small font to fit key width
+                                text_color,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Draw Piano Note Labels (Bottom of C keys)
+            if !is_black_key && note_mod == 0 { 
                 let note_rel = note.rem_euclid(12);
                 let octave = (note / 12) - 1;
                 let note_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
                 let note_label = format!("{}{}", note_names[note_rel as usize], octave);
-                let text = format!("{}", note_label);
-                let pos = note_rect.center_bottom() - egui::vec2(0.0, 5.0);
+                
+                let pos = key_rect.center_bottom() - egui::vec2(0.0, 5.0);
+                
+                // Add a small background for visibility if note is active
+                if active_notes.contains_key(&note) {
+                     painter.rect_filled(
+                        egui::Rect::from_center_size(pos, egui::vec2(18.0, 10.0)), 
+                        2.0, 
+                        egui::Color32::from_black_alpha(180)
+                    );
+                }
+
                 painter.text(
                     pos,
                     egui::Align2::CENTER_BOTTOM,
-                    text,
+                    note_label,
                     egui::FontId::proportional(10.0),
                     egui::Color32::WHITE,
                 );

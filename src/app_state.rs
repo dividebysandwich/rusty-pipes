@@ -68,6 +68,8 @@ pub struct AppState {
     pub error_msg: Option<String>,
     // Currently active notes, mapping midi note -> PlayedNote instance
     pub currently_playing_notes: HashMap<u8, PlayedNote>,
+    // Stores active notes keyed by (Channel, Note) to support multi-manual play without collision.
+    pub active_midi_notes: HashMap<(u8, u8), PlayedNote>,
     // Notes that have finished playing, but are still within the display window
     pub finished_notes_display: VecDeque<PlayedNote>,
     // Time parameters for the scrolling window
@@ -118,6 +120,7 @@ impl AppState {
             midi_log: VecDeque::with_capacity(MIDI_LOG_CAPACITY),
             error_msg: None,
             currently_playing_notes: HashMap::new(),
+            active_midi_notes: HashMap::new(),
             finished_notes_display: VecDeque::new(),
             piano_roll_display_duration: Duration::from_secs(1), // Show 1 second of history
             channel_active_notes: HashMap::new(),
@@ -348,13 +351,15 @@ impl AppState {
         if velocity > 0 {
             // --- NOTE ON ---
             
-            // Update Visuals (Piano Roll)
-            self.currently_playing_notes.insert(note, crate::app_state::PlayedNote {
+            let played_note = crate::app_state::PlayedNote {
                 note,
                 channel,
                 start_time: now,
                 end_time: None,
-            });
+            };
+
+            self.currently_playing_notes.insert(note, played_note.clone());
+            self.active_midi_notes.insert((channel, note), played_note);
 
             // Update Log
             self.add_midi_log(format!("Key On: {} (Ch 1, Vel {})", note_name, velocity));
@@ -479,12 +484,17 @@ impl AppState {
             start_time,
             end_time: None,
         };
-        self.currently_playing_notes.insert(note, played_note);
+        self.currently_playing_notes.insert(note, played_note.clone());
+        self.active_midi_notes.insert((channel, note), played_note);
     }
 
     pub fn handle_tui_note_off(&mut self, note: u8, channel: u8, end_time: Instant) {
         let mut found = None;
         let mut to_reinsert = Vec::new();
+
+        if let Some(mut played_note) = self.active_midi_notes.remove(&(channel, note)) {
+             played_note.end_time = Some(end_time);
+        }
 
         for (n, mut played_note) in self.currently_playing_notes.drain() {
             if n == note && played_note.channel == channel && found.is_none() {
@@ -503,6 +513,7 @@ impl AppState {
 
     pub fn handle_tui_all_notes_off(&mut self) {
         let now = Instant::now();
+        self.active_midi_notes.clear();
         for (_, mut played_note) in self.currently_playing_notes.drain() {
             played_note.end_time = Some(now);
             self.finished_notes_display.push_back(played_note);
