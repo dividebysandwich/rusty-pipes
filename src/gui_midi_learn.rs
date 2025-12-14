@@ -2,6 +2,7 @@ use eframe::egui;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use crate::app_state::AppState;
+use rust_i18n::t;
 
 pub struct MidiLearnState {
     pub is_open: bool,
@@ -54,19 +55,29 @@ pub fn draw_midi_learn_modal(
                 
                 // Reset learning state
                 learn_state.learning_slot = None;
-                state.add_midi_log(format!("Mapped {} to {}", event, if is_enable {"Enable"} else {"Disable"}));
+                let action_text = if is_enable { 
+                    t!("midi_learn.action_enable") 
+                } else { 
+                    t!("midi_learn.action_disable") 
+                };
+                
+                state.add_midi_log(
+                    t!("midi_learn.log_mapped_fmt", event = event, action = action_text).to_string()
+                );
             }
         }
     }
 
-    egui::Window::new(format!("MIDI Learn: {}", learn_state.target_stop_name))
+    let window_title = t!("midi_learn.window_title_fmt", name = learn_state.target_stop_name);
+
+    egui::Window::new(window_title)
         .open(&mut is_open)
         .resizable(true)
         .default_width(600.0)
         .default_height(500.0)
         .show(ctx, |ui| {
-            ui.label("Configure how external MIDI events control this stop's assignment to internal channels.");
-            ui.label("Click 'Learn', then press a key on your MIDI keyboard.");
+            ui.label(t!("midi_learn.description_1"));
+            ui.label(t!("midi_learn.description_2"));
             ui.add_space(10.0);
 
             // Fetch current map for rendering
@@ -83,14 +94,14 @@ pub fn draw_midi_learn_modal(
                     .show(ui, |ui| {
                         
                         // Header
-                        ui.label(egui::RichText::new("Internal Channel").strong());
-                        ui.label(egui::RichText::new("Enable Event").strong());
-                        ui.label(egui::RichText::new("Disable Event").strong());
-                        ui.label(egui::RichText::new("Actions").strong());
+                        ui.label(egui::RichText::new(t!("midi_learn.col_internal_channel")).strong());
+                        ui.label(egui::RichText::new(t!("midi_learn.col_enable_event")).strong());
+                        ui.label(egui::RichText::new(t!("midi_learn.col_disable_event")).strong());
+                        ui.label(egui::RichText::new(t!("midi_learn.col_actions")).strong());
                         ui.end_row();
 
                         for channel in 0..16u8 {
-                            ui.label(format!("Channel {}", channel + 1));
+                            ui.label(t!("midi_learn.channel_fmt", num = channel + 1));
 
                             let config = control_map.get(&channel);
                             let enable_evt = config.and_then(|c| c.enable_event);
@@ -98,11 +109,11 @@ pub fn draw_midi_learn_modal(
 
                             // --- Enable Column ---
                             let enable_btn_text = if learn_state.learning_slot == Some((channel, true)) {
-                                "Listening...".to_string()
+                                t!("midi_learn.status_listening").to_string()
                             } else if let Some(evt) = enable_evt {
                                 evt.to_string()
                             } else {
-                                "Learn".to_string()
+                                t!("midi_learn.btn_learn").to_string()
                             };
 
                             let btn = egui::Button::new(enable_btn_text)
@@ -115,11 +126,11 @@ pub fn draw_midi_learn_modal(
 
                             // --- Disable Column ---
                             let disable_btn_text = if learn_state.learning_slot == Some((channel, false)) {
-                                "Listening...".to_string()
+                                t!("midi_learn.status_listening").to_string()
                             } else if let Some(evt) = disable_evt {
                                 evt.to_string()
                             } else {
-                                "Learn".to_string()
+                                t!("midi_learn.btn_learn").to_string()
                             };
 
                             let btn = egui::Button::new(disable_btn_text)
@@ -131,7 +142,7 @@ pub fn draw_midi_learn_modal(
                             }
 
                             // --- Clear Column ---
-                            if ui.button("Clear").clicked() {
+                            if ui.button(t!("midi_learn.btn_clear")).clicked() {
                                 let mut state = app_state.lock().unwrap();
                                 state.midi_control_map.clear(learn_state.target_stop_index, channel);
                                 let _ = state.midi_control_map.save(&state.organ.name);

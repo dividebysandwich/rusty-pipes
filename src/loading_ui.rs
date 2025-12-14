@@ -4,6 +4,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use rust_i18n::t;
 
 struct LoadingApp {
     progress_rx: mpsc::Receiver<(f32, String)>,
@@ -30,7 +31,7 @@ impl App for LoadingApp {
             ui.vertical_centered(|ui| {
                 ui.add_space(20.0);
                 ui.label(
-                    egui::RichText::new("Loading Organ Samples...")
+                    egui::RichText::new(t!("loading.heading"))
                         .heading()
                         .color(egui::Color32::WHITE),
                 );
@@ -66,12 +67,13 @@ pub fn run_loading_ui(
     progress_rx: mpsc::Receiver<(f32, String)>,
     is_finished: Arc<AtomicBool>,
 ) -> Result<(), eframe::Error> {
+    let win_title = t!("loading.window_title").to_string();
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([400.0, 120.0])
             .with_resizable(false)
             .with_decorations(true) // Re-enable for the loading window
-            .with_title("Loading..."),
+            .with_title(&win_title),
         ..Default::default()
     };
 
@@ -79,11 +81,13 @@ pub fn run_loading_ui(
         progress_rx,
         is_finished,
         progress: 0.0,
-        status_text: "Initializing...".to_string(),
+        status_text: t!("loading.status_init").to_string(),
     };
 
+    let app_name = t!("loading.app_name").to_string();
+
     eframe::run_native(
-        "Rusty Pipes Loading...",
+        &app_name,
         native_options,
         Box::new(|_cc| Ok(Box::new(app))),
     )

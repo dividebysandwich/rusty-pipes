@@ -9,6 +9,9 @@ use std::thread::{self, JoinHandle};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use midir::MidiInput;
+use rust_i18n::t;
+
+rust_i18n::i18n!("locales");
 
 mod api_rest;
 mod app;
@@ -118,6 +121,10 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
 
+    // Detect system locale and set it for rust-i18n
+    let system_locale = sys_locale::get_locale().unwrap_or_else(|| String::from("en-US"));
+    rust_i18n::set_locale(&system_locale);
+
     // --- Setup logging ---
     let log_level = match args.log_level {
         LogLevel::Error => LevelFilter::Error,
@@ -144,13 +151,13 @@ fn main() -> Result<()> {
      
     // --- List MIDI devices and exit ---
     if args.list_midi_devices {
-        println!("Available MIDI Input Devices:");
+        println!("{}", t!("main.list_devices_header"));
         match midi::get_midi_device_names() {
             Ok(names) => {
-                if names.is_empty() { println!("  No MIDI devices found."); }
+                if names.is_empty() { println!("  {}", t!("main.list_devices_none")); }
                 else { for (i, name) in names.iter().enumerate() { println!("  {}: {}", i, name); } }
             }
-            Err(e) => { eprintln!("Error fetching MIDI devices: {}", e); }
+            Err(e) => { eprintln!("{}", t!("errors.midi_fetch_fail", err = e)); }
         }
         return Ok(());
     }
@@ -208,7 +215,7 @@ fn main() -> Result<()> {
         Ok(Some(config)) => config,
         Ok(None) => {
             // User quit the config screen
-            println!("Configuration cancelled. Exiting.");
+            println!("{}", t!("main.config_cancelled"));
             return Ok(());
         }
         Err(e) => {
@@ -253,7 +260,7 @@ fn main() -> Result<()> {
     // --- APPLICATION STARTUP ---
      
     if tui_mode {
-        println!("\nRusty Pipes - Virtual Pipe Organ Simulator v{}\n", env!("CARGO_PKG_VERSION"));
+        println!("\n{}\n", t!("main.title", version = env!("CARGO_PKG_VERSION")));
     }
 
     let organ: Arc<Organ>; 
@@ -311,7 +318,7 @@ fn main() -> Result<()> {
         if let Err(e) = loading_ui::run_loading_ui(progress_rx, is_finished) {
             log::error!("Failed to run loading UI: {}", e);
             // We might still be able to recover, but it's safer to exit
-            return Err(anyhow::anyhow!("Loading UI failed: {}", e));
+            return Err(anyhow::anyhow!(t!("errors.loading_ui_fail", err = e)));
         }
 
         // --- Retrieve the loaded organ ---
@@ -322,7 +329,7 @@ fn main() -> Result<()> {
 
     } else {
         // --- TUI Loading (Simple text progress) ---
-        if tui_mode { println!("Loading organ definition..."); }
+        if tui_mode { println!("{}", t!("main.loading_organ")); }
         
         // Create a dummy transmitter for TUI progress
         let (tui_progress_tx, tui_progress_rx) = mpsc::channel::<(f32, String)>();
@@ -333,10 +340,10 @@ fn main() -> Result<()> {
                 while let Ok((progress, file_name)) = tui_progress_rx.recv() {
                     // Simple TUI progress
                     use std::io::Write;
-                    print!("\rLoading Samples: [{:3.0}%] {}...      ", progress * 100.0, file_name);
+                    print!("\r{}      ", t!("main.loading_samples_fmt", percent = (progress * 100.0) as i32, file = file_name));
                     std::io::stdout().flush().unwrap();
                 }
-                println!("\rLoading Samples: [100%] Complete.              ");
+                println!("\r{}              ", t!("main.loading_complete"));
             }))
         } else {
             None
@@ -356,8 +363,8 @@ fn main() -> Result<()> {
     }
      
     if tui_mode {
-        println!("Successfully loaded organ: {}", organ.name);
-        println!("Found {} stops.", organ.stops.len());
+        println!("{}", t!("main.organ_loaded_fmt", name = organ.name)); 
+        println!("{}", t!("main.found_stops_fmt", count = organ.stops.len()));
     }
 
     // --- Create channels for thread communication ---
@@ -366,7 +373,7 @@ fn main() -> Result<()> {
     let (gui_ctx_tx, gui_ctx_rx) = mpsc::channel::<egui::Context>();
 
     // --- Start the Audio thread ---
-    if tui_mode { println!("Starting audio engine..."); }
+    if tui_mode { println!("{}", t!("main.starting_audio")); }
     let _stream = audio::start_audio_playback(
         audio_rx, 
         Arc::clone(&organ), 
@@ -378,7 +385,7 @@ fn main() -> Result<()> {
         tui_tx.clone(),
         shared_midi_recorder.clone(),
     )?;
-    if tui_mode { println!("Audio engine running."); }
+    if tui_mode { println!("{}", t!("main.audio_running")); }
      
     // --- Load IR file ---
     if let Some(path) = &config.ir_file {
@@ -437,7 +444,7 @@ fn main() -> Result<()> {
 
     if let Some(path) = config.midi_file {
         // --- Play from MIDI file ---
-        if tui_mode { println!("Starting MIDI file playback: {}", path.display()); }
+        if tui_mode { println!("{}", t!("main.starting_midi_file", path = path.display())); }
         _midi_file_thread = Some(midi::play_midi_file(path, tui_tx.clone())?);
     } else {
         // --- Use live MIDI input (Multiple Devices) ---
@@ -449,7 +456,7 @@ fn main() -> Result<()> {
                 // Create a new client for each connection (midir consumes the client on connect)
                 match MidiInput::new(&client_name) {
                     Ok(client) => {
-                        if tui_mode { println!("Connecting to MIDI device: {}", dev_config.name); }
+                        if tui_mode { println!("{}", t!("main.connecting_midi", name = dev_config.name)); }
                         
                         match connect_to_midi(client, &port, &dev_config.name, &tui_tx, dev_config.clone(), Arc::clone(&shared_midi_recorder)) {
                             Ok(conn) => {
@@ -458,7 +465,7 @@ fn main() -> Result<()> {
                             },
                             Err(e) => {
                                 log::error!("Failed to connect to {}: {}", dev_config.name, e);
-                                app_state.lock().unwrap().add_midi_log(format!("Error: {}", e));
+                                app_state.lock().unwrap().add_midi_log(t!("errors.midi_connect_fail", name = dev_config.name, err = e).to_string());
                             }
                         }
                     },
@@ -466,7 +473,7 @@ fn main() -> Result<()> {
                 }
             }
         } else if tui_mode {
-            println!("No MIDI devices enabled. Running without MIDI input.");
+            println!("{}", t!("main.no_midi_devices"));
         }
         _midi_file_thread = None;
     }
@@ -492,7 +499,7 @@ fn main() -> Result<()> {
     }
 
     // --- Shutdown ---
-    if tui_mode { println!("Shutting down..."); }
+    if tui_mode { println!("{}", t!("main.shutting_down")); }
     log::info!("Shutting down...");
     Ok(())
 }

@@ -11,6 +11,7 @@ use std::{
     path::PathBuf,
     collections::{VecDeque, HashMap, BTreeSet},
 };
+use rust_i18n::t;
 
 use crate::{
     app::AppMessage,
@@ -91,8 +92,10 @@ pub fn run_gui_loop(
         ..Default::default()
     };
     
+    let window_title = t!("gui.app_title_fmt", name = organ.name);
+
     eframe::run_native(
-        &format!("Rusty Pipes - {}", organ.name),
+        &window_title,
         native_options,
         Box::new(move |cc| {
             // Extract the Context and send it back to main logic thread
@@ -196,14 +199,14 @@ impl App for EguiApp {
                         self.preset_save_name = presets[i]
                             .as_ref()
                             .map_or_else(
-                                || format!("Preset F{}", i + 1),
+                                || t!("gui.default_preset_name_fmt", num = i + 1).to_string(),
                                 |p| p.name.clone()
                             );
                         self.show_preset_save_modal = true;
                     } else {
                         let mut app_state = self.app_state.lock().unwrap();
                         if let Err(e) = app_state.recall_preset(i, &self.audio_tx) {
-                            app_state.add_midi_log(format!("ERROR recalling preset: {}", e));
+                            app_state.add_midi_log(t!("errors.recall_preset_fail", err = e).to_string());
                         }
                     }
                 }
@@ -361,7 +364,7 @@ impl EguiApp {
     fn draw_footer(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Tip: F1-F12 to Recall, Shift+F1-F12 to Save, 'P' for Panic, Arrows to Navigate, 1-0 to Toggle, E/R for Octave, +/- for Gain, [ / ] for Polyphony");
+                ui.label(t!("gui.footer_tip"));
                 ui.separator();
                 
                 // NEW: Recording Controls
@@ -371,7 +374,7 @@ impl EguiApp {
                 };
 
                 // MIDI Rec
-                let midi_btn_text = if is_rec_midi { "⏹ Stop MIDI Rec" } else { "⏺ Rec MIDI" };
+                let midi_btn_text = if is_rec_midi { t!("gui.rec_midi_stop") } else { t!("gui.rec_midi_start") };
                 let midi_btn = egui::Button::new(midi_btn_text)
                     .fill(if is_rec_midi { egui::Color32::RED } else { egui::Color32::from_gray(60) });
                 
@@ -386,7 +389,7 @@ impl EguiApp {
                 }
 
                 // Audio Rec
-                let audio_btn_text = if is_rec_audio { "⏹ Stop WAV Rec" } else { "⏺ Rec WAV" };
+                let audio_btn_text = if is_rec_audio { t!("gui.rec_wav_stop") } else { t!("gui.rec_wav_start") };
                 let audio_btn = egui::Button::new(audio_btn_text)
                     .fill(if is_rec_audio { egui::Color32::RED } else { egui::Color32::from_gray(60) });
 
@@ -401,7 +404,7 @@ impl EguiApp {
                 }
                 
                 if is_rec_midi || is_rec_audio {
-                    ui.label(egui::RichText::new("RECORDING").color(egui::Color32::RED).strong());
+                    ui.label(egui::RichText::new(t!("gui.recording_active")).color(egui::Color32::RED).strong());
                 }
             });
         });
@@ -415,10 +418,10 @@ impl EguiApp {
         organ: Arc<Organ>,
     ) {
         egui::SidePanel::right("preset_panel").show(ctx, |ui| {
-            ui.heading("Presets");
+            ui.heading(t!("gui.presets_heading"));
 
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.label("Recall (F1-F12):");
+                ui.label(t!("gui.recall_label"));
                 egui::Grid::new("preset_recall_grid").num_columns(2).show(ui, |ui| {
                     for i in 0..12 {
                         // Get name and state from Preset struct
@@ -432,7 +435,7 @@ impl EguiApp {
                         if ui.add_enabled(is_loaded, egui::Button::new(text)).clicked() {
                             let mut app_state = self.app_state.lock().unwrap();
                             if let Err(e) = app_state.recall_preset(i, &self.audio_tx) {
-                                app_state.add_midi_log(format!("ERROR recalling preset: {}", e));
+                                app_state.add_midi_log(t!("errors.recall_preset_fail", err = e).to_string());
                             }
                         }
                         if (i + 1) % 2 == 0 { ui.end_row(); }
@@ -441,14 +444,14 @@ impl EguiApp {
                 ui.separator();
 
                 // --- Tremulant Controls ---
-                ui.heading("Tremulants");
+                ui.heading(t!("gui.tremulants_heading"));
     
                 // Sort keys for stable display order
                 let mut trem_ids: Vec<_> = organ.tremulants.keys().collect();
                 trem_ids.sort();
 
                 if trem_ids.is_empty() {
-                    ui.label(egui::RichText::new("No tremulants found.").weak());
+                    ui.label(egui::RichText::new(t!("gui.no_tremulants")).weak());
                 } else {
                     egui::Grid::new("tremulant_grid").num_columns(2).show(ui, |ui| {
                         for (i, trem_id) in trem_ids.iter().enumerate() {
@@ -476,7 +479,7 @@ impl EguiApp {
                 }
                 ui.separator();
                 
-                ui.label("Save (Shift+F1-F12):");
+                ui.label(t!("gui.save_label"));
                 egui::Grid::new("preset_save_grid").num_columns(2).show(ui, |ui| {
                     for i in 0..12 {
                         let text = format!("F{}", i + 1);
@@ -485,7 +488,7 @@ impl EguiApp {
                             self.preset_save_name = presets[i]
                                 .as_ref()
                                 .map_or_else(
-                                    || format!("Preset F{}", i + 1),
+                                    || t!("gui.default_preset_name_fmt", num = i + 1).to_string(),
                                     |p| p.name.clone()
                                 );
                             self.show_preset_save_modal = true;
@@ -496,7 +499,7 @@ impl EguiApp {
             });
 
             ui.separator();
-            ui.heading("Audio Settings");
+            ui.heading(t!("gui.audio_settings_heading"));
             ui.add_space(5.0);
 
             // Get current values
@@ -505,17 +508,16 @@ impl EguiApp {
                 (state.gain, state.polyphony, state.selected_reverb_index, state.reverb_mix)
             };
 
-
-            ui.label("Reverb:");
-            let current_name = selected_reverb_index 
+            ui.label(t!("gui.reverb_label"));
+            let current_name: String = selected_reverb_index 
                 .and_then(|i| self.reverb_files.get(i))
-                .map(|(n, _)| n.as_str())
-                .unwrap_or("No Reverb");
+                .map(|(n, _)| n.clone())
+                .unwrap_or_else(|| t!("gui.no_reverb").to_string());
 
             egui::ComboBox::from_id_salt("runtime_reverb_combo")
                 .selected_text(current_name)
                 .show_ui(ui, |ui| {
-                    if ui.selectable_label(selected_reverb_index.is_none(), "No Reverb").clicked() {
+                    if ui.selectable_label(selected_reverb_index.is_none(), t!("gui.no_reverb")).clicked() {
                         let _ = self.audio_tx.send(AppMessage::SetReverbWetDry(0.0));
                         let mut state = self.app_state.lock().unwrap();
                         state.selected_reverb_index = None;
@@ -536,7 +538,7 @@ impl EguiApp {
             ui.add_space(10.0);
 
             // Reverb Mix
-            ui.label("Reverb Mix:");
+            ui.label(t!("gui.reverb_mix_label"));
             if ui.add(egui::Slider::new(&mut reverb_mix, 0.0..=1.0).show_value(true)).changed() {
                  let mut state = self.app_state.lock().unwrap();
                  state.reverb_mix = reverb_mix;
@@ -545,7 +547,7 @@ impl EguiApp {
             }
 
             // --- Gain Control ---
-            ui.label("Master Gain:");
+            ui.label(t!("gui.master_gain_label"));
             ui.horizontal(|ui| {
                 if ui.button("-").clicked() {
                     self.app_state.lock().unwrap().modify_gain(-0.05, &self.audio_tx);
@@ -553,7 +555,7 @@ impl EguiApp {
                 
                 // Slider for visual feedback and direct drag
                 let gain_slider = egui::Slider::new(&mut gain, 0.0..=2.0)
-                    .text("Vol")
+                    .text(t!("gui.vol_slider_text"))
                     .show_value(true);
                     
                 if ui.add(gain_slider).changed() {
@@ -568,12 +570,12 @@ impl EguiApp {
                     self.app_state.lock().unwrap().modify_gain(0.05, &self.audio_tx);
                 }
             });
-            ui.label(egui::RichText::new("Keys: +/-").small().weak());
+            ui.label(egui::RichText::new(t!("gui.gain_keys_hint")).small().weak());
             
             ui.add_space(10.0);
 
             // --- Polyphony Control ---
-            ui.label("Polyphony:");
+            ui.label(t!("gui.polyphony_label"));
             ui.horizontal(|ui| {
                 if ui.button("-16").clicked() {
                     self.app_state.lock().unwrap().modify_polyphony(-16, &self.audio_tx);
@@ -585,7 +587,7 @@ impl EguiApp {
                     self.app_state.lock().unwrap().modify_polyphony(16, &self.audio_tx);
                 }
             });
-            ui.label(egui::RichText::new("Keys: [ / ]").small().weak());
+            ui.label(egui::RichText::new(t!("gui.polyphony_keys_hint")).small().weak());
             
             ui.add_space(15.0);
 
@@ -607,13 +609,13 @@ impl EguiApp {
 
             if is_underrun {
                 ui.add(egui::Button::new(
-                    egui::RichText::new("⚠ AUDIO UNDERRUN ⚠")
+                    egui::RichText::new(t!("gui.underrun_alert"))
                         .color(egui::Color32::WHITE)
                         .strong()
                 ).fill(egui::Color32::RED));
             } else {
                  ui.add(egui::Button::new(
-                    egui::RichText::new(format!("Voices: {}/{}", active_voice_count, polyphony))
+                    egui::RichText::new(t!("gui.voices_fmt", voices = active_voice_count, poly = polyphony))
                         .color(egui::Color32::GREEN)
                         .strong()
                 ).fill(egui::Color32::from_gray(40)).frame(false));
@@ -623,7 +625,7 @@ impl EguiApp {
             ui.separator();
 
             // --- CPU Load Bar ---
-            ui.label(format!("CPU Load: {:.1}%", cpu_load * 100.0));
+            ui.label(t!("gui.cpu_load_fmt", load = format!("{:.1}", cpu_load * 100.0)));
             
             let load_color = if cpu_load < 0.5 {
                 egui::Color32::GREEN
@@ -645,28 +647,28 @@ impl EguiApp {
     #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn draw_stop_controls(&mut self, ui: &mut egui::Ui, organ: Arc<Organ>, ) {
         ui.horizontal(|ui| {
-            ui.label("Selected Stop:");
+            ui.label(t!("gui.selected_stop_label"));
             if let Some(idx) = self.selected_stop_index {
                 let stop = &organ.stops[idx];
                 ui.label(egui::RichText::new(&stop.name).strong());
 
-                if ui.button("All Channels").clicked() {
+                if ui.button(t!("gui.btn_all_channels")).clicked() {
                     let mut app_state = self.app_state.lock().unwrap();
                     app_state.select_all_channels_for_stop(idx);
                 }
-                if ui.button("No Channels").clicked() {
+                if ui.button(t!("gui.btn_no_channels")).clicked() {
                     let mut app_state = self.app_state.lock().unwrap();
                     if let Err(e) = app_state.select_none_channels_for_stop(idx, &self.audio_tx) {
                         app_state.add_midi_log(format!("ERROR: {}", e));
                     }
                 }
             } else {
-                ui.label(egui::RichText::new("None").italics());
+                ui.label(egui::RichText::new(t!("gui.no_selection")).italics());
             }
             
             ui.separator();
             
-            if ui.button("PANIC (All Notes Off)").on_hover_text("Stops all sounding notes").clicked() {
+            if ui.button(t!("gui.btn_panic")).on_hover_text(t!("gui.panic_tooltip")).clicked() {
                 let mut app_state = self.app_state.lock().unwrap();
                 if let Err(e) = self.audio_tx.send(AppMessage::AllNotesOff) {
                     app_state.add_midi_log(format!("ERROR: {}", e));
@@ -681,7 +683,7 @@ impl EguiApp {
         let stops: Vec<_> = organ.stops.clone();
         let stops_count = stops.len();
         if stops_count == 0 {
-            ui.label("No stops loaded.");
+            ui.label(t!("gui.no_stops_loaded"));
             return;
         }
 
@@ -815,7 +817,7 @@ impl EguiApp {
                     layout: Some(egui::Layout::top_down(egui::Align::LEFT)),
                     ..Default::default()
                 }, |ui| {
-                ui.heading("MIDI Log");
+                ui.heading(t!("gui.midi_log_heading"));
                     
                 egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap); 
@@ -828,7 +830,7 @@ impl EguiApp {
             // MIDI Activity Indicator
             ui.scope_builder( UiBuilder{ max_rect: Some(indicator_rect), layout: Some(egui::Layout::top_down(egui::Align::LEFT)), ..Default::default()}, |ui| {
                 ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.heading("MIDI Activity"); 
+                    ui.heading(t!("gui.midi_activity_heading"));
                     self.draw_midi_indicator( 
                         ui,
                         active_notes,
@@ -930,14 +932,14 @@ impl EguiApp {
         let mut is_open = self.show_preset_save_modal;
         let slot_display = self.preset_save_slot + 1;
 
-        egui::Window::new(format!("Save Preset F{}", slot_display))
+        egui::Window::new(t!("gui.save_preset_title_fmt", num = slot_display))
             .open(&mut is_open)
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.vertical_centered(|ui| {
-                    ui.label("Enter a name for the preset:");
+                    ui.label(t!("gui.enter_name_prompt"));
                     
                     let text_edit = egui::TextEdit::singleline(&mut self.preset_save_name)
                         .desired_width(250.0);
@@ -951,12 +953,12 @@ impl EguiApp {
                     ui.add_space(10.0);
                     
                     ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
+                        if ui.button(t!("gui.btn_cancel")).clicked() {
                             self.show_preset_save_modal = false;
                         }
                         
                         // Check for 'Enter' key or button click
-                        let save_triggered = ui.button("Save").clicked() || 
+                        let save_triggered = ui.button(t!("gui.btn_save")).clicked() ||
                                     (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
 
                         if save_triggered {

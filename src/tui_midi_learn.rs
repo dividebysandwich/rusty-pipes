@@ -6,6 +6,7 @@ use crossterm::event::KeyCode;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use crate::app_state::AppState;
+use rust_i18n::t;
 
 pub struct MidiLearnTuiState {
     pub target_stop_index: usize,
@@ -104,7 +105,15 @@ impl MidiLearnTuiState {
                     
                     // Reset
                     self.learning_slot = None;
-                    state.add_midi_log(format!("Mapped {} to {}", event, if is_enable {"Enable"} else {"Disable"}));
+
+                    let action_text = if is_enable { 
+                        t!("midi_learn.action_enable") 
+                    } else { 
+                        t!("midi_learn.action_disable") 
+                    };
+                    state.add_midi_log(
+                        t!("midi_learn.log_mapped_fmt", event = event, action = action_text).to_string()
+                    );
                 }
             }
         }
@@ -116,8 +125,10 @@ pub fn draw_midi_learn_modal(frame: &mut Frame, tui_state: &MidiLearnTuiState, a
     
     frame.render_widget(Clear, area); // Clear background
 
+    let title = format!(" {} ", t!("midi_learn.window_title_fmt", name = tui_state.target_stop_name));
+
     let block = Block::default()
-        .title(format!(" MIDI Learn: {} ", tui_state.target_stop_name))
+        .title(title)
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
@@ -146,28 +157,28 @@ pub fn draw_midi_learn_modal(frame: &mut Frame, tui_state: &MidiLearnTuiState, a
         };
 
         // Cell 0: Label
-        let label = format!("Ch {}", channel + 1);
+        let label = t!("tui_midi_learn.fmt_ch_short", num = channel + 1).to_string();
         
         // Cell 1: Enable
         let enable_text = if tui_state.learning_slot == Some((channel, true)) {
-            "Listening...".to_string()
+            t!("midi_learn.status_listening").to_string()
         } else if let Some(evt) = enable_evt {
             evt.to_string()
         } else {
-            "-".to_string()
+            t!("tui_midi_learn.cell_dash").to_string()
         };
 
         // Cell 2: Disable
         let disable_text = if tui_state.learning_slot == Some((channel, false)) {
-            "Listening...".to_string()
+            t!("midi_learn.status_listening").to_string()
         } else if let Some(evt) = disable_evt {
             evt.to_string()
         } else {
-            "-".to_string()
+            t!("tui_midi_learn.cell_dash").to_string()
         };
 
         // Cell 3: Clear
-        let clear_text = "Clear";
+        let clear_text = t!("midi_learn.btn_clear").to_string();
 
         Row::new(vec![
             Cell::from(label),
@@ -184,10 +195,16 @@ pub fn draw_midi_learn_modal(frame: &mut Frame, tui_state: &MidiLearnTuiState, a
         Constraint::Length(10),
     ];
 
+    let header_row = Row::new(vec![
+        t!("tui_midi_learn.hdr_internal").to_string(), 
+        t!("midi_learn.col_enable_event").to_string(), 
+        t!("midi_learn.col_disable_event").to_string(), 
+        t!("tui_midi_learn.hdr_action").to_string()
+    ]).style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow));
+
     let table = Table::new(rows, widths)
         .block(block)
-        .header(Row::new(vec!["Internal", "Enable Event", "Disable Event", "Action"])
-            .style(Style::default().add_modifier(Modifier::BOLD).fg(Color::Yellow)))
+        .header(header_row)
         .column_spacing(1);
     
     // We need to handle scrolling if the list is long, but 16 items usually fits.
@@ -198,7 +215,7 @@ pub fn draw_midi_learn_modal(frame: &mut Frame, tui_state: &MidiLearnTuiState, a
     frame.render_stateful_widget(table, area, &mut table_state);
     
     // Draw help footer inside modal
-    let help_text = "Arrows: Navigate | Enter: Learn/Clear | Esc: Close";
+    let help_text = t!("tui_midi_learn.footer_help").to_string();
     let help_area = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(1)])

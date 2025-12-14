@@ -4,6 +4,7 @@ use ratatui::{
 };
 use crossterm::event::{KeyCode, KeyEvent};
 use crate::config::{MidiDeviceConfig, MidiMappingMode};
+use rust_i18n::t;
 
 /// Result of a keypress handling event.
 pub enum MappingAction {
@@ -133,8 +134,8 @@ pub fn handle_input(
 pub fn draw(frame: &mut Frame, area: Rect, state: &mut TuiMidiState, device: &MidiDeviceConfig) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" Configure Mapping: {} ", device.name))
-        .title_bottom(" Enter: Edit/Toggle | \u{2191}/\u{2193}: Navigate/Value | Esc: Back ");
+        .title(t!("tui_midi.title_fmt", name = device.name).to_string())
+        .title_bottom(t!("tui_midi.footer").to_string());
     
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
@@ -143,17 +144,17 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TuiMidiState, device: &Mi
 
     // -- Row 0: Mode --
     let mode_str = match device.mapping_mode {
-        MidiMappingMode::Simple => "Simple (All Inputs -> One Target)",
-        MidiMappingMode::Complex => "Complex (Per-Channel Mapping)",
+        MidiMappingMode::Simple => t!("tui_midi.mode_simple"),
+        MidiMappingMode::Complex => t!("tui_midi.mode_complex"),
     };
-    items.push(ListItem::new(format!("Mode: {}", mode_str)));
+    items.push(ListItem::new(t!("tui_midi.lbl_mode", val = mode_str).to_string()));
 
     // -- Dynamic Rows --
     match device.mapping_mode {
         MidiMappingMode::Simple => {
             // Row 1: Target
             let is_editing = state.editing_row == Some(1);
-            let val_str = format!("Target Channel: {}", device.simple_target_channel + 1);
+            let val_str = t!("tui_midi.lbl_target", ch = device.simple_target_channel + 1).to_string();
             items.push(create_list_item(val_str, is_editing));
         }
         MidiMappingMode::Complex => {
@@ -161,7 +162,10 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TuiMidiState, device: &Mi
             for i in 0..16 {
                 let is_editing = state.editing_row == Some(i + 1);
                 let target = device.complex_mapping[i];
-                let val_str = format!("Input Ch {:02} -> Target Ch {:02}", i + 1, target + 1);
+                let in_ch = format!("{:02}", i + 1);
+                let out_ch = format!("{:02}", target + 1);
+                let val_str = t!("tui_midi.lbl_complex", input = in_ch, out = out_ch).to_string();
+                
                 items.push(create_list_item(val_str, is_editing));
             }
         }
@@ -179,7 +183,8 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TuiMidiState, device: &Mi
 /// Helper to create a list item with specific styling if it's currently being edited.
 fn create_list_item(text: String, is_editing: bool) -> ListItem<'static> {
     if is_editing {
-        ListItem::new(format!("{} <Editing>", text))
+        let edit_text = t!("tui_midi.suffix_editing", val = text).to_string();
+        ListItem::new(edit_text)
             .style(Style::default().fg(Color::Yellow))
     } else {
         ListItem::new(text)

@@ -7,6 +7,7 @@ use ratatui::{
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use midir::MidiInput;
+use rust_i18n::t;
 
 use crate::config::{AppSettings, ConfigState, RuntimeConfig};
 use crate::tui::{cleanup_terminal, setup_terminal};
@@ -87,33 +88,39 @@ fn get_item_display(idx: usize, state: &ConfigState) -> String {
     let settings = &state.settings;
     let row = SettingRow::from_index(idx).unwrap(); // Safe unwrap
     match row {
-        SettingRow::OrganFile => format!("Organ File:       {}", path_to_str(settings.organ_file.as_deref())),
-        SettingRow::AudioDevice => format!("Audio Device:     {}", state.selected_audio_device_name.as_deref().unwrap_or("Default")),
-        SettingRow::SampleRate => format!("Sample Rate:      {} Hz", settings.sample_rate),
-        SettingRow::MidiDevices => format!("MIDI Input Devices:   {} enabled", settings.midi_devices.iter().filter(|d| d.enabled).count()),
-        SettingRow::MidiFile => format!("MIDI File (Play): {}", path_to_str(state.midi_file.as_deref())),
-        SettingRow::ReverbIRFile => format!("Reverb IR File:   {}", path_to_str(settings.ir_file.as_deref())),
-        SettingRow::ReverbMix => format!("Reverb Mix:       {:.2}", settings.reverb_mix),
-        SettingRow::Gain => format!("Gain:             {:.2}", settings.gain),
-        SettingRow::Polyphony => format!("Polyphony:        {}", settings.polyphony),
-        SettingRow::AudioBuffer => format!("Audio Buffer:     {} frames", settings.audio_buffer_frames),
-        SettingRow::PreloadFrames => format!("Preload Frames:   {} frames", settings.preload_frames),
-        SettingRow::Precache => format!("Pre-cache:        {}", bool_to_str(settings.precache)),
-        SettingRow::ConvertTo16Bit => format!("Convert to 16-bit:{}", bool_to_str(settings.convert_to_16bit)),
-        SettingRow::OriginalTuning => format!("Original Tuning:  {}", bool_to_str(settings.original_tuning)),
-        SettingRow::Start => "Start Rusty Pipes".to_string(),
-        SettingRow::Quit => "Quit".to_string(),
+        SettingRow::OrganFile => t!("tui_config.fmt_organ", val = path_to_str(settings.organ_file.as_deref())).to_string(),
+        SettingRow::AudioDevice => {
+            let val = state.selected_audio_device_name.as_deref().unwrap_or("Default");
+            t!("tui_config.fmt_audio", val = val).to_string()
+        },
+        SettingRow::SampleRate => t!("tui_config.fmt_rate", val = settings.sample_rate).to_string(),
+        SettingRow::MidiDevices => {
+            let count = settings.midi_devices.iter().filter(|d| d.enabled).count();
+            t!("tui_config.fmt_midi_devs", count = count).to_string()
+        },
+        SettingRow::MidiFile => t!("tui_config.fmt_midi_file", val = path_to_str(state.midi_file.as_deref())).to_string(),
+        SettingRow::ReverbIRFile => t!("tui_config.fmt_ir", val = path_to_str(settings.ir_file.as_deref())).to_string(),
+        SettingRow::ReverbMix => t!("tui_config.fmt_mix", val = format!("{:.2}", settings.reverb_mix)).to_string(),
+        SettingRow::Gain => t!("tui_config.fmt_gain", val = format!("{:.2}", settings.gain)).to_string(),
+        SettingRow::Polyphony => t!("tui_config.fmt_poly", val = settings.polyphony).to_string(),
+        SettingRow::AudioBuffer => t!("tui_config.fmt_buffer", val = settings.audio_buffer_frames).to_string(),
+        SettingRow::PreloadFrames => t!("tui_config.fmt_preload", val = settings.preload_frames).to_string(),
+        SettingRow::Precache => t!("tui_config.fmt_precache", val = bool_to_str(settings.precache)).to_string(),
+        SettingRow::ConvertTo16Bit => t!("tui_config.fmt_convert", val = bool_to_str(settings.convert_to_16bit)).to_string(),
+        SettingRow::OriginalTuning => t!("tui_config.fmt_tuning", val = bool_to_str(settings.original_tuning)).to_string(),
+        SettingRow::Start => t!("config.btn_start").to_string(),
+        SettingRow::Quit => t!("config.btn_quit").to_string(),
     }
 }
 
-fn bool_to_str(val: bool) -> &'static str {
-    if val { "ON" } else { "OFF" }
+fn bool_to_str(val: bool) -> String {
+    if val { t!("tui_config.val_on").to_string() } else { t!("tui_config.val_off").to_string() }
 }
 
 fn path_to_str(path: Option<&std::path::Path>) -> String {
     path.and_then(|p| p.file_name())
         .and_then(|s| s.to_str())
-        .map_or("None".to_string(), |s| s.to_string())
+        .map_or(t!("config.status_none").to_string(), |s| s.to_string())
 }
 
 /// Runs the TUI configuration loop.
@@ -152,7 +159,7 @@ pub fn run_config_ui(
         midi_dev_list_state: ListState::default(),
         midi_mapping_state: tui_midi::TuiMidiState::new(),
         sample_rate_list_state: ListState::default(),
-        ir_list_state, // New
+        ir_list_state, 
         mode: ConfigMode::Main,
     };
     state.list_state.select(Some(0));
@@ -193,7 +200,7 @@ pub fn run_config_ui(
                                     SettingRow::OrganFile => { // Organ File
                                         let path = tui_filepicker::run_file_picker(
                                             &mut terminal,
-                                            "Select Organ File",
+                                            &t!("config.picker_organ"),
                                             &["organ", "Organ_Hauptwerk_xml", "xml"],
                                         )?;
                                         if let Some(p) = path {
@@ -212,7 +219,7 @@ pub fn run_config_ui(
                                     SettingRow::MidiFile => { // MIDI File
                                         let path = tui_filepicker::run_file_picker(
                                             &mut terminal,
-                                            "Select MIDI File (Optional)",
+                                            &t!("config.picker_midi"),
                                             &["mid", "midi"],
                                         )?;
                                         state.config_state.midi_file = path;
@@ -245,7 +252,7 @@ pub fn run_config_ui(
                                     SettingRow::OriginalTuning => state.config_state.settings.original_tuning = !state.config_state.settings.original_tuning,
                                     SettingRow::Start => { // Start
                                         if state.config_state.settings.organ_file.is_none() {
-                                            state.config_state.error_msg = Some("Please select an Organ File to start.".to_string());
+                                            state.config_state.error_msg = Some(t!("config.warn_select_organ").to_string());
                                         } else {
                                             let s = &state.config_state.settings;
                                             // Collect active devices
@@ -533,10 +540,10 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
     for line in LOGO.lines() {
         logo_lines_vec.push(Line::from(Span::styled(line, orange_style)));
     }
-    logo_lines_vec.push(Line::from(Span::styled("Indicia MMXXV", orange_style)));
+    logo_lines_vec.push(Line::from(Span::styled(t!("config.subtitle"), orange_style)));
     logo_lines_vec.push(Line::from("")); // Blank line
     logo_lines_vec.push(Line::from(Span::styled(
-        "Configuration",
+        t!("tui_config.header_title"),
         white_style.add_modifier(Modifier::BOLD)
     )));
 
@@ -555,7 +562,7 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
             let mut list_item = ListItem::new(text.clone());
             
             // Index 10 is "S. Start Rusty Pipes"
-            if text.contains("Start Rusty Pipes") {
+            if text == t!("config.btn_start") {
                 list_item = list_item.style(
                     Style::default()
                         .fg(Color::Green)
@@ -576,7 +583,7 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
     let footer_text = if let Some(err) = &state.config_state.error_msg {
         Line::styled(err.clone(), Style::default().fg(Color::Red))
     } else {
-        Line::from("Nav: ↑/↓ | Enter: Select/Toggle | S: Start | Q: Quit")
+        Line::from(t!("tui_config.footer_nav").to_string())
     };
     let footer = Paragraph::new(footer_text)
         .alignment(Alignment::Center)
@@ -589,11 +596,11 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
              draw_midi_device_list(frame, state);
         },
         ConfigMode::AudioSelection => {
-            let mut items = vec!["[ Default ]".to_string()];
+            let mut items = vec![t!("config.status_default").to_string()];
             items.extend(state.config_state.available_audio_devices.iter().cloned());
             draw_modal_list(
                 frame,
-                "Select Audio Device (↑/↓, Enter, Esc)",
+                &t!("tui_config.title_select_audio"),
                 &items,
                 &mut state.audio_list_state,
             );
@@ -604,32 +611,32 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
                 .collect();
              draw_modal_list(
                 frame,
-                "Select Sample Rate",
+                &t!("tui_config.title_select_rate"),
                 &items,
                 &mut state.sample_rate_list_state
              );
         }
         ConfigMode::IrSelection => {
-             let mut items = vec!["[ No Reverb ]".to_string()];
+             let mut items = vec![format!("[ {} ]", t!("config.status_no_reverb"))];
              items.extend(state.config_state.available_ir_files.iter().map(|(name, _)| name.clone()));
              
              draw_modal_list(
                 frame,
-                "Select Impulse Response",
+                &t!("tui_config.title_select_ir"),
                 &items,
                 &mut state.ir_list_state
              );
         }
         ConfigMode::TextInput(idx, ref buffer) => {
             let title = match SettingRow::from_index(idx).unwrap() {
-                SettingRow::ReverbMix => "Enter Reverb Mix (0.0 - 1.0)",
-                SettingRow::Gain => "Enter Gain (0.0 - 1.0)",
-                SettingRow::Polyphony => "Enter Polyphony (1 - 1024)",
-                SettingRow::AudioBuffer => "Enter Audio Buffer Size",
-                SettingRow::PreloadFrames => "Enter Preload Frames",
-                _ => "Enter Value",
+                SettingRow::ReverbMix => t!("tui_config.prompt_reverb").to_string(),
+                SettingRow::Gain => t!("tui_config.prompt_gain").to_string(),
+                SettingRow::Polyphony => t!("tui_config.prompt_poly").to_string(),
+                SettingRow::AudioBuffer => t!("tui_config.prompt_buffer").to_string(),
+                SettingRow::PreloadFrames => t!("tui_config.prompt_preload").to_string(),
+                _ => t!("tui_config.prompt_generic").to_string(),
             };
-            draw_text_input_modal(frame, title, buffer, 40, 3);
+            draw_text_input_modal(frame, &title, buffer, 40, 3);
         }
         _ => {}
     }
@@ -650,8 +657,8 @@ fn draw_midi_device_list(frame: &mut Frame, state: &mut TuiConfigState) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" MIDI Devices ")
-        .title_bottom(" Space: Toggle | Enter: Configure | Esc: Back ");
+        .title(t!("tui_config.title_midi_devs"))
+        .title_bottom(t!("tui_config.footer_midi"));
         
     let list = List::new(items)
         .block(block)

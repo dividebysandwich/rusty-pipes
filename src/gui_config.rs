@@ -7,6 +7,7 @@ use crate::gui_filepicker;
 use crate::app::{PIPES, LOGO};
 use crate::audio::get_supported_sample_rates;
 use crate::gui_midi::MidiMappingWindow;
+use rust_i18n::t;
 
 #[allow(dead_code)]
 struct ConfigApp {
@@ -94,14 +95,14 @@ impl App for ConfigApp {
                             .color(orange),
                     );
                     ui.label(
-                        egui::RichText::new("Indicia MMXXV")
+                        egui::RichText::new(t!("config.subtitle"))
                             .font(mono_font)
                             .color(orange),
                     );
                 });
                 ui.add_space(10.0);
                 
-                ui.heading("Rusty Pipes Configuration");
+                ui.heading(t!("config.window_title"));
                 ui.separator();
                 ui.add_space(10.0);
 
@@ -112,15 +113,15 @@ impl App for ConfigApp {
                     .show(ui, |ui| {
                         
                         // --- Organ File ---
-                        ui.label("Organ File:").on_hover_text("Select the Hauptwerk organ file (.organ or Organ_Hauptwerk_xml) to load.");
+                        ui.label(t!("config.group_organ_file")).on_hover_text(t!("config.tooltip_organ"));
                         ui.horizontal(|ui| {
                             let organ_text = path_to_str_truncated(self.state.settings.organ_file.as_deref());
                             let full_path = path_to_str_full(self.state.settings.organ_file.as_deref());
                             ui.label(organ_text).on_hover_text(full_path);
                             
-                            if ui.button("Browse...").clicked() {
+                            if ui.button(t!("config.btn_browse")).clicked() {
                                 if let Ok(Some(path)) = gui_filepicker::pick_file(
-                                    "Select Organ File",
+                                    &t!("config.picker_organ"),
                                     &[("Organ Files", &["organ", "Organ_Hauptwerk_xml", "xml"])]
                                 ) {
                                     self.state.settings.organ_file = Some(path);
@@ -130,10 +131,10 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Audio Device ---
-                        ui.label("Audio Device:").on_hover_text("The audio device that shall be used for audio output");
+                        ui.label(t!("config.group_audio_device")).on_hover_text(t!("config.tooltip_audio_device"));
                         let selected_audio_text = self.selected_audio_device_index
                             .and_then(|idx| self.state.available_audio_devices.get(idx))
-                            .map_or("Default", |name| name.as_str());
+                            .map_or(t!("config.status_default"), |name| std::borrow::Cow::Borrowed(name.as_str()));
                     
                         ui.set_min_width(300.0); 
                         egui::ComboBox::from_id_salt("audio_device_combo")
@@ -143,8 +144,7 @@ impl App for ConfigApp {
                                 let mut selected_default = false;
                                 let mut selected_index = None;
 
-                                // Check "Default" option
-                                if ui.selectable_label(self.selected_audio_device_index.is_none(), "[ Default ]").clicked() {
+                                if ui.selectable_label(self.selected_audio_device_index.is_none(), t!("config.status_default")).clicked() {
                                     selected_default = true;
                                 }
 
@@ -167,7 +167,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Sample Rate ---
-                        ui.label("Sample Rate:").on_hover_text("The sample rate at which the audio shall be mixed. Higher values use more CPU.");
+                        ui.label(t!("config.group_sample_rate")).on_hover_text(t!("config.tooltip_sample_rate"));
                         egui::ComboBox::from_id_salt("sample_rate_combo")
                             .selected_text(format!("{} Hz", self.state.settings.sample_rate))
                             .show_ui(ui, |ui| {
@@ -180,10 +180,10 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- MIDI Device ---
-                        ui.label("MIDI Inputs:").on_hover_text("Select which MIDI devices shall be used to control and play the organ.");
+                        ui.label(t!("config.group_midi_inputs")).on_hover_text(t!("config.tooltip_midi_inputs"));
                         ui.vertical(|ui| {
                             if self.state.system_midi_ports.is_empty() {
-                                ui.label(egui::RichText::new("No devices found").weak());
+                                ui.label(egui::RichText::new(t!("config.status_no_devices")).weak());
                             } else {
                                 for (_port, name) in &self.state.system_midi_ports {
                                     ui.horizontal(|ui| {
@@ -197,7 +197,7 @@ impl App for ConfigApp {
                                             ui.label(name);
                                             
                                             // Mapping Button
-                                            if ui.button("⚙ Map").clicked() {
+                                            if ui.button(t!("config.btn_map")).clicked() {
                                                 self.midi_mapping_window.device_index = cfg_idx;
                                                 self.midi_mapping_window.visible = true;
                                             }
@@ -209,38 +209,39 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- MIDI File ---
-                        ui.label("MIDI File (Play):").on_hover_text("Select a MIDI file to play. This file will be played back through the virtual organ.");
+                        ui.label(t!("config.group_midi_file")).on_hover_text(t!("config.tooltip_midi_file"));
                         ui.horizontal(|ui| {
                              let midi_text = path_to_str_truncated(self.state.midi_file.as_deref());
                              let full_path = path_to_str_full(self.state.midi_file.as_deref());
                              ui.label(midi_text).on_hover_text(full_path);
 
-                            if ui.button("Browse...").clicked() {
+                            if ui.button(t!("config.btn_browse")).clicked() {
                                  if let Ok(Some(path)) = gui_filepicker::pick_file(
-                                    "Select MIDI File (Optional)",
+                                    &t!("config.picker_midi"),
                                     &[("MIDI Files", &["mid", "midi"])]
                                 ) {
                                     self.state.midi_file = Some(path);
                                 }
                             }
-                            if ui.button("Clear").clicked() {
+                            if ui.button(t!("config.btn_clear")).clicked() {
                                 self.state.midi_file = None;
                             }
                         });
                         ui.end_row();
 
                         // --- IR File ---
-                        ui.label("Reverb (IR):").on_hover_text("Convolution reverb impulse response file. Select an IR (WAV) file to apply reverb to the output.");
+                        ui.label(t!("config.group_ir_file")).on_hover_text(t!("config.tooltip_ir_file"));
             
                         let current_ir_name = self.selected_ir_index
                             .and_then(|idx| self.state.available_ir_files.get(idx))
-                            .map(|(name, _)| name.as_str())
-                            .unwrap_or("No Reverb");
+                            .map(|(name, _)| std::borrow::Cow::Borrowed(name.as_str()))
+                            .unwrap_or(t!("config.status_no_reverb"));
+                            
                         ui.set_min_width(300.0);
                         egui::ComboBox::from_id_salt("ir_combo")
                             .selected_text(current_ir_name)
                             .show_ui(ui, |ui| {
-                                if ui.selectable_label(self.selected_ir_index.is_none(), "No Reverb").clicked() {
+                                if ui.selectable_label(self.selected_ir_index.is_none(), t!("config.status_no_reverb")).clicked() {
                                     self.selected_ir_index = None;
                                     self.state.settings.ir_file = None;
                                 }
@@ -253,16 +254,15 @@ impl App for ConfigApp {
                                 }
                             });
                         // Add a refresh button for IRs? Or a "Show Folder" button could be nice, but simple is best.
-                        if ui.button("📂").on_hover_text("Open Reverb Folder").clicked() {
+                        if ui.button("📂").on_hover_text(t!("config.tooltip_ir_folder")).clicked() {
                              if let Ok(dir) = crate::config::get_reverb_directory() {
-                                 let _ = open::that(dir); // Requires 'open' crate, or just omit if not adding deps
+                                 let _ = open::that(dir);
                              }
                         }
                         ui.end_row();
 
                         // --- Reverb Mix ---
-                        ui.label("Reverb Mix:").on_hover_text("Amount of convolution reverb applied to the output. 0.0 = dry (no reverb), 1.0 = fully wet (only reverb). Adjust to taste.");
-                        // Make slider fill available width
+                        ui.label(t!("config.group_reverb_mix")).on_hover_text(t!("config.tooltip_reverb_mix"));
                         ui.add(egui::Slider::new(&mut self.state.settings.reverb_mix, 0.0..=1.0)
                             .show_value(true)
                             .min_decimals(2)
@@ -270,8 +270,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Gain ---
-                        ui.label("Gain:").on_hover_text("Overall output volume. Adjust this to prevent clipping or to increase loudness.");
-                        // Make slider fill available width
+                        ui.label(t!("config.group_gain")).on_hover_text(t!("config.tooltip_gain"));
                         ui.add(egui::Slider::new(&mut self.state.settings.gain, 0.0..=1.0)
                             .show_value(true)
                             .min_decimals(2)
@@ -279,8 +278,7 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Polyphony ---
-                        ui.label("Polyphony:").on_hover_text("Maximum number of simultaneous voices. Voices past this limit will have a very short release tail. Lower values reduce the fullness of the organ but reduce CPU usage and risk of audio dropouts.");
-                        // Make slider fill available width
+                        ui.label(t!("config.group_polyphony")).on_hover_text(t!("config.tooltip_polyphony"));
                         ui.add(egui::Slider::new(&mut self.state.settings.polyphony, 1..=1024)
                             .show_value(true)
                             .min_decimals(0)
@@ -288,22 +286,22 @@ impl App for ConfigApp {
                         ui.end_row();
 
                         // --- Audio Buffer ---
-                        ui.label("Audio Buffer (frames):").on_hover_text("Number of audio frames per buffer. Higher values can reduce audio glitches on slower systems, but also increase audio latency.");
+                        ui.label(t!("config.group_buffer")).on_hover_text(t!("config.tooltip_buffer"));
                         ui.add(egui::DragValue::new(&mut self.state.settings.audio_buffer_frames).speed(32.0).range(32..=4096));
                         ui.end_row();
 
                         // --- Preload Frames ---
-                        ui.label("Preload Frames:").on_hover_text("Each sample's first few frames will be pre-loaded into RAM. Higher values give your disk more time to stream the remaining sample data, but this also uses more RAM. Increase this value if you have a slower SSD.");
+                        ui.label(t!("config.group_preload")).on_hover_text(t!("config.tooltip_preload"));
                         ui.add(egui::DragValue::new(&mut self.state.settings.preload_frames).speed(32.0).range(1024..=99999999));
 
                         ui.end_row();
 
                         // --- Boolean Options ---
-                        ui.label("Options:");
+                        ui.label(t!("config.group_options"));
                         ui.vertical(|ui| {
-                            ui.checkbox(&mut self.state.settings.precache, "Pre-cache Samples").on_hover_text("Enable this to completely load all samples into RAM instead of streaming them from disk.");
-                            ui.checkbox(&mut self.state.settings.convert_to_16bit, "Convert to 16-bit").on_hover_text("Enable this to convert all samples to 16-bit depth for lower RAM usage and potentially better performance.");
-                            ui.checkbox(&mut self.state.settings.original_tuning, "Use Original Tuning").on_hover_text("Enable this to use the original tuning of the organ samples, as long as they are not off by more than 20 cents. Can help to preserve the original character of some organs.");
+                            ui.checkbox(&mut self.state.settings.precache, t!("config.chk_precache")).on_hover_text(t!("config.tooltip_precache"));
+                            ui.checkbox(&mut self.state.settings.convert_to_16bit, t!("config.chk_convert")).on_hover_text(t!("config.tooltip_convert"));
+                            ui.checkbox(&mut self.state.settings.original_tuning, t!("config.chk_tuning")).on_hover_text(t!("config.tooltip_tuning"));
                         });
                         ui.end_row();
                     });
@@ -321,7 +319,7 @@ impl App for ConfigApp {
                 // --- Start / Quit ---
                 ui.horizontal(|ui| {
 
-                    let quit_button_text = egui::RichText::new("Quit")
+                    let quit_button_text = egui::RichText::new(t!("config.btn_quit"))
                         .color(egui::Color32::RED)
                         .text_style(egui::TextStyle::Heading); 
                         
@@ -335,7 +333,7 @@ impl App for ConfigApp {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
 
-                    let start_button_text = egui::RichText::new("Start Rusty Pipes")
+                    let start_button_text = egui::RichText::new(t!("config.btn_start"))
                         .color(egui::Color32::GREEN)
                         .text_style(egui::TextStyle::Heading); 
                         
@@ -381,7 +379,7 @@ impl App for ConfigApp {
                     }
 
                     if self.state.settings.organ_file.is_none() {
-                        ui.label(egui::RichText::new("Please select an Organ File.").color(egui::Color32::YELLOW));
+                        ui.label(egui::RichText::new(t!("config.warn_select_organ")).color(egui::Color32::YELLOW));
                     }
 
                 });
@@ -397,7 +395,7 @@ impl App for ConfigApp {
 /// Helper to get the full path as a string
 fn path_to_str_full(path: Option<&std::path::Path>) -> String {
     path.map_or_else(
-        || "None".to_string(), 
+        || t!("config.status_none").to_string(),
         |p| p.display().to_string()
     )
 }
@@ -406,7 +404,7 @@ fn path_to_str_full(path: Option<&std::path::Path>) -> String {
 fn path_to_str_truncated(path: Option<&std::path::Path>) -> String {
     path.and_then(|p| p.file_name())
         .and_then(|s| s.to_str())
-        .map_or("None".to_string(), |s| s.to_string())
+        .map_or(t!("config.status_none").to_string(), |s| s.to_string())
 }
 
 /// Runs the GUI configuration loop.
@@ -430,9 +428,11 @@ pub fn run_config_ui(
         Arc::clone(&output), 
         Arc::clone(&is_finished)
     );
+    
+    let win_title = t!("config.window_title").to_string();
 
     eframe::run_native(
-        "Rusty Pipes Configuration",
+        &win_title,
         native_options,
         Box::new(|_cc| Ok(Box::new(app))),
     )

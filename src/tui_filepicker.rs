@@ -10,6 +10,7 @@ use std::{
     path::{Path, PathBuf},
     io::Stdout,
 };
+use rust_i18n::t;
 
 // Define the terminal type alias for convenience
 type TuiTerminal = Terminal<CrosstermBackend<Stdout>>;
@@ -78,7 +79,7 @@ impl<'a> TuiFilePickerState<'a> {
                 }
             }
             Err(e) => {
-                self.error_msg = Some(format!("Error reading directory: {}", e));
+                self.error_msg = Some(t!("tui_picker.err_read_dir", err = e).to_string());
             }
         }
         Ok(())
@@ -146,14 +147,14 @@ pub fn run_file_picker(
                         KeyCode::PageUp => for _ in 0..5 { state.prev_item(); },
                         KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h') => {
                             if let Err(e) = state.go_up() {
-                                state.error_msg = Some(format!("Error: {}", e));
+                                state.error_msg = Some(t!("tui_picker.err_generic", err = e).to_string());
                             }
                         },
                         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
                             match state.activate_selected() {
                                 Ok(Some(file_path)) => break Some(file_path),
                                 Ok(None) => {},
-                                Err(e) => state.error_msg = Some(format!("Error: {}", e)),
+                                Err(e) => state.error_msg = Some(t!("tui_picker.err_generic", err = e).to_string()),
                             }
                         }
                         _ => {}
@@ -183,8 +184,8 @@ fn draw_file_picker_ui(frame: &mut Frame, state: &mut TuiFilePickerState, title:
 
     // Header
     let header_block = Block::default().borders(Borders::ALL)
-        .title(format!("{} (q to quit)", title));
-    let header_text = Paragraph::new(format!("Current Path: {}", state.current_path.display()))
+        .title(t!("tui_picker.header_title_fmt", title = title).to_string());
+    let header_text = Paragraph::new(t!("tui_picker.current_path_fmt", path = state.current_path.display()).to_string())
         .block(header_block);
     frame.render_widget(header_text, layout[0]);
 
@@ -202,14 +203,14 @@ fn draw_file_picker_ui(frame: &mut Frame, state: &mut TuiFilePickerState, title:
         .collect();
 
     let list_widget = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("Entries"))
+        .block(Block::default().borders(Borders::ALL).title(t!("tui_picker.entries_title")))
         .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
         .highlight_symbol("» ");
     
     frame.render_stateful_widget(list_widget, layout[1], &mut state.list_state);
 
     // Footer
-    let footer_text = "Nav: ↑/↓/PgUp/PgDown | Enter/→: Select | ←/Backspace: Up | q: Quit";
+    let footer_text = t!("tui_picker.footer_nav").to_string();
     frame.render_widget(Paragraph::new(footer_text).alignment(Alignment::Center), layout[2]);
 
     // Error

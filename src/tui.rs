@@ -15,6 +15,7 @@ use std::{
     sync::{mpsc::Sender, Arc, Mutex},
     time::{Duration, Instant},
 };
+use rust_i18n::t;
 
 use crate::app::{AppMessage};
 use crate::app_state::AppState;
@@ -261,14 +262,16 @@ pub fn run_tui_loop(
                                                 let current_name = tui_state.app_state.lock().unwrap().presets[slot]
                                                     .as_ref()
                                                     .map_or_else(
-                                                        || format!("Preset F{}", slot + 1),
+                                                        || t!("gui.default_preset_name_fmt", num = slot + 1).to_string(),
                                                         |p| p.name.clone()
                                                     );
                                                 tui_state.mode = AppMode::PresetSaveName(slot, current_name);
                                             }
                                             KeyCode::F(n) if (1..=12).contains(&n) && key.modifiers.is_empty() => {
                                                 if let Err(e) = tui_state.app_state.lock().unwrap().recall_preset((n - 1) as usize, &audio_tx) {
-                                                    tui_state.app_state.lock().unwrap().add_midi_log(format!("ERROR recalling preset: {}", e));
+                                                    tui_state.app_state.lock().unwrap().add_midi_log(
+                                                        t!("errors.recall_preset_fail", err = e).to_string()
+                                                    );
                                                 }
                                             }
                                             // Gain
@@ -356,31 +359,31 @@ fn draw_main_app_ui(
     // --- Footer Help Text / Error ---
 
     let rec_status = if app_state.is_recording_midi && app_state.is_recording_audio {
-        " [REC MIDI+WAV] "
+        t!("tui.status_rec_midi_wav").to_string()
     } else if app_state.is_recording_midi {
-        " [REC MIDI] "
+        t!("tui.status_rec_midi").to_string()
     } else if app_state.is_recording_audio {
-        " [REC WAV] "
+        t!("tui.status_rec_wav").to_string()
     } else {
-        ""
+        "".to_string()
     };
 
     let footer_widget = if let Some(err) = &app_state.error_msg {
         Paragraph::new(err.as_str())
             .style(Style::default().fg(Color::White).bg(Color::Red))
     } else if is_underrun {
-        Paragraph::new("⚠ AUDIO BUFFER UNDERRUN ⚠")
+        Paragraph::new(t!("tui.err_underrun").to_string())
             .alignment(Alignment::Center)
             .style(Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD))
     } else {
-        let status = format!(
-            "{}CPU: {:.1}% | Gain: {:.0}% | Voices: {}/{} | [Q]uit [P]anic +/-:Gain E/R:Octave [/]:Poly F1-12:Recall Shift+F1-12:Save [I]:MIDI Learn", 
-            rec_status,
-            app_state.cpu_load * 100.0,
-            app_state.gain * 100.0, 
-            app_state.active_voice_count,
-            app_state.polyphony
-        );
+        let status = t!("tui.status_bar_fmt",
+            rec = rec_status,
+            cpu = format!("{:.1}", app_state.cpu_load * 100.0),
+            gain = format!("{:.0}", app_state.gain * 100.0), 
+            active = app_state.active_voice_count,
+            poly = app_state.polyphony
+        ).to_string();
+        
         Paragraph::new(status).alignment(Alignment::Center)
     };
     frame.render_widget(footer_widget, main_layout[2]);
@@ -401,7 +404,7 @@ fn draw_main_app_ui(
     let selected_index = list_state.selected().unwrap_or(0);
     let stops_count = app_state.organ.stops.len();
     if stops_count == 0 {
-        let no_stops_msg = Paragraph::new("No stops loaded.")
+        let no_stops_msg = Paragraph::new(t!("tui.no_stops").to_string())
             .alignment(Alignment::Center)
             .block(Block::default().borders(Borders::ALL).title(app_state.organ.name.as_str()));
         frame.render_widget(no_stops_msg, stops_area);
@@ -479,7 +482,7 @@ fn draw_main_app_ui(
         .collect();
 
     let log_widget = List::new(log_items)
-        .block(Block::default().borders(Borders::ALL).title("MIDI Log"))
+        .block(Block::default().borders(Borders::ALL).title(t!("tui.midi_log_title").to_string()))
         .style(Style::default().fg(Color::Cyan));
     
     frame.render_widget(log_widget, bottom_chunks[0]);
@@ -493,7 +496,7 @@ fn draw_main_app_ui(
         .unwrap_or(Instant::now());
 
     let piano_roll = Canvas::default()
-        .block(Block::default().borders(Borders::ALL).title("Piano Roll"))
+        .block(Block::default().borders(Borders::ALL).title(t!("tui.piano_roll_title").to_string()))
         .marker(Marker::Block)
         .x_bounds([
             PIANO_LOW_NOTE as f64,
@@ -586,11 +589,11 @@ fn draw_preset_save_modal(frame: &mut Frame, slot: usize, name_buffer: &str) {
     
     let text = vec![
         Line::from(Span::styled(
-            format!("Save Preset F{}", slot_display),
+            t!("tui.save_header_fmt", num = slot_display).to_string(),
             Style::default().add_modifier(Modifier::BOLD)
         )),
         Line::from(""),
-        Line::from("Enter a name:"),
+        Line::from(t!("tui.save_prompt").to_string()),
         Line::from(""),
         Line::from(Span::styled(
             format!("{}▋", name_buffer),
@@ -598,12 +601,14 @@ fn draw_preset_save_modal(frame: &mut Frame, slot: usize, name_buffer: &str) {
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "Press [Enter] to save, [Esc] to cancel",
+            t!("tui.save_footer").to_string(),
             Style::default().fg(Color::DarkGray)
         )),
     ];
 
-    let modal_block = Block::default().title("Save Preset").borders(Borders::ALL);
+    let modal_block = Block::default()
+        .title(t!("tui.save_title").to_string())
+        .borders(Borders::ALL);
     let modal_paragraph = Paragraph::new(text)
         .block(modal_block)
         .alignment(Alignment::Center);

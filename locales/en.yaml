@@ -1,0 +1,267 @@
+main:
+  title: "Rusty Pipes - Virtual Pipe Organ Simulator v%{version}"
+  config_cancelled: "Configuration cancelled. Exiting."
+  loading_organ: "Loading organ definition..."
+  loading_samples_fmt: "Loading Samples: [%{percent}] %{file}..."
+  loading_complete: "Loading Samples: [100%] Complete."
+  organ_loaded_fmt: "Successfully loaded organ: %{name}"
+  found_stops_fmt: "Found %{count} stops."
+  starting_audio: "Starting audio engine..."
+  audio_running: "Audio engine running."
+  starting_midi_file: "Starting MIDI file playback: %{path}"
+  connecting_midi: "Connecting to MIDI device: %{name}"
+  no_midi_devices: "No MIDI devices enabled. Running without MIDI input."
+  shutting_down: "Shutting down..."
+  
+  list_devices_header: "Available MIDI Input Devices:"
+  list_devices_none: "  No MIDI devices found."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Tip: F1-F12 to Recall, Shift+F1-F12 to Save, 'P' for Panic, Arrows to Navigate, 1-0 to Toggle, E/R for Octave, +/- for Gain, [ / ] for Polyphony"
+  recording_active: "RECORDING"
+  rec_midi_start: "⏺ Rec MIDI"
+  rec_midi_stop: "⏹ Stop MIDI Rec"
+  rec_wav_start: "⏺ Rec WAV"
+  rec_wav_stop: "⏹ Stop WAV Rec"
+
+  presets_heading: "Presets"
+  recall_label: "Recall (F1-F12):"
+  save_label: "Save (Shift+F1-F12):"
+  default_preset_name_fmt: "Preset F%{num}"
+  tremulants_heading: "Tremulants"
+  no_tremulants: "No tremulants found."
+
+  audio_settings_heading: "Audio Settings"
+  reverb_label: "Reverb:"
+  no_reverb: "No Reverb"
+  reverb_mix_label: "Reverb Mix:"
+  master_gain_label: "Master Gain:"
+  vol_slider_text: "Vol"
+  gain_keys_hint: "Keys: +/-"
+  polyphony_label: "Polyphony:"
+  polyphony_keys_hint: "Keys: [ / ]"
+  
+  underrun_alert: "⚠ AUDIO UNDERRUN ⚠"
+  voices_fmt: "Voices: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU Load: %{load}%"
+
+  selected_stop_label: "Selected Stop:"
+  no_selection: "None"
+  btn_all_channels: "All Channels"
+  btn_no_channels: "No Channels"
+  btn_panic: "PANIC (All Notes Off)"
+  panic_tooltip: "Stops all sounding notes"
+  no_stops_loaded: "No stops loaded."
+
+  midi_log_heading: "MIDI Log"
+  midi_activity_heading: "MIDI Activity"
+
+  save_preset_title_fmt: "Save Preset F%{num}"
+  enter_name_prompt: "Enter a name for the preset:"
+  btn_cancel: "Cancel"
+  btn_save: "Save"
+
+errors:
+  midi_connect_fail: "Failed to connect to %{name}: %{err}"
+  midi_fetch_fail: "Error fetching MIDI devices: %{err}"
+  loading_ui_fail: "Loading UI failed: %{err}"
+  recall_preset_fail: "ERROR recalling preset: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDI Mapping: %{name}"
+  heading: "Channel Configuration"
+  description: "Configure how MIDI channels from this device map to the organ's internal channels."
+  mode_label: "Mapping Mode:"
+  mode_simple: "Simple"
+  mode_complex: "Complex"
+  
+  simple_desc_1: "In Simple Mode, all incoming MIDI messages from this device"
+  simple_desc_2: "are routed to a single target channel on the organ."
+  target_channel_label: "Target Channel:"
+  channel_fmt: "Channel %{num}"
+  simple_hint: "Use this for single-keyboard controllers."
+  
+  complex_desc: "Map each specific input channel to a specific target channel."
+  col_input: "Input Channel"
+  col_target: "Target Channel"
+  input_channel_fmt: "Input Channel %{num}"
+  
+  btn_done: "Done"
+
+midi_learn:
+  window_title_fmt: "MIDI Learn: %{name}"
+  description_1: "Configure how external MIDI events control this stop's assignment to internal channels."
+  description_2: "Click 'Learn', then press a key on your MIDI keyboard."
+  
+  col_internal_channel: "Internal Channel"
+  col_enable_event: "Enable Event"
+  col_disable_event: "Disable Event"
+  col_actions: "Actions"
+  
+  channel_fmt: "Channel %{num}"
+  status_listening: "Listening..."
+  btn_learn: "Learn"
+  btn_clear: "Clear"
+  
+  log_mapped_fmt: "Mapped %{event} to %{action}"
+  action_enable: "Enable"
+  action_disable: "Disable"
+
+config:
+  window_title: "Rusty Pipes Configuration"
+  subtitle: "Indicia MMXXV"
+  
+  # Group Headers
+  group_organ_file: "Organ File:"
+  group_audio_device: "Audio Device:"
+  group_sample_rate: "Sample Rate:"
+  group_midi_inputs: "MIDI Inputs:"
+  group_midi_file: "MIDI File (Play):"
+  group_ir_file: "Reverb (IR):"
+  group_reverb_mix: "Reverb Mix:"
+  group_gain: "Gain:"
+  group_polyphony: "Polyphony:"
+  group_buffer: "Audio Buffer (frames):"
+  group_preload: "Preload Frames:"
+  group_options: "Options:"
+  
+  # Tooltips
+  tooltip_organ: "Select the Hauptwerk organ file (.organ or Organ_Hauptwerk_xml) to load."
+  tooltip_audio_device: "The audio device that shall be used for audio output"
+  tooltip_sample_rate: "The sample rate at which the audio shall be mixed. Higher values use more CPU."
+  tooltip_midi_inputs: "Select which MIDI devices shall be used to control and play the organ."
+  tooltip_midi_file: "Select a MIDI file to play. This file will be played back through the virtual organ."
+  tooltip_ir_file: "Convolution reverb impulse response file. Select an IR (WAV) file to apply reverb to the output."
+  tooltip_ir_folder: "Open Reverb Folder"
+  tooltip_reverb_mix: "Amount of convolution reverb applied to the output. 0.0 = dry (no reverb), 1.0 = fully wet (only reverb). Adjust to taste."
+  tooltip_gain: "Overall output volume. Adjust this to prevent clipping or to increase loudness."
+  tooltip_polyphony: "Maximum number of simultaneous voices. Voices past this limit will have a very short release tail. Lower values reduce the fullness of the organ but reduce CPU usage and risk of audio dropouts."
+  tooltip_buffer: "Number of audio frames per buffer. Higher values can reduce audio glitches on slower systems, but also increase audio latency."
+  tooltip_preload: "Each sample's first few frames will be pre-loaded into RAM. Higher values give your disk more time to stream the remaining sample data, but this also uses more RAM. Increase this value if you have a slower SSD."
+  tooltip_precache: "Enable this to completely load all samples into RAM instead of streaming them from disk."
+  tooltip_convert: "Enable this to convert all samples to 16-bit depth for lower RAM usage and potentially better performance."
+  tooltip_tuning: "Enable this to use the original tuning of the organ samples, as long as they are not off by more than 20 cents. Can help to preserve the original character of some organs."
+  
+  # Checkbox Labels
+  chk_precache: "Pre-cache Samples"
+  chk_convert: "Convert to 16-bit"
+  chk_tuning: "Use Original Tuning"
+  
+  # Buttons / Status
+  btn_browse: "Browse..."
+  btn_clear: "Clear"
+  btn_map: "⚙ Map"
+  btn_quit: "Quit"
+  btn_start: "Start Rusty Pipes"
+  
+  status_no_devices: "No devices found"
+  status_no_reverb: "No Reverb"
+  status_default: "[ Default ]"
+  status_none: "None"
+  warn_select_organ: "Please select an Organ File."
+  
+  # File Picker Titles
+  picker_organ: "Select Organ File"
+  picker_midi: "Select MIDI File (Optional)"
+
+loading:
+  heading: "Loading Organ Samples..."
+  window_title: "Loading..."
+  app_name: "Rusty Pipes Loading..."
+  status_init: "Initializing..."
+
+tui_config:
+  header_title: "Configuration"
+  footer_nav: "Nav: ↑/↓ | Enter: Select/Toggle | S: Start | Q: Quit"
+  footer_midi: " Space: Toggle | Enter: Configure | Esc: Back "
+  
+  # Modal Titles
+  title_midi_devs: " MIDI Devices "
+  title_select_audio: "Select Audio Device (↑/↓, Enter, Esc)"
+  title_select_rate: "Select Sample Rate"
+  title_select_ir: "Select Impulse Response"
+  
+  # Input Prompts
+  prompt_reverb: "Enter Reverb Mix (0.0 - 1.0)"
+  prompt_gain: "Enter Gain (0.0 - 1.0)"
+  prompt_poly: "Enter Polyphony (1 - 1024)"
+  prompt_buffer: "Enter Audio Buffer Size"
+  prompt_preload: "Enter Preload Frames"
+  prompt_generic: "Enter Value"
+
+  # Formats (To align text in TUI columns)
+  # Note: spaces are important here for TUI alignment
+  fmt_organ:       "Organ File:       %{val}"
+  fmt_audio:       "Audio Device:     %{val}"
+  fmt_rate:        "Sample Rate:      %{val} Hz"
+  fmt_midi_devs:   "MIDI Input Devices:   %{count} enabled"
+  fmt_midi_file:   "MIDI File (Play): %{val}"
+  fmt_ir:          "Reverb IR File:   %{val}"
+  fmt_mix:         "Reverb Mix:       %{val}"
+  fmt_gain:        "Gain:             %{val}"
+  fmt_poly:        "Polyphony:        %{val}"
+  fmt_buffer:      "Audio Buffer:     %{val} frames"
+  fmt_preload:     "Preload Frames:   %{val} frames"
+  fmt_precache:    "Pre-cache:        %{val}"
+  fmt_convert:     "Convert to 16-bit:%{val}"
+  fmt_tuning:      "Original Tuning:  %{val}"
+  
+  val_on: "ON"
+  val_off: "OFF"
+
+tui_picker:
+  header_title_fmt: "%{title} (q to quit)"
+  current_path_fmt: "Current Path: %{path}"
+  entries_title: "Entries"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDown | Enter/→: Select | ←/Backspace: Up | q: Quit"
+  
+  err_read_dir: "Error reading directory: %{err}"
+  err_generic: "Error: %{err}"
+
+tui_midi_learn:
+  # Short table headers
+  hdr_internal: "Internal"
+  hdr_action: "Action"
+  
+  # Short formats
+  fmt_ch_short: "Ch %{num}"
+  cell_dash: "-"
+  
+  # Footer
+  footer_help: "Arrows: Navigate | Enter: Learn/Clear | Esc: Close"
+
+tui_midi:
+  title_fmt: " Configure Mapping: %{name} "
+  footer: " Enter: Edit/Toggle | ↑/↓: Navigate/Value | Esc: Back "
+  
+  mode_simple: "Simple (All Inputs -> One Target)"
+  mode_complex: "Complex (Per-Channel Mapping)"
+  
+  lbl_mode: "Mode: %{val}"
+  lbl_target: "Target Channel: %{ch}"
+  lbl_complex: "Input Ch %{input} -> Target Ch %{out}"
+  
+  suffix_editing: "%{val} <Editing>"
+
+tui:
+  status_rec_midi_wav: " [REC MIDI+WAV] "
+  status_rec_midi: " [REC MIDI] "
+  status_rec_wav: " [REC WAV] "
+  
+  # Status bar format: %{rec} is recording status, %{cpu} is CPU load, etc.
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Voices: %{active}/%{poly} | [Q]uit [P]anic +/-:Gain E/R:Octave [/]:Poly F1-12:Recall Shift+F1-12:Save [I]:MIDI Learn"
+  
+  err_underrun: "⚠ AUDIO BUFFER UNDERRUN ⚠"
+  
+  # Modal: Save Preset
+  save_title: "Save Preset"
+  save_header_fmt: "Save Preset F%{num}"
+  save_prompt: "Enter a name:"
+  save_footer: "Press [Enter] to save, [Esc] to cancel"
+  
+  # Main Stop List
+  no_stops: "No stops loaded."
+  midi_log_title: "MIDI Log"
+  piano_roll_title: "Piano Roll"
