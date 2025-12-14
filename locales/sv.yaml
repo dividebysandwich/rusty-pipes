@@ -1,0 +1,254 @@
+# YAML localization file for Swedish (sv)
+
+main:
+  title: "Rusty Pipes - Virtuell Piporgelsimulator v%{version}"
+  config_cancelled: "Konfiguration avbruten. Avslutar."
+  loading_organ: "Laddar orgeldefinition..."
+  loading_samples_fmt: "Laddar samplingar: [%{percent}] %{file}..."
+  loading_complete: "Laddar samplingar: [100%] Klart."
+  organ_loaded_fmt: "Orgel laddad: %{name}"
+  found_stops_fmt: "Hittade %{count} register."
+  starting_audio: "Startar ljudmotor..."
+  audio_running: "Ljudmotor körs."
+  starting_midi_file: "Startar uppspelning av MIDI-fil: %{path}"
+  connecting_midi: "Ansluter till MIDI-enhet: %{name}"
+  no_midi_devices: "Inga MIDI-enheter aktiverade. Kör utan MIDI-ingång."
+  shutting_down: "Stänger ner..."
+  
+  list_devices_header: "Tillgängliga MIDI-ingångsenheter:"
+  list_devices_none: "  Inga MIDI-enheter hittades."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Tips: F1-F12 Hämta, Shift+F1-F12 Spara, 'P' Panik, Pilar Navigera, 1-0 Växla, E/R Oktav, +/- Gain, [ / ] Polyfoni"
+  recording_active: "SPELAR IN"
+  rec_midi_start: "⏺ Spela in MIDI"
+  rec_midi_stop: "⏹ Stoppa MIDI"
+  rec_wav_start: "⏺ Spela in WAV"
+  rec_wav_stop: "⏹ Stoppa WAV"
+
+  presets_heading: "Förinställningar (Presets)"
+  recall_label: "Hämta (F1-F12):"
+  save_label: "Spara (Shift+F1-F12):"
+  default_preset_name_fmt: "Preset F%{num}"
+  tremulants_heading: "Tremulanter"
+  no_tremulants: "Inga tremulanter hittades."
+
+  audio_settings_heading: "Ljudinställningar"
+  reverb_label: "Reverb (Klang):"
+  no_reverb: "Inget Reverb"
+  reverb_mix_label: "Reverb Mix:"
+  master_gain_label: "Master Gain:"
+  vol_slider_text: "Vol"
+  gain_keys_hint: "Tangenter: +/-"
+  polyphony_label: "Polyfoni:"
+  polyphony_keys_hint: "Tangenter: [ / ]"
+  
+  underrun_alert: "⚠ LJUDBORTFALL (UNDERRUN) ⚠"
+  voices_fmt: "Röster: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU-belastning: %{load}%"
+
+  selected_stop_label: "Valt Register:"
+  no_selection: "Inget"
+  btn_all_channels: "Alla Kanaler"
+  btn_no_channels: "Inga Kanaler"
+  btn_panic: "PANIK (Stäng av ljud)"
+  panic_tooltip: "Stoppar alla ljudande toner"
+  no_stops_loaded: "Inga register laddade."
+
+  midi_log_heading: "MIDI Logg"
+  midi_activity_heading: "MIDI Aktivitet"
+
+  save_preset_title_fmt: "Spara Preset F%{num}"
+  enter_name_prompt: "Ange ett namn för förinställningen:"
+  btn_cancel: "Avbryt"
+  btn_save: "Spara"
+
+errors:
+  midi_connect_fail: "Kunde inte ansluta till %{name}: %{err}"
+  midi_fetch_fail: "Fel vid hämtning av MIDI-enheter: %{err}"
+  loading_ui_fail: "Kunde inte ladda UI: %{err}"
+  recall_preset_fail: "FEL vid hämtning av preset: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDI-mappning: %{name}"
+  heading: "Kanalkonfiguration"
+  description: "Konfigurera hur MIDI-kanaler från denna enhet mappas till orgelns interna kanaler."
+  mode_label: "Mappningsläge:"
+  mode_simple: "Enkelt"
+  mode_complex: "Komplext"
+  
+  simple_desc_1: "I enkelt läge dirigeras alla inkommande MIDI-meddelanden"
+  simple_desc_2: "från denna enhet till en enda målkanal på orgeln."
+  target_channel_label: "Målkanal:"
+  channel_fmt: "Kanal %{num}"
+  simple_hint: "Använd detta för klaviaturer med en manual."
+  
+  complex_desc: "Mappa varje specifik ingångskanal till en specifik målkanal."
+  col_input: "Ingångskanal"
+  col_target: "Målkanal"
+  input_channel_fmt: "Ingångskanal %{num}"
+  
+  btn_done: "Klart"
+
+midi_learn:
+  window_title_fmt: "MIDI Learn: %{name}"
+  description_1: "Konfigurera hur externa MIDI-händelser styr detta register."
+  description_2: "Klicka på 'Lär', tryck sedan på en tangent på ditt MIDI-keyboard."
+  
+  col_internal_channel: "Intern Kanal"
+  col_enable_event: "Aktivera Händelse"
+  col_disable_event: "Inaktivera Händelse"
+  col_actions: "Åtgärder"
+  
+  channel_fmt: "Kanal %{num}"
+  status_listening: "Lyssnar..."
+  btn_learn: "Lär (Learn)"
+  btn_clear: "Rensa"
+  
+  log_mapped_fmt: "Mappade %{event} till %{action}"
+  action_enable: "Aktivera"
+  action_disable: "Inaktivera"
+
+config:
+  window_title: "Rusty Pipes Konfiguration"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Orgelfil:"
+  group_audio_device: "Ljudenhet:"
+  group_sample_rate: "Samplingsfrekvens:"
+  group_midi_inputs: "MIDI-ingångar:"
+  group_midi_file: "MIDI-fil (Uppspelning):"
+  group_ir_file: "Reverb (IR):"
+  group_reverb_mix: "Reverb Mix:"
+  group_gain: "Gain:"
+  group_polyphony: "Polyfoni:"
+  group_buffer: "Ljudbuffert (frames):"
+  group_preload: "Förladdning (frames):"
+  group_options: "Alternativ:"
+  
+  tooltip_organ: "Välj Hauptwerk-orgelfilen (.organ eller Organ_Hauptwerk_xml) att ladda."
+  tooltip_audio_device: "Enheten som ska användas för ljudutgång."
+  tooltip_sample_rate: "Frekvensen som ljudet mixas vid. Högre värden kräver mer CPU."
+  tooltip_midi_inputs: "Välj vilka MIDI-enheter som ska användas för att styra orgeln."
+  tooltip_midi_file: "Välj en MIDI-fil att spela upp."
+  tooltip_ir_file: "Impulssvarsfil för konvolutionsreverb (WAV)."
+  tooltip_ir_folder: "Öppna Reverb-mapp"
+  tooltip_reverb_mix: "Mängd reverb som appliceras. 0.0 = torrt, 1.0 = blött (endast reverb)."
+  tooltip_gain: "Övergripande utgångsvolym."
+  tooltip_polyphony: "Maximalt antal samtidiga röster."
+  tooltip_buffer: "Antal ljudramar per buffert. Högre värden minskar risk för störningar men ökar latensen."
+  tooltip_preload: "De första ramarna av varje sampling förladdas i RAM."
+  tooltip_precache: "Aktivera detta för att ladda alla samplingar helt i RAM istället för att strömma från disk."
+  tooltip_convert: "Aktivera detta för att konvertera alla samplingar till 16-bitars djup."
+  tooltip_tuning: "Använd samplingarnas originalstämning."
+  
+  chk_precache: "För-cacha Samplingar"
+  chk_convert: "Konvertera till 16-bit"
+  chk_tuning: "Använd Originalstämning"
+  
+  btn_browse: "Bläddra..."
+  btn_clear: "Rensa"
+  btn_map: "⚙ Mappa"
+  btn_quit: "Avsluta"
+  btn_start: "Starta Rusty Pipes"
+  
+  status_no_devices: "Inga enheter hittades"
+  status_no_reverb: "Inget Reverb"
+  status_default: "[ Standard ]"
+  status_none: "Inget"
+  warn_select_organ: "Vänligen välj en Orgelfil."
+  
+  picker_organ: "Välj Orgelfil"
+  picker_midi: "Välj MIDI-fil (Valfritt)"
+
+loading:
+  heading: "Laddar Orgelsamplingar..."
+  window_title: "Laddar..."
+  app_name: "Rusty Pipes Laddar..."
+  status_init: "Initierar..."
+
+tui_config:
+  header_title: "Konfiguration"
+  footer_nav: "Nav: ↑/↓ | Enter: Välj/Växla | S: Start | Q: Avsluta"
+  footer_midi: " Mellanslag: Växla | Enter: Konfig | Esc: Tillbaka "
+  
+  title_midi_devs: " MIDI-enheter "
+  title_select_audio: "Välj Ljudenhet (↑/↓, Enter, Esc)"
+  title_select_rate: "Välj Samplingsfrekvens"
+  title_select_ir: "Välj Impulssvar"
+  
+  prompt_reverb: "Ange Reverb Mix (0.0 - 1.0)"
+  prompt_gain: "Ange Gain (0.0 - 1.0)"
+  prompt_poly: "Ange Polyfoni (1 - 1024)"
+  prompt_buffer: "Ange Buffertstorlek"
+  prompt_preload: "Ange Förladdningsramar"
+  prompt_generic: "Ange Värde"
+
+  fmt_organ:       "Orgelfil:         %{val}"
+  fmt_audio:       "Ljudenhet:        %{val}"
+  fmt_rate:        "Samplingsfrekvens:%{val} Hz"
+  fmt_midi_devs:   "MIDI-ingångar:    %{count} aktiverade"
+  fmt_midi_file:   "MIDI-fil:         %{val}"
+  fmt_ir:          "Reverb IR-fil:    %{val}"
+  fmt_mix:         "Reverb Mix:       %{val}"
+  fmt_gain:        "Gain:             %{val}"
+  fmt_poly:        "Polyfoni:         %{val}"
+  fmt_buffer:      "Ljudbuffert:      %{val} frames"
+  fmt_preload:     "Förladdning:      %{val} frames"
+  fmt_precache:    "För-cacha:        %{val}"
+  fmt_convert:     "Konv. till 16-bit:%{val}"
+  fmt_tuning:      "Orig. Stämning:   %{val}"
+  
+  val_on: "PÅ"
+  val_off: "AV"
+
+tui_picker:
+  header_title_fmt: "%{title} (q för att avsluta)"
+  current_path_fmt: "Aktuell sökväg: %{path}"
+  entries_title: "Poster"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDn | Enter/→: Välj | ←/Bksp: Upp | q: Avsluta"
+  
+  err_read_dir: "Fel vid läsning av katalog: %{err}"
+  err_generic: "Fel: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Intern"
+  hdr_action: "Åtgärd"
+  
+  fmt_ch_short: "Kan %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Pilar: Navigera | Enter: Lär/Rensa | Esc: Stäng"
+
+tui_midi:
+  title_fmt: " Konfigurera Mappning: %{name} "
+  footer: " Enter: Redigera/Växla | ↑/↓: Värde | Esc: Tillbaka "
+  
+  mode_simple: "Enkelt (Alla Ingångar -> Ett Mål)"
+  mode_complex: "Komplext (Mappning per kanal)"
+  
+  lbl_mode: "Läge: %{val}"
+  lbl_target: "Målkanal: %{ch}"
+  lbl_complex: "Ingång Kan %{input} -> Mål Kan %{out}"
+  
+  suffix_editing: "%{val} <Redigerar>"
+
+tui:
+  status_rec_midi_wav: " [REC MIDI+WAV] "
+  status_rec_midi: " [REC MIDI] "
+  status_rec_wav: " [REC WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Röster: %{active}/%{poly} | [Q]Avsluta [P]anik +/-:Gain E/R:Okt [/]:Poly F1-12:Hämta Shift+F1-12:Spara [I]:MIDI Learn"
+  
+  err_underrun: "⚠ LJUDBORTFALL (UNDERRUN) ⚠"
+  
+  save_title: "Spara Preset"
+  save_header_fmt: "Spara Preset F%{num}"
+  save_prompt: "Ange ett namn:"
+  save_footer: "Tryck [Enter] för att spara, [Esc] för att avbryta"
+  
+  no_stops: "Inga register laddade."
+  midi_log_title: "MIDI Logg"
+  piano_roll_title: "Piano Roll"

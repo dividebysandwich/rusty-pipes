@@ -1,0 +1,254 @@
+# YAML localization file for Flemish (nl-be)
+
+main:
+  title: "Rusty Pipes - Virtueel Orgel Simulator v%{version}"
+  config_cancelled: "Configuratie geannuleerd. Afsluiten."
+  loading_organ: "Orgeldefinitie laden..."
+  loading_samples_fmt: "Samples laden: [%{percent}] %{file}..."
+  loading_complete: "Samples laden: [100%] Voltooid."
+  organ_loaded_fmt: "Orgel succesvol geladen: %{name}"
+  found_stops_fmt: "%{count} registers gevonden."
+  starting_audio: "Audio-engine starten..."
+  audio_running: "Audio-engine draait."
+  starting_midi_file: "MIDI-bestand afspelen starten: %{path}"
+  connecting_midi: "Verbinden met MIDI-apparaat: %{name}"
+  no_midi_devices: "Geen MIDI-apparaten ingeschakeld. Uitvoeren zonder MIDI-invoer."
+  shutting_down: "Afsluiten..."
+  
+  list_devices_header: "Beschikbare MIDI-invoerapparaten:"
+  list_devices_none: "  Geen MIDI-apparaten gevonden."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Tip: F1-F12 Oproepen, Shift+F1-F12 Opslaan, 'P' Paniek, Pijltjes om te navigeren, 1-0 Schakelen, E/R Octaaf, +/- Versterking, [ / ] Polyfonie"
+  recording_active: "OPNEMEN"
+  rec_midi_start: "⏺ Opname MIDI"
+  rec_midi_stop: "⏹ Stop MIDI"
+  rec_wav_start: "⏺ Opname WAV"
+  rec_wav_stop: "⏹ Stop WAV"
+
+  presets_heading: "Presets"
+  recall_label: "Oproepen (F1-F12):"
+  save_label: "Opslaan (Shift+F1-F12):"
+  default_preset_name_fmt: "Preset F%{num}"
+  tremulants_heading: "Tremulanten"
+  no_tremulants: "Geen tremulanten gevonden."
+
+  audio_settings_heading: "Audio-instellingen"
+  reverb_label: "Galm (Reverb):"
+  no_reverb: "Geen Galm"
+  reverb_mix_label: "Galm Mix:"
+  master_gain_label: "Hoofdversterking:"
+  vol_slider_text: "Vol"
+  gain_keys_hint: "Toetsen: +/-"
+  polyphony_label: "Polyfonie:"
+  polyphony_keys_hint: "Toetsen: [ / ]"
+  
+  underrun_alert: "⚠ AUDIO BUFFER ONDERLOOP (UNDERRUN) ⚠"
+  voices_fmt: "Stemmen: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU-belasting: %{load}%"
+
+  selected_stop_label: "Geselecteerd Register:"
+  no_selection: "Geen"
+  btn_all_channels: "Alle Kanalen"
+  btn_no_channels: "Geen Kanalen"
+  btn_panic: "PANIEK (Alle Noten Uit)"
+  panic_tooltip: "Stopt alle klinkende noten"
+  no_stops_loaded: "Geen registers geladen."
+
+  midi_log_heading: "MIDI Log"
+  midi_activity_heading: "MIDI Activiteit"
+
+  save_preset_title_fmt: "Preset Opslaan F%{num}"
+  enter_name_prompt: "Voer een naam in voor de preset:"
+  btn_cancel: "Annuleren"
+  btn_save: "Opslaan"
+
+errors:
+  midi_connect_fail: "Verbinding met %{name} mislukt: %{err}"
+  midi_fetch_fail: "Fout bij ophalen MIDI-apparaten: %{err}"
+  loading_ui_fail: "Laden UI mislukt: %{err}"
+  recall_preset_fail: "FOUT bij oproepen preset: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDI-toewijzing: %{name}"
+  heading: "Kanaalconfiguratie"
+  description: "Configureer hoe MIDI-kanalen van dit apparaat worden toegewezen aan de interne orgelkanalen."
+  mode_label: "Toewijzingsmodus:"
+  mode_simple: "Eenvoudig"
+  mode_complex: "Complex"
+  
+  simple_desc_1: "In de Eenvoudige modus worden alle inkomende MIDI-berichten"
+  simple_desc_2: "naar één doelkanaal op het orgel geleid."
+  target_channel_label: "Doelkanaal:"
+  channel_fmt: "Kanaal %{num}"
+  simple_hint: "Gebruik dit voor controllers met één toetsenbord."
+  
+  complex_desc: "Wijs elk specifiek invoerkanaal toe aan een specifiek doelkanaal."
+  col_input: "Invoerkanaal"
+  col_target: "Doelkanaal"
+  input_channel_fmt: "Invoerkanaal %{num}"
+  
+  btn_done: "Klaar"
+
+midi_learn:
+  window_title_fmt: "MIDI Leren: %{name}"
+  description_1: "Configureer hoe externe MIDI-events dit register bedienen."
+  description_2: "Klik op 'Leren' en druk vervolgens op een toets op uw MIDI-toetsenbord."
+  
+  col_internal_channel: "Intern Kanaal"
+  col_enable_event: "Event Inschakelen"
+  col_disable_event: "Event Uitschakelen"
+  col_actions: "Acties"
+  
+  channel_fmt: "Kanaal %{num}"
+  status_listening: "Luisteren..."
+  btn_learn: "Leren"
+  btn_clear: "Wissen"
+  
+  log_mapped_fmt: "%{event} toegewezen aan %{action}"
+  action_enable: "Inschakelen"
+  action_disable: "Uitschakelen"
+
+config:
+  window_title: "Rusty Pipes Configuratie"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Orgelbestand:"
+  group_audio_device: "Audio-apparaat:"
+  group_sample_rate: "Samplefrequentie:"
+  group_midi_inputs: "MIDI-ingangen:"
+  group_midi_file: "MIDI-bestand (Afspelen):"
+  group_ir_file: "Galm (IR):"
+  group_reverb_mix: "Galm Mix:"
+  group_gain: "Versterking:"
+  group_polyphony: "Polyfonie:"
+  group_buffer: "Audiobuffer (frames):"
+  group_preload: "Voorlaad Frames:"
+  group_options: "Opties:"
+  
+  tooltip_organ: "Selecteer het Hauptwerk-orgelbestand (.organ of Organ_Hauptwerk_xml) om te laden."
+  tooltip_audio_device: "Het audio-apparaat dat voor audio-uitvoer wordt gebruikt."
+  tooltip_sample_rate: "De frequentie waarop de audio wordt gemixt. Hogere waarden gebruiken meer CPU."
+  tooltip_midi_inputs: "Selecteer welke MIDI-apparaten worden gebruikt om het orgel te bedienen."
+  tooltip_midi_file: "Selecteer een MIDI-bestand om af te spelen."
+  tooltip_ir_file: "Impulsresponsbestand voor convolutiegalm (WAV)."
+  tooltip_ir_folder: "Map met galm openen"
+  tooltip_reverb_mix: "Hoeveelheid galm toegepast. 0.0 = droog (geen galm), 1.0 = nat (alleen galm)."
+  tooltip_gain: "Algemeen uitgangsvolume."
+  tooltip_polyphony: "Maximum aantal gelijktijdige stemmen."
+  tooltip_buffer: "Aantal audioframes per buffer. Hogere waarden verminderen haperingen maar verhogen de latentie."
+  tooltip_preload: "De eerste frames van elke sample worden vooraf in het RAM geladen."
+  tooltip_precache: "Schakel dit in om alle samples volledig in het RAM te laden."
+  tooltip_convert: "Schakel dit in om alle samples naar 16-bits te converteren."
+  tooltip_tuning: "Gebruik de originele stemming van de samples."
+  
+  chk_precache: "Samples vooraf cachen"
+  chk_convert: "Converteren naar 16-bits"
+  chk_tuning: "Originele stemming gebruiken"
+  
+  btn_browse: "Bladeren..."
+  btn_clear: "Wissen"
+  btn_map: "⚙ Toewijzen"
+  btn_quit: "Stoppen"
+  btn_start: "Rusty Pipes Starten"
+  
+  status_no_devices: "Geen apparaten gevonden"
+  status_no_reverb: "Geen Galm"
+  status_default: "[ Standaard ]"
+  status_none: "Geen"
+  warn_select_organ: "Selecteer a.u.b. een Orgelbestand."
+  
+  picker_organ: "Selecteer Orgelbestand"
+  picker_midi: "Selecteer MIDI-bestand (Optioneel)"
+
+loading:
+  heading: "Orgel Samples Laden..."
+  window_title: "Laden..."
+  app_name: "Rusty Pipes Laadt..."
+  status_init: "Initialiseren..."
+
+tui_config:
+  header_title: "Configuratie"
+  footer_nav: "Nav: ↑/↓ | Enter: Select/Schakel | S: Start | Q: Stop"
+  footer_midi: " Spatie: Schakel | Enter: Configureren | Esc: Terug "
+  
+  title_midi_devs: " MIDI-apparaten "
+  title_select_audio: "Selecteer Audio-apparaat (↑/↓, Enter, Esc)"
+  title_select_rate: "Selecteer Samplefrequentie"
+  title_select_ir: "Selecteer Impulsrespons"
+  
+  prompt_reverb: "Voer Galm Mix in (0.0 - 1.0)"
+  prompt_gain: "Voer Versterking in (0.0 - 1.0)"
+  prompt_poly: "Voer Polyfonie in (1 - 1024)"
+  prompt_buffer: "Voer Audiobuffergrootte in"
+  prompt_preload: "Voer Voorlaad Frames in"
+  prompt_generic: "Voer Waarde in"
+
+  fmt_organ:       "Orgelbestand:     %{val}"
+  fmt_audio:       "Audio-apparaat:   %{val}"
+  fmt_rate:        "Samplefreq.:      %{val} Hz"
+  fmt_midi_devs:   "MIDI-ingangen:    %{count} ingeschakeld"
+  fmt_midi_file:   "MIDI-bestand:     %{val}"
+  fmt_ir:          "Galm IR Bestand:  %{val}"
+  fmt_mix:         "Galm Mix:         %{val}"
+  fmt_gain:        "Versterking:      %{val}"
+  fmt_poly:        "Polyfonie:        %{val}"
+  fmt_buffer:      "Audiobuffer:      %{val} frames"
+  fmt_preload:     "Voorlaad Frames:  %{val} frames"
+  fmt_precache:    "Vooraf cachen:    %{val}"
+  fmt_convert:     "Conv. naar 16-bit:%{val}"
+  fmt_tuning:      "Orig. Stemming:   %{val}"
+  
+  val_on: "AAN"
+  val_off: "UIT"
+
+tui_picker:
+  header_title_fmt: "%{title} (q om te stoppen)"
+  current_path_fmt: "Huidig Pad: %{path}"
+  entries_title: "Items"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDown | Enter/→: Select | ←/Backspace: Omhoog | q: Stop"
+  
+  err_read_dir: "Fout bij lezen map: %{err}"
+  err_generic: "Fout: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Intern"
+  hdr_action: "Actie"
+  
+  fmt_ch_short: "Kan %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Pijltjes: Navigeren | Enter: Leren/Wissen | Esc: Sluiten"
+
+tui_midi:
+  title_fmt: " Toewijzing Configureren: %{name} "
+  footer: " Enter: Bewerken/Schakel | ↑/↓: Navigeren/Waarde | Esc: Terug "
+  
+  mode_simple: "Eenvoudig (Alle Ingangen -> Eén Doel)"
+  mode_complex: "Complex (Toewijzing per Kanaal)"
+  
+  lbl_mode: "Modus: %{val}"
+  lbl_target: "Doelkanaal: %{ch}"
+  lbl_complex: "Ingang Kan %{input} -> Doel Kan %{out}"
+  
+  suffix_editing: "%{val} <Bewerken>"
+
+tui:
+  status_rec_midi_wav: " [OPN MIDI+WAV] "
+  status_rec_midi: " [OPN MIDI] "
+  status_rec_wav: " [OPN WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Stemmen: %{active}/%{poly} | [Q]Stop [P]aniek +/-:Gain E/R:Oct [/]:Poly F1-12:Oproep Shift+F1-12:Opslaan [I]:MIDI Leren"
+  
+  err_underrun: "⚠ AUDIO BUFFER ONDERLOOP ⚠"
+  
+  save_title: "Preset Opslaan"
+  save_header_fmt: "Preset Opslaan F%{num}"
+  save_prompt: "Voer een naam in:"
+  save_footer: "Druk op [Enter] om op te slaan, [Esc] om te annuleren"
+  
+  no_stops: "Geen registers geladen."
+  midi_log_title: "MIDI Log"
+  piano_roll_title: "Piano Roll"

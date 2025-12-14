@@ -1,0 +1,254 @@
+# YAML localization file for German (de)
+
+main:
+  title: "Rusty Pipes - Virtueller Pfeifenorgel-Simulator v%{version}"
+  config_cancelled: "Konfiguration abgebrochen. Beende."
+  loading_organ: "Lade Orgeldefinition..."
+  loading_samples_fmt: "Lade Samples: [%{percent}] %{file}..."
+  loading_complete: "Lade Samples: [100%] Abgeschlossen."
+  organ_loaded_fmt: "Orgel erfolgreich geladen: %{name}"
+  found_stops_fmt: "%{count} Register gefunden."
+  starting_audio: "Starte Audio-Engine..."
+  audio_running: "Audio-Engine läuft."
+  starting_midi_file: "Starte MIDI-Wiedergabe: %{path}"
+  connecting_midi: "Verbinde mit MIDI-Gerät: %{name}"
+  no_midi_devices: "Keine MIDI-Geräte aktiviert. Starte ohne MIDI-Eingang."
+  shutting_down: "Fahre herunter..."
+  
+  list_devices_header: "Verfügbare MIDI-Eingabegeräte:"
+  list_devices_none: "  Keine MIDI-Geräte gefunden."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Tipp: F1-F12 Laden, Shift+F1-F12 Speichern, 'P' Panik, Pfeile Navigation, 1-0 Umschalten, E/R Oktave, +/- Gain, [ / ] Polyphonie"
+  recording_active: "AUFNAHME"
+  rec_midi_start: "⏺ Rec MIDI"
+  rec_midi_stop: "⏹ Stop MIDI"
+  rec_wav_start: "⏺ Rec WAV"
+  rec_wav_stop: "⏹ Stop WAV"
+
+  presets_heading: "Presets"
+  recall_label: "Laden (F1-F12):"
+  save_label: "Speichern (Shift+F1-F12):"
+  default_preset_name_fmt: "Preset F%{num}"
+  tremulants_heading: "Tremulanten"
+  no_tremulants: "Keine Tremulanten gefunden."
+
+  audio_settings_heading: "Audio-Einstellungen"
+  reverb_label: "Hall (Reverb):"
+  no_reverb: "Kein Hall"
+  reverb_mix_label: "Hall-Anteil:"
+  master_gain_label: "Master Gain:"
+  vol_slider_text: "Vol"
+  gain_keys_hint: "Tasten: +/-"
+  polyphony_label: "Polyphonie:"
+  polyphony_keys_hint: "Tasten: [ / ]"
+  
+  underrun_alert: "⚠ AUDIO UNDERRUN (Aussetzer) ⚠"
+  voices_fmt: "Stimmen: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU-Last: %{load}%"
+
+  selected_stop_label: "Gewähltes Register:"
+  no_selection: "Keines"
+  btn_all_channels: "Alle Kanäle"
+  btn_no_channels: "Keine Kanäle"
+  btn_panic: "PANIK (Alle Töne aus)"
+  panic_tooltip: "Stoppt alle klingenden Töne sofort"
+  no_stops_loaded: "Keine Register geladen."
+
+  midi_log_heading: "MIDI-Protokoll"
+  midi_activity_heading: "MIDI-Aktivität"
+
+  save_preset_title_fmt: "Preset F%{num} speichern"
+  enter_name_prompt: "Geben Sie einen Namen für das Preset ein:"
+  btn_cancel: "Abbrechen"
+  btn_save: "Speichern"
+
+errors:
+  midi_connect_fail: "Verbindung zu %{name} fehlgeschlagen: %{err}"
+  midi_fetch_fail: "Fehler beim Abrufen der MIDI-Geräte: %{err}"
+  loading_ui_fail: "Laden der Benutzeroberfläche fehlgeschlagen: %{err}"
+  recall_preset_fail: "FEHLER beim Laden des Presets: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDI-Zuordnung: %{name}"
+  heading: "Kanal-Konfiguration"
+  description: "Konfigurieren Sie, wie MIDI-Kanäle dieses Geräts den internen Orgelkanälen zugeordnet werden."
+  mode_label: "Zuordnungsmodus:"
+  mode_simple: "Einfach"
+  mode_complex: "Komplex"
+  
+  simple_desc_1: "Im einfachen Modus werden alle eingehenden MIDI-Nachrichten"
+  simple_desc_2: "an einen einzigen Zielkanal der Orgel geleitet."
+  target_channel_label: "Zielkanal:"
+  channel_fmt: "Kanal %{num}"
+  simple_hint: "Verwenden Sie dies für einmanualige Keyboards."
+  
+  complex_desc: "Ordnen Sie jeden spezifischen Eingangskanal einem spezifischen Zielkanal zu."
+  col_input: "Eingangskanal"
+  col_target: "Zielkanal"
+  input_channel_fmt: "Eingangskanal %{num}"
+  
+  btn_done: "Fertig"
+
+midi_learn:
+  window_title_fmt: "MIDI Lernen: %{name}"
+  description_1: "Konfigurieren Sie, wie externe MIDI-Events dieses Register steuern."
+  description_2: "Klicken Sie auf 'Lernen' und drücken Sie dann eine Taste auf Ihrem MIDI-Keyboard."
+  
+  col_internal_channel: "Interner Kanal"
+  col_enable_event: "Event Aktivieren"
+  col_disable_event: "Event Deaktivieren"
+  col_actions: "Aktionen"
+  
+  channel_fmt: "Kanal %{num}"
+  status_listening: "Warte auf Signal..."
+  btn_learn: "Lernen"
+  btn_clear: "Löschen"
+  
+  log_mapped_fmt: "%{event} zu %{action} zugeordnet"
+  action_enable: "Aktivieren"
+  action_disable: "Deaktivieren"
+
+config:
+  window_title: "Rusty Pipes Konfiguration"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Orgel-Datei:"
+  group_audio_device: "Audio-Gerät:"
+  group_sample_rate: "Abtastrate:"
+  group_midi_inputs: "MIDI-Eingänge:"
+  group_midi_file: "MIDI-Datei (Wiedergabe):"
+  group_ir_file: "Hall (IR):"
+  group_reverb_mix: "Hall-Anteil:"
+  group_gain: "Gain (Verstärkung):"
+  group_polyphony: "Polyphonie:"
+  group_buffer: "Audio-Puffer (Frames):"
+  group_preload: "Vorladen (Frames):"
+  group_options: "Optionen:"
+  
+  tooltip_organ: "Wählen Sie die Hauptwerk-Orgeldatei (.organ oder Organ_Hauptwerk_xml) zum Laden aus."
+  tooltip_audio_device: "Das Gerät, das für die Audioausgabe verwendet werden soll."
+  tooltip_sample_rate: "Die Frequenz, mit der das Audio gemischt wird. Höhere Werte verbrauchen mehr CPU."
+  tooltip_midi_inputs: "Wählen Sie, welche MIDI-Geräte zum Spielen der Orgel verwendet werden sollen."
+  tooltip_midi_file: "Wählen Sie eine MIDI-Datei zur Wiedergabe aus."
+  tooltip_ir_file: "Impulsantwortdatei für Faltungshall (WAV)."
+  tooltip_ir_folder: "Hall-Ordner öffnen"
+  tooltip_reverb_mix: "Anteil des Halls am Ausgangssignal. 0.0 = trocken (kein Hall), 1.0 = nass (nur Hall)."
+  tooltip_gain: "Gesamtlautstärke. Passen Sie dies an, um Übersteuerung zu vermeiden."
+  tooltip_polyphony: "Maximale Anzahl gleichzeitiger Stimmen."
+  tooltip_buffer: "Anzahl der Audio-Frames pro Puffer. Höhere Werte verringern Aussetzer, erhöhen aber die Latenz."
+  tooltip_preload: "Die ersten Frames jedes Samples werden in den RAM vorgeladen."
+  tooltip_precache: "Aktivieren, um alle Samples vollständig in den RAM zu laden, anstatt sie von der Festplatte zu streamen."
+  tooltip_convert: "Aktivieren, um alle Samples in 16-Bit umzuwandeln (spart RAM)."
+  tooltip_tuning: "Verwendet die Originalstimmung der Samples."
+  
+  chk_precache: "Samples vollständig in RAM laden"
+  chk_convert: "In 16-Bit konvertieren"
+  chk_tuning: "Originalstimmung verwenden"
+  
+  btn_browse: "Durchsuchen..."
+  btn_clear: "Löschen"
+  btn_map: "⚙ Zuordnung"
+  btn_quit: "Beenden"
+  btn_start: "Rusty Pipes Starten"
+  
+  status_no_devices: "Keine Geräte gefunden"
+  status_no_reverb: "Kein Hall"
+  status_default: "[ Standard ]"
+  status_none: "Keine"
+  warn_select_organ: "Bitte wählen Sie eine Orgel-Datei aus."
+  
+  picker_organ: "Orgel-Datei auswählen"
+  picker_midi: "MIDI-Datei auswählen (Optional)"
+
+loading:
+  heading: "Lade Orgel-Samples..."
+  window_title: "Laden..."
+  app_name: "Rusty Pipes lädt..."
+  status_init: "Initialisiere..."
+
+tui_config:
+  header_title: "Konfiguration"
+  footer_nav: "Nav: ↑/↓ | Enter: Wählen/Umschalten | S: Start | Q: Ende"
+  footer_midi: " Leertaste: Umschalten | Enter: Konfig | Esc: Zurück "
+  
+  title_midi_devs: " MIDI-Geräte "
+  title_select_audio: "Audio-Gerät wählen (↑/↓, Enter, Esc)"
+  title_select_rate: "Abtastrate wählen"
+  title_select_ir: "Impulsantwort wählen"
+  
+  prompt_reverb: "Hall-Anteil eingeben (0.0 - 1.0)"
+  prompt_gain: "Gain eingeben (0.0 - 1.0)"
+  prompt_poly: "Polyphonie eingeben (1 - 1024)"
+  prompt_buffer: "Puffergröße eingeben"
+  prompt_preload: "Vorlade-Frames eingeben"
+  prompt_generic: "Wert eingeben"
+
+  fmt_organ:       "Orgel-Datei:      %{val}"
+  fmt_audio:       "Audio-Gerät:      %{val}"
+  fmt_rate:        "Abtastrate:       %{val} Hz"
+  fmt_midi_devs:   "MIDI-Eingänge:    %{count} aktiviert"
+  fmt_midi_file:   "MIDI-Datei:       %{val}"
+  fmt_ir:          "Hall IR Datei:    %{val}"
+  fmt_mix:         "Hall-Anteil:      %{val}"
+  fmt_gain:        "Gain:             %{val}"
+  fmt_poly:        "Polyphonie:       %{val}"
+  fmt_buffer:      "Audio-Puffer:     %{val} Frames"
+  fmt_preload:     "Vorladen:         %{val} Frames"
+  fmt_precache:    "RAM-Cache:        %{val}"
+  fmt_convert:     "16-Bit Konv.:     %{val}"
+  fmt_tuning:      "Orig. Stimmung:   %{val}"
+  
+  val_on: "AN"
+  val_off: "AUS"
+
+tui_picker:
+  header_title_fmt: "%{title} (q zum Beenden)"
+  current_path_fmt: "Aktueller Pfad: %{path}"
+  entries_title: "Einträge"
+  footer_nav: "Nav: ↑/↓/Bild↑/Bild↓ | Enter/→: Wählen | ←/Rück: Hoch | q: Ende"
+  
+  err_read_dir: "Fehler beim Lesen des Ordners: %{err}"
+  err_generic: "Fehler: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Intern"
+  hdr_action: "Aktion"
+  
+  fmt_ch_short: "K %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Pfeile: Navigieren | Enter: Lernen/Löschen | Esc: Schließen"
+
+tui_midi:
+  title_fmt: " Zuordnung konfigurieren: %{name} "
+  footer: " Enter: Bearbeiten/Umschalten | ↑/↓: Wert | Esc: Zurück "
+  
+  mode_simple: "Einfach (Alle Eingänge -> Ein Ziel)"
+  mode_complex: "Komplex (Zuordnung pro Kanal)"
+  
+  lbl_mode: "Modus: %{val}"
+  lbl_target: "Zielkanal: %{ch}"
+  lbl_complex: "Eingang K %{input} -> Ziel K %{out}"
+  
+  suffix_editing: "%{val} <Bearb.>"
+
+tui:
+  status_rec_midi_wav: " [REC MIDI+WAV] "
+  status_rec_midi: " [REC MIDI] "
+  status_rec_wav: " [REC WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Stimmen: %{active}/%{poly} | [Q]Ende [P]anik +/-:Gain E/R:Okt [/]:Poly F1-12:Laden Shift+F1-12:Speichern [I]:MIDI-Lernen"
+  
+  err_underrun: "⚠ AUDIO UNDERRUN (Aussetzer) ⚠"
+  
+  save_title: "Preset speichern"
+  save_header_fmt: "Preset F%{num} speichern"
+  save_prompt: "Name eingeben:"
+  save_footer: "[Enter] zum Speichern, [Esc] zum Abbrechen"
+  
+  no_stops: "Keine Register geladen."
+  midi_log_title: "MIDI-Protokoll"
+  piano_roll_title: "Piano Roll"

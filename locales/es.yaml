@@ -1,0 +1,247 @@
+# YAML localization file for Spanish (es)
+
+main:
+  title: "Rusty Pipes - Simulador de Órgano Virtual v%{version}"
+  config_cancelled: "Configuración cancelada. Saliendo."
+  loading_organ: "Cargando definición del órgano..."
+  loading_samples_fmt: "Cargando Muestras: [%{percent}] %{file}..."
+  loading_complete: "Cargando Muestras: [100%] Completado."
+  organ_loaded_fmt: "Órgano cargado exitosamente: %{name}"
+  found_stops_fmt: "Se encontraron %{count} registros."
+  starting_audio: "Iniciando motor de audio..."
+  audio_running: "Motor de audio en ejecución."
+  starting_midi_file: "Iniciando reproducción de archivo MIDI: %{path}"
+  connecting_midi: "Conectando a dispositivo MIDI: %{name}"
+  no_midi_devices: "No hay dispositivos MIDI habilitados. Ejecutando sin entrada MIDI."
+  shutting_down: "Cerrando..."
+
+  list_devices_header: "Dispositivos de Entrada MIDI Disponibles:"
+  list_devices_none: "  No se encontraron dispositivos MIDI."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+
+  footer_tip: "Tip: F1-F12 Cargar, Shift+F1-F12 Guardar, 'P' Pánico, Flechas para Navegar, 1-0 Alternar, E/R Octava, +/- Ganancia, [ / ] Polifonía"
+  recording_active: "GRABANDO"
+  rec_midi_start: "⏺ Rec MIDI"
+  rec_midi_stop: "⏹ Parar Rec MIDI"
+  rec_wav_start: "⏺ Rec WAV"
+  rec_wav_stop: "⏹ Parar Rec WAV"
+
+  presets_heading: "Presets"
+  recall_label: "Cargar (F1-F12):"
+  save_label: "Guardar (Shift+F1-F12):"
+  default_preset_name_fmt: "Preset F%{num}"
+  tremulants_heading: "Tremulantes"
+  no_tremulants: "No se encontraron tremulantes."
+
+  audio_settings_heading: "Configuración de Audio"
+  reverb_label: "Reverberación:"
+  no_reverb: "Sin Reverb"
+  reverb_mix_label: "Mezcla Reverb:"
+  master_gain_label: "Ganancia Maestra:"
+  vol_slider_text: "Vol"
+  gain_keys_hint: "Teclas: +/-"
+  polyphony_label: "Polifonía:"
+  polyphony_keys_hint: "Teclas: [ / ]"
+
+  underrun_alert: "⚠ CORTE DE AUDIO (UNDERRUN) ⚠"
+  voices_fmt: "Voces: %{voices}/%{poly}"
+  cpu_load_fmt: "Carga CPU: %{load}%"
+
+  selected_stop_label: "Registro Seleccionado:"
+  no_selection: "Ninguno"
+  btn_all_channels: "Todos los Canales"
+  btn_no_channels: "Ningún Canal"
+  btn_panic: "PÁNICO (Apagar Notas)"
+  panic_tooltip: "Detiene todas las notas que suenan"
+  no_stops_loaded: "No hay registros cargados."
+
+  midi_log_heading: "Registro MIDI"
+  midi_activity_heading: "Actividad MIDI"
+
+  save_preset_title_fmt: "Guardar Preset F%{num}"
+  enter_name_prompt: "Introduce un nombre para el preset:"
+  btn_cancel: "Cancelar"
+  btn_save: "Guardar"
+
+errors:
+  midi_connect_fail: "Fallo al conectar a %{name}: %{err}"
+  midi_fetch_fail: "Error al obtener dispositivos MIDI: %{err}"
+  loading_ui_fail: "Fallo al cargar la Interfaz: %{err}"
+  recall_preset_fail: "ERROR al cargar preset: %{err}"
+
+midi_config:
+  window_title_fmt: "Mapeo MIDI: %{name}"
+  heading: "Configuración de Canales"
+  description: "Configura cómo los canales MIDI de este dispositivo se asignan a los canales internos del órgano."
+  mode_label: "Modo de Mapeo:"
+  mode_simple: "Simple"
+  mode_complex: "Complejo"
+
+  simple_desc_1: "En Modo Simple, todos los mensajes MIDI entrantes de este dispositivo"
+  simple_desc_2: "se envían a un único canal de destino en el órgano."
+  target_channel_label: "Canal de Destino:"
+  channel_fmt: "Canal %{num}"
+  simple_hint: "Usa esto para controladores de un solo teclado."
+
+  complex_desc: "Asigna cada canal de entrada específico a un canal de destino específico."
+  col_input: "Canal Entrada"
+  col_target: "Canal Destino"
+  input_channel_fmt: "Canal Entrada %{num}"
+
+  btn_done: "Listo"
+
+midi_learn:
+  window_title_fmt: "Aprender MIDI: %{name}"
+  description_1: "Configura cómo los eventos MIDI externos controlan este registro."
+  description_2: "Haz clic en 'Aprender', luego presiona una tecla en tu teclado MIDI."
+
+  col_internal_channel: "Canal Interno"
+  col_enable_event: "Evento Activar"
+  col_disable_event: "Evento Desactivar"
+  col_actions: "Acciones"
+
+  channel_fmt: "Canal %{num}"
+  status_listening: "Escuchando..."
+  btn_learn: "Aprender"
+  btn_clear: "Limpiar"
+
+  log_mapped_fmt: "Mapeado %{event} a %{action}"
+  action_enable: "Activar"
+  action_disable: "Desactivar"
+
+config:
+  window_title: "Configuración de Rusty Pipes"
+  subtitle: "Indicia MMXXV"
+
+  group_organ_file: "Archivo de Órgano:"
+  group_audio_device: "Dispositivo de Audio:"
+  group_sample_rate: "Frecuencia Muestreo:"
+  group_midi_inputs: "Entradas MIDI:"
+  group_midi_file: "Archivo MIDI (Reprod.):"
+  group_ir_file: "Reverb (IR):"
+  group_reverb_mix: "Mezcla Reverb:"
+  group_gain: "Ganancia:"
+  group_polyphony: "Polifonía:"
+  group_buffer: "Búfer de Audio (frames):"
+  group_preload: "Pre-carga de Frames:"
+  group_options: "Opciones:"
+
+  tooltip_organ: "Selecciona el archivo de órgano Hauptwerk (.organ o Organ_Hauptwerk_xml) para cargar."
+  tooltip_audio_device: "El dispositivo que se utilizará para la salida de audio."
+  tooltip_sample_rate: "La frecuencia a la que se mezclará el audio. Valores más altos usan más CPU."
+  tooltip_midi_inputs: "Selecciona qué dispositivos MIDI se usarán para controlar y tocar el órgano."
+  tooltip_midi_file: "Selecciona un archivo MIDI para reproducir a través del órgano virtual."
+  tooltip_ir_file: "Archivo de respuesta de impulso para reverberación por convolución (WAV)."
+  tooltip_ir_folder: "Abrir Carpeta de Reverb"
+  tooltip_reverb_mix: "Cantidad de reverberación aplicada. 0.0 = seco (sin reverb), 1.0 = húmedo (solo reverb)."
+  tooltip_gain: "Volumen general de salida. Ajústalo para evitar distorsión o aumentar el volumen."
+  tooltip_polyphony: "Número máximo de voces simultáneas."
+  tooltip_buffer: "Número de frames de audio por búfer. Valores más altos reducen cortes pero aumentan la latencia."
+  tooltip_preload: "Los primeros frames de cada muestra se precargarán en RAM. Aumenta este valor si tienes un SSD lento."
+  tooltip_precache: "Activa esto para cargar completamente todas las muestras en RAM."
+  tooltip_convert: "Activa esto para convertir todas las muestras a 16 bits (menos uso de RAM)."
+  tooltip_tuning: "Usa la afinación original de las muestras si no difieren por más de 20 cents."
+
+  chk_precache: "Pre-caché de Muestras"
+  chk_convert: "Convertir a 16-bit"
+  chk_tuning: "Usar Afinación Original"
+
+  btn_browse: "Buscar..."
+  btn_clear: "Limpiar"
+  btn_map: "⚙ Mapear"
+  btn_quit: "Salir"
+  btn_start: "Iniciar Rusty Pipes"
+
+  status_no_devices: "No se encontraron dispositivos"
+  status_no_reverb: "Sin Reverb"
+  status_default: "[ Por Defecto ]"
+  status_none: "Ninguno"
+  warn_select_organ: "Por favor selecciona un Archivo de Órgano."
+
+  picker_organ: "Seleccionar Archivo de Órgano"
+  picker_midi: "Seleccionar Archivo MIDI (Opcional)"
+
+loading:
+  heading: "Cargando Muestras del Órgano..."
+  window_title: "Cargando..."
+  app_name: "Rusty Pipes Cargando..."
+  status_init: "Inicializando..."
+
+tui_config:
+  header_title: "Configuración"
+  footer_nav: "Nav: ↑/↓ | Enter: Selec/Alternar | S: Iniciar | Q: Salir"
+  footer_midi: " Espacio: Alternar | Enter: Configurar | Esc: Volver "
+
+  title_midi_devs: " Dispositivos MIDI "
+  title_select_audio: "Selec. Disp. Audio (↑/↓, Enter, Esc)"
+  title_select_rate: "Selec. Frecuencia Muestreo"
+  title_select_ir: "Selec. Respuesta Impulso"
+
+  prompt_reverb: "Introduce Mezcla Reverb (0.0 - 1.0)"
+  prompt_gain: "Introduce Ganancia (0.0 - 1.0)"
+  prompt_poly: "Introduce Polifonía (1 - 1024)"
+  prompt_buffer: "Introduce Tamaño Búfer Audio"
+  prompt_preload: "Introduce Frames de Pre-carga"
+  prompt_generic: "Introduce Valor"
+
+  fmt_organ:       "Archivo Órgano:   %{val}"
+  fmt_audio:       "Disp. Audio:      %{val}"
+  fmt_rate:        "Frecuencia Muest: %{val} Hz"
+  fmt_midi_devs:   "Disp. Entrada MIDI:   %{count} activados"
+  fmt_midi_file:   "Archivo MIDI:     %{val}"
+  fmt_ir:          "Archivo IR Reverb:%{val}"
+  fmt_mix:         "Mezcla Reverb:    %{val}"
+  fmt_gain:        "Ganancia:         %{val}"
+  fmt_poly:        "Polifonía:        %{val}"
+  fmt_buffer:      "Búfer Audio:      %{val} frames"
+  fmt_preload:     "Pre-carga Frames: %{val} frames"
+  fmt_precache:    "Pre-caché:        %{val}"
+  fmt_convert:     "Conv. a 16-bit:   %{val}"
+  fmt_tuning:      "Afinación Orig.:  %{val}"
+
+  val_on: "ON"
+  val_off: "OFF"
+
+tui_picker:
+  header_title_fmt: "%{title} (q para salir)"
+  current_path_fmt: "Ruta Actual: %{path}"
+  entries_title: "Entradas"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDown | Enter/→: Selec | ←/Backspace: Arriba | q: Salir"
+  
+  err_read_dir: "Error leyendo directorio: %{err}"
+  err_generic: "Error: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Interno"
+  hdr_action: "Acción"
+  fmt_ch_short: "Can %{num}"
+  cell_dash: "-"
+  footer_help: "Flechas: Navegar | Enter: Aprender/Limpiar | Esc: Cerrar"
+
+tui_midi:
+  title_fmt: " Configurar Mapeo: %{name} "
+  footer: " Enter: Editar/Alternar | ↑/↓: Navegar/Valor | Esc: Volver "
+  mode_simple: "Simple (Todas Entradas -> Un Destino)"
+  mode_complex: "Complejo (Mapeo por Canal)"
+  lbl_mode: "Modo: %{val}"
+  lbl_target: "Canal Destino: %{ch}"
+  lbl_complex: "Entrada Can %{input} -> Destino Can %{out}"
+  suffix_editing: "%{val} <Editando>"
+
+tui:
+  status_rec_midi_wav: " [REC MIDI+WAV] "
+  status_rec_midi: " [REC MIDI] "
+  status_rec_wav: " [REC WAV] "
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gan: %{gain}% | Voces: %{active}/%{poly} | [Q]Salir [P]ánico +/-:Gan E/R:Oct [/]:Poli F1-12:Cargar Shift+F1-12:Guardar [I]:MIDI Learn"
+  err_underrun: "⚠ CORTE DE AUDIO (UNDERRUN) ⚠"
+  
+  save_title: "Guardar Preset"
+  save_header_fmt: "Guardar Preset F%{num}"
+  save_prompt: "Introduce un nombre:"
+  save_footer: "Pulsa [Enter] para guardar, [Esc] para cancelar"
+  
+  no_stops: "No hay registros cargados."
+  midi_log_title: "Registro MIDI"
+  piano_roll_title: "Piano Roll"

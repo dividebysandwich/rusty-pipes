@@ -1,0 +1,254 @@
+# YAML localization file for Danish (da)
+
+main:
+  title: "Rusty Pipes - Virtuel Pibeorgelsimulator v%{version}"
+  config_cancelled: "Konfiguration annulleret. Afslutter."
+  loading_organ: "Indlæser orgeldefinition..."
+  loading_samples_fmt: "Indlæser samples: [%{percent}] %{file}..."
+  loading_complete: "Indlæser samples: [100%] Færdig."
+  organ_loaded_fmt: "Orgel indlæst: %{name}"
+  found_stops_fmt: "Fandt %{count} registre."
+  starting_audio: "Starter lydmotor..."
+  audio_running: "Lydmotor kører."
+  starting_midi_file: "Starter afspilning af MIDI-fil: %{path}"
+  connecting_midi: "Forbinder til MIDI-enhed: %{name}"
+  no_midi_devices: "Ingen MIDI-enheder aktiveret. Kører uden MIDI-input."
+  shutting_down: "Lukker ned..."
+  
+  list_devices_header: "Tilgængelige MIDI-inputenheder:"
+  list_devices_none: "  Ingen MIDI-enheder fundet."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Tip: F1-F12 Hent, Shift+F1-F12 Gem, 'P' Panik, Pile Navigering, 1-0 Skift, E/R Oktav, +/- Gain, [ / ] Polyfoni"
+  recording_active: "OPTAGER"
+  rec_midi_start: "⏺ Optag MIDI"
+  rec_midi_stop: "⏹ Stop MIDI"
+  rec_wav_start: "⏺ Optag WAV"
+  rec_wav_stop: "⏹ Stop WAV"
+
+  presets_heading: "Presets"
+  recall_label: "Hent (F1-F12):"
+  save_label: "Gem (Shift+F1-F12):"
+  default_preset_name_fmt: "Preset F%{num}"
+  tremulants_heading: "Tremulanter"
+  no_tremulants: "Ingen tremulanter fundet."
+
+  audio_settings_heading: "Lydindstillinger"
+  reverb_label: "Rumklang (Reverb):"
+  no_reverb: "Ingen Rumklang"
+  reverb_mix_label: "Rumklang Mix:"
+  master_gain_label: "Master Gain:"
+  vol_slider_text: "Vol"
+  gain_keys_hint: "Taster: +/-"
+  polyphony_label: "Polyfoni:"
+  polyphony_keys_hint: "Taster: [ / ]"
+  
+  underrun_alert: "⚠ LYDUDFALD (UNDERRUN) ⚠"
+  voices_fmt: "Stemmer: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU-belastning: %{load}%"
+
+  selected_stop_label: "Valgt Register:"
+  no_selection: "Intet"
+  btn_all_channels: "Alle Kanaler"
+  btn_no_channels: "Ingen Kanaler"
+  btn_panic: "PANIK (Alle noder fra)"
+  panic_tooltip: "Stopper alle klingende toner"
+  no_stops_loaded: "Ingen registre indlæst."
+
+  midi_log_heading: "MIDI Log"
+  midi_activity_heading: "MIDI Aktivitet"
+
+  save_preset_title_fmt: "Gem Preset F%{num}"
+  enter_name_prompt: "Indtast et navn til presettet:"
+  btn_cancel: "Annuller"
+  btn_save: "Gem"
+
+errors:
+  midi_connect_fail: "Kunne ikke forbinde til %{name}: %{err}"
+  midi_fetch_fail: "Fejl ved hentning af MIDI-enheder: %{err}"
+  loading_ui_fail: "Indlæsning af UI fejlede: %{err}"
+  recall_preset_fail: "FEJL ved hentning af preset: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDI-mapping: %{name}"
+  heading: "Kanalkonfiguration"
+  description: "Konfigurer hvordan MIDI-kanaler fra denne enhed mappes til orglets interne kanaler."
+  mode_label: "Mapping-tilstand:"
+  mode_simple: "Enkel"
+  mode_complex: "Kompleks"
+  
+  simple_desc_1: "I enkel tilstand routes alle indkommende MIDI-beskeder"
+  simple_desc_2: "fra denne enhed til en enkelt målkanal på orglet."
+  target_channel_label: "Målkanal:"
+  channel_fmt: "Kanal %{num}"
+  simple_hint: "Brug dette til keyboards med en enkelt manual."
+  
+  complex_desc: "Map hver specifik inputkanal til en specifik målkanal."
+  col_input: "Inputkanal"
+  col_target: "Målkanal"
+  input_channel_fmt: "Inputkanal %{num}"
+  
+  btn_done: "Færdig"
+
+midi_learn:
+  window_title_fmt: "MIDI Learn: %{name}"
+  description_1: "Konfigurer hvordan eksterne MIDI-events styrer dette register."
+  description_2: "Klik 'Lær', og tryk derefter på en tast på dit MIDI-keyboard."
+  
+  col_internal_channel: "Intern Kanal"
+  col_enable_event: "Aktiver Event"
+  col_disable_event: "Deaktiver Event"
+  col_actions: "Handlinger"
+  
+  channel_fmt: "Kanal %{num}"
+  status_listening: "Lytter..."
+  btn_learn: "Lær (Learn)"
+  btn_clear: "Ryd"
+  
+  log_mapped_fmt: "Mappede %{event} til %{action}"
+  action_enable: "Aktiver"
+  action_disable: "Deaktiver"
+
+config:
+  window_title: "Rusty Pipes Konfiguration"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Orgelfil:"
+  group_audio_device: "Lydenhed:"
+  group_sample_rate: "Samplefrekvens:"
+  group_midi_inputs: "MIDI-inputs:"
+  group_midi_file: "MIDI-fil (Afspilning):"
+  group_ir_file: "Rumklang (IR):"
+  group_reverb_mix: "Rumklang Mix:"
+  group_gain: "Gain:"
+  group_polyphony: "Polyfoni:"
+  group_buffer: "Lydbuffer (frames):"
+  group_preload: "Forindlæsning (frames):"
+  group_options: "Indstillinger:"
+  
+  tooltip_organ: "Vælg Hauptwerk-orgelfilen (.organ eller Organ_Hauptwerk_xml), der skal indlæses."
+  tooltip_audio_device: "Enheden der skal bruges til lydudgang."
+  tooltip_sample_rate: "Frekvensen lyden mixes ved. Højere værdier bruger mere CPU."
+  tooltip_midi_inputs: "Vælg hvilke MIDI-enheder der skal bruges til at styre orglet."
+  tooltip_midi_file: "Vælg en MIDI-fil der skal afspilles."
+  tooltip_ir_file: "Impulsresponsfil til konvolutionsrumklang (WAV)."
+  tooltip_ir_folder: "Åbn Rumklang-mappe"
+  tooltip_reverb_mix: "Mængde af rumklang. 0.0 = tør (ingen rumklang), 1.0 = våd (kun rumklang)."
+  tooltip_gain: "Overordnet udgangslydstyrke."
+  tooltip_polyphony: "Maksimalt antal samtidige stemmer."
+  tooltip_buffer: "Antal lydframes per buffer. Højere værdier mindsker risiko for udfald men øger latenstid."
+  tooltip_preload: "De første frames af hver sample forindlæses i RAM."
+  tooltip_precache: "Aktiver dette for at indlæse alle samples helt i RAM i stedet for at streame fra disk."
+  tooltip_convert: "Aktiver dette for at konvertere alle samples til 16-bit."
+  tooltip_tuning: "Brug original stemning fra samples."
+  
+  chk_precache: "Pre-cache Samples"
+  chk_convert: "Konverter til 16-bit"
+  chk_tuning: "Brug Original Stemning"
+  
+  btn_browse: "Gennemse..."
+  btn_clear: "Ryd"
+  btn_map: "⚙ Map"
+  btn_quit: "Afslut"
+  btn_start: "Start Rusty Pipes"
+  
+  status_no_devices: "Ingen enheder fundet"
+  status_no_reverb: "Ingen Rumklang"
+  status_default: "[ Standard ]"
+  status_none: "Ingen"
+  warn_select_organ: "Vælg venligst en Orgelfil."
+  
+  picker_organ: "Vælg Orgelfil"
+  picker_midi: "Vælg MIDI-fil (Valgfrit)"
+
+loading:
+  heading: "Indlæser Orgelsamples..."
+  window_title: "Indlæser..."
+  app_name: "Rusty Pipes Indlæser..."
+  status_init: "Initialiserer..."
+
+tui_config:
+  header_title: "Konfiguration"
+  footer_nav: "Nav: ↑/↓ | Enter: Vælg/Skift | S: Start | Q: Afslut"
+  footer_midi: " Mellemrum: Skift | Enter: Konfig | Esc: Tilbage "
+  
+  title_midi_devs: " MIDI-enheder "
+  title_select_audio: "Vælg Lydenhed (↑/↓, Enter, Esc)"
+  title_select_rate: "Vælg Samplefrekvens"
+  title_select_ir: "Vælg Impulsrespons"
+  
+  prompt_reverb: "Indtast Rumklang Mix (0.0 - 1.0)"
+  prompt_gain: "Indtast Gain (0.0 - 1.0)"
+  prompt_poly: "Indtast Polyfoni (1 - 1024)"
+  prompt_buffer: "Indtast Bufferstørrelse"
+  prompt_preload: "Indtast Forindlæsningsframes"
+  prompt_generic: "Indtast Værdi"
+
+  fmt_organ:       "Orgelfil:         %{val}"
+  fmt_audio:       "Lydenhed:         %{val}"
+  fmt_rate:        "Samplefrekvens:   %{val} Hz"
+  fmt_midi_devs:   "MIDI-inputs:      %{count} aktiveret"
+  fmt_midi_file:   "MIDI-fil:         %{val}"
+  fmt_ir:          "Rumklang IR-fil:  %{val}"
+  fmt_mix:         "Rumklang Mix:     %{val}"
+  fmt_gain:        "Gain:             %{val}"
+  fmt_poly:        "Polyfoni:         %{val}"
+  fmt_buffer:      "Lydbuffer:        %{val} frames"
+  fmt_preload:     "Forindlæsning:    %{val} frames"
+  fmt_precache:    "Pre-cache:        %{val}"
+  fmt_convert:     "Konv. til 16-bit: %{val}"
+  fmt_tuning:      "Orig. Stemming:   %{val}"
+  
+  val_on: "TIL"
+  val_off: "FRA"
+
+tui_picker:
+  header_title_fmt: "%{title} (q for at afslutte)"
+  current_path_fmt: "Nuværende sti: %{path}"
+  entries_title: "Elementer"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDn | Enter/→: Vælg | ←/Bksp: Op | q: Afslut"
+  
+  err_read_dir: "Fejl ved læsning af mappe: %{err}"
+  err_generic: "Fejl: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Intern"
+  hdr_action: "Handling"
+  
+  fmt_ch_short: "Kan %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Pile: Naviger | Enter: Lær/Ryd | Esc: Luk"
+
+tui_midi:
+  title_fmt: " Konfigurer Mapping: %{name} "
+  footer: " Enter: Rediger/Skift | ↑/↓: Værdi | Esc: Tilbage "
+  
+  mode_simple: "Enkel (Alle Inputs -> Et Mål)"
+  mode_complex: "Kompleks (Mapping per kanal)"
+  
+  lbl_mode: "Tilstand: %{val}"
+  lbl_target: "Målkanal: %{ch}"
+  lbl_complex: "Input Kan %{input} -> Mål Kan %{out}"
+  
+  suffix_editing: "%{val} <Redigerer>"
+
+tui:
+  status_rec_midi_wav: " [OPT MIDI+WAV] "
+  status_rec_midi: " [OPT MIDI] "
+  status_rec_wav: " [OPT WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Stemmer: %{active}/%{poly} | [Q]Afslut [P]anik +/-:Gain E/R:Okt [/]:Poly F1-12:Hent Shift+F1-12:Gem [I]:MIDI Learn"
+  
+  err_underrun: "⚠ LYDUDFALD (UNDERRUN) ⚠"
+  
+  save_title: "Gem Preset"
+  save_header_fmt: "Gem Preset F%{num}"
+  save_prompt: "Indtast et navn:"
+  save_footer: "Tryk [Enter] for at gemme, [Esc] for at annullere"
+  
+  no_stops: "Ingen registre indlæst."
+  midi_log_title: "MIDI Log"
+  piano_roll_title: "Piano Roll"

@@ -1,3 +1,4 @@
+# YAML localization file for English (en)
 main:
   title: "Rusty Pipes - Virtual Pipe Organ Simulator v%{version}"
   config_cancelled: "Configuration cancelled. Exiting."

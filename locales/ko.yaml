@@ -1,0 +1,254 @@
+# YAML localization file for Korean (ko)
+
+main:
+  title: "Rusty Pipes - 가상 파이프 오르간 시뮬레이터 v%{version}"
+  config_cancelled: "구성이 취소되었습니다. 종료합니다."
+  loading_organ: "오르간 정의 로드 중..."
+  loading_samples_fmt: "샘플 로드 중: [%{percent}] %{file}..."
+  loading_complete: "샘플 로드 중: [100%] 완료."
+  organ_loaded_fmt: "오르간 로드 성공: %{name}"
+  found_stops_fmt: "%{count}개의 스톱을 찾았습니다."
+  starting_audio: "오디오 엔진 시작 중..."
+  audio_running: "오디오 엔진 실행 중."
+  starting_midi_file: "MIDI 파일 재생 시작: %{path}"
+  connecting_midi: "MIDI 장치에 연결 중: %{name}"
+  no_midi_devices: "활성화된 MIDI 장치가 없습니다. MIDI 입력 없이 실행합니다."
+  shutting_down: "종료 중..."
+  
+  list_devices_header: "사용 가능한 MIDI 입력 장치:"
+  list_devices_none: "  MIDI 장치를 찾을 수 없습니다."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "팁: F1-F12 불러오기, Shift+F1-F12 저장, 'P' 패닉, 화살표 탐색, 1-0 토글, E/R 옥타브, +/- 게인, [ / ] 동시발음수"
+  recording_active: "녹음 중"
+  rec_midi_start: "⏺ MIDI 녹음"
+  rec_midi_stop: "⏹ MIDI 중지"
+  rec_wav_start: "⏺ WAV 녹음"
+  rec_wav_stop: "⏹ WAV 중지"
+
+  presets_heading: "프리셋"
+  recall_label: "불러오기 (F1-F12):"
+  save_label: "저장 (Shift+F1-F12):"
+  default_preset_name_fmt: "프리셋 F%{num}"
+  tremulants_heading: "트레물런트 (Tremulants)"
+  no_tremulants: "트레물런트를 찾을 수 없습니다."
+
+  audio_settings_heading: "오디오 설정"
+  reverb_label: "리버브 (Reverb):"
+  no_reverb: "리버브 없음"
+  reverb_mix_label: "리버브 믹스:"
+  master_gain_label: "마스터 게인:"
+  vol_slider_text: "볼륨"
+  gain_keys_hint: "키: +/-"
+  polyphony_label: "동시 발음수:"
+  polyphony_keys_hint: "키: [ / ]"
+  
+  underrun_alert: "⚠ 오디오 언더런 (끊김 발생) ⚠"
+  voices_fmt: "보이스: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU 부하: %{load}%"
+
+  selected_stop_label: "선택된 스톱:"
+  no_selection: "없음"
+  btn_all_channels: "모든 채널"
+  btn_no_channels: "채널 없음"
+  btn_panic: "패닉 (모든 음 끄기)"
+  panic_tooltip: "모든 소리를 즉시 중단합니다"
+  no_stops_loaded: "로드된 스톱이 없습니다."
+
+  midi_log_heading: "MIDI 로그"
+  midi_activity_heading: "MIDI 활동"
+
+  save_preset_title_fmt: "프리셋 F%{num} 저장"
+  enter_name_prompt: "프리셋 이름을 입력하세요:"
+  btn_cancel: "취소"
+  btn_save: "저장"
+
+errors:
+  midi_connect_fail: "%{name} 연결 실패: %{err}"
+  midi_fetch_fail: "MIDI 장치 가져오기 오류: %{err}"
+  loading_ui_fail: "UI 로드 실패: %{err}"
+  recall_preset_fail: "프리셋 불러오기 오류: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDI 매핑: %{name}"
+  heading: "채널 구성"
+  description: "이 장치의 MIDI 채널을 오르간의 내부 채널에 매핑하는 방법을 구성합니다."
+  mode_label: "매핑 모드:"
+  mode_simple: "단순 (Simple)"
+  mode_complex: "복합 (Complex)"
+  
+  simple_desc_1: "단순 모드에서는 이 장치의 모든 수신 MIDI 메시지가"
+  simple_desc_2: "오르간의 단일 대상 채널로 라우팅됩니다."
+  target_channel_label: "대상 채널:"
+  channel_fmt: "채널 %{num}"
+  simple_hint: "단일 건반 컨트롤러에 이 모드를 사용하세요."
+  
+  complex_desc: "각 입력 채널을 특정 대상 채널에 매핑합니다."
+  col_input: "입력 채널"
+  col_target: "대상 채널"
+  input_channel_fmt: "입력 채널 %{num}"
+  
+  btn_done: "완료"
+
+midi_learn:
+  window_title_fmt: "MIDI 런 (학습): %{name}"
+  description_1: "외부 MIDI 이벤트가 이 스톱을 제어하는 방식을 구성합니다."
+  description_2: "'학습'을 클릭한 다음 MIDI 키보드의 건반/버튼을 누르세요."
+  
+  col_internal_channel: "내부 채널"
+  col_enable_event: "활성화 이벤트"
+  col_disable_event: "비활성화 이벤트"
+  col_actions: "동작"
+  
+  channel_fmt: "채널 %{num}"
+  status_listening: "수신 대기 중..."
+  btn_learn: "학습 (Learn)"
+  btn_clear: "지우기"
+  
+  log_mapped_fmt: "%{event}을(를) %{action}에 매핑함"
+  action_enable: "활성화"
+  action_disable: "비활성화"
+
+config:
+  window_title: "Rusty Pipes 구성"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "오르간 파일:"
+  group_audio_device: "오디오 장치:"
+  group_sample_rate: "샘플 레이트:"
+  group_midi_inputs: "MIDI 입력:"
+  group_midi_file: "MIDI 파일 (재생):"
+  group_ir_file: "리버브 (IR):"
+  group_reverb_mix: "리버브 믹스:"
+  group_gain: "게인 (Gain):"
+  group_polyphony: "동시 발음수:"
+  group_buffer: "오디오 버퍼 (프레임):"
+  group_preload: "프리로드 (프레임):"
+  group_options: "옵션:"
+  
+  tooltip_organ: "로드할 Hauptwerk 오르간 파일(.organ 또는 Organ_Hauptwerk_xml)을 선택하세요."
+  tooltip_audio_device: "오디오 출력에 사용할 장치입니다."
+  tooltip_sample_rate: "오디오 믹싱 주파수입니다. 값이 높으면 CPU 사용량이 증가합니다."
+  tooltip_midi_inputs: "오르간 연주에 사용할 MIDI 장치를 선택하세요."
+  tooltip_midi_file: "재생할 MIDI 파일을 선택하세요."
+  tooltip_ir_file: "컨볼루션 리버브용 임펄스 응답 파일(WAV)입니다."
+  tooltip_ir_folder: "리버브 폴더 열기"
+  tooltip_reverb_mix: "리버브 적용 양입니다. 0.0 = 드라이(리버브 없음), 1.0 = 웻(리버브만)."
+  tooltip_gain: "전체 출력 볼륨입니다."
+  tooltip_polyphony: "동시에 낼 수 있는 최대 소리의 수입니다."
+  tooltip_buffer: "버퍼당 오디오 프레임 수입니다. 값이 높으면 끊김은 줄지만 레이턴시가 증가합니다."
+  tooltip_preload: "각 샘플의 초기 프레임을 RAM에 미리 로드합니다."
+  tooltip_precache: "이 옵션을 켜면 디스크 스트리밍 대신 모든 샘플을 RAM에 완전히 로드합니다."
+  tooltip_convert: "RAM 사용량을 줄이기 위해 모든 샘플을 16비트로 변환합니다."
+  tooltip_tuning: "샘플의 원래 튜닝을 사용합니다."
+  
+  chk_precache: "샘플 프리캐시 (RAM 로드)"
+  chk_convert: "16비트로 변환"
+  chk_tuning: "원래 튜닝 사용"
+  
+  btn_browse: "찾아보기..."
+  btn_clear: "지우기"
+  btn_map: "⚙ 매핑"
+  btn_quit: "종료"
+  btn_start: "Rusty Pipes 시작"
+  
+  status_no_devices: "장치를 찾을 수 없음"
+  status_no_reverb: "리버브 없음"
+  status_default: "[ 기본값 ]"
+  status_none: "없음"
+  warn_select_organ: "오르간 파일을 선택해주세요."
+  
+  picker_organ: "오르간 파일 선택"
+  picker_midi: "MIDI 파일 선택 (선택 사항)"
+
+loading:
+  heading: "오르간 샘플 로드 중..."
+  window_title: "로드 중..."
+  app_name: "Rusty Pipes 로드 중..."
+  status_init: "초기화 중..."
+
+tui_config:
+  header_title: "구성"
+  footer_nav: "탐색: ↑/↓ | Enter: 선택/토글 | S: 시작 | Q: 종료"
+  footer_midi: " Space: 토글 | Enter: 구성 | Esc: 뒤로 "
+  
+  title_midi_devs: " MIDI 장치 "
+  title_select_audio: "오디오 장치 선택 (↑/↓, Enter, Esc)"
+  title_select_rate: "샘플 레이트 선택"
+  title_select_ir: "임펄스 응답 선택"
+  
+  prompt_reverb: "리버브 믹스 입력 (0.0 - 1.0)"
+  prompt_gain: "게인 입력 (0.0 - 1.0)"
+  prompt_poly: "동시 발음수 입력 (1 - 1024)"
+  prompt_buffer: "오디오 버퍼 크기 입력"
+  prompt_preload: "프리로드 프레임 입력"
+  prompt_generic: "값 입력"
+
+  fmt_organ:       "오르간 파일:      %{val}"
+  fmt_audio:       "오디오 장치:      %{val}"
+  fmt_rate:        "샘플 레이트:      %{val} Hz"
+  fmt_midi_devs:   "MIDI 입력:        %{count}개 활성"
+  fmt_midi_file:   "MIDI 파일:        %{val}"
+  fmt_ir:          "리버브 IR 파일:   %{val}"
+  fmt_mix:         "리버브 믹스:      %{val}"
+  fmt_gain:        "게인:             %{val}"
+  fmt_poly:        "동시 발음수:      %{val}"
+  fmt_buffer:      "오디오 버퍼:      %{val} 프레임"
+  fmt_preload:     "프리로드:         %{val} 프레임"
+  fmt_precache:    "프리캐시:         %{val}"
+  fmt_convert:     "16비트 변환:      %{val}"
+  fmt_tuning:      "원래 튜닝:        %{val}"
+  
+  val_on: "켜짐"
+  val_off: "꺼짐"
+
+tui_picker:
+  header_title_fmt: "%{title} (q: 종료)"
+  current_path_fmt: "현재 경로: %{path}"
+  entries_title: "항목"
+  footer_nav: "탐색: ↑/↓/PgUp/PgDn | Enter/→: 선택 | ←/Bksp: 상위 | q: 종료"
+  
+  err_read_dir: "디렉토리 읽기 오류: %{err}"
+  err_generic: "오류: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "내부"
+  hdr_action: "동작"
+  
+  fmt_ch_short: "Ch %{num}"
+  cell_dash: "-"
+  
+  footer_help: "화살표: 탐색 | Enter: 학습/지우기 | Esc: 닫기"
+
+tui_midi:
+  title_fmt: " 매핑 구성: %{name} "
+  footer: " Enter: 편집/토글 | ↑/↓: 값 변경 | Esc: 뒤로 "
+  
+  mode_simple: "단순 (모든 입력 -> 단일 대상)"
+  mode_complex: "복합 (채널별 매핑)"
+  
+  lbl_mode: "모드: %{val}"
+  lbl_target: "대상 채널: %{ch}"
+  lbl_complex: "입력 Ch %{input} -> 대상 Ch %{out}"
+  
+  suffix_editing: "%{val} <편집 중>"
+
+tui:
+  status_rec_midi_wav: " [녹음 MIDI+WAV] "
+  status_rec_midi: " [녹음 MIDI] "
+  status_rec_wav: " [녹음 WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | 게인: %{gain}% | 보이스: %{active}/%{poly} | [Q]종료 [P]패닉 +/-:게인 E/R:옥타브 [/]:보이스 F1-12:로드 Shift+F1-12:저장 [I]:MIDI학습"
+  
+  err_underrun: "⚠ 오디오 언더런 경고 ⚠"
+  
+  save_title: "프리셋 저장"
+  save_header_fmt: "프리셋 F%{num} 저장"
+  save_prompt: "이름 입력:"
+  save_footer: "[Enter] 저장, [Esc] 취소"
+  
+  no_stops: "로드된 스톱이 없습니다."
+  midi_log_title: "MIDI 로그"
+  piano_roll_title: "피아노 롤"

@@ -1,0 +1,254 @@
+# YAML localization file for Chinese (Simplified) (zh-cn)
+
+main:
+  title: "Rusty Pipes - 虚拟管风琴模拟器 v%{version}"
+  config_cancelled: "配置已取消。正在退出。"
+  loading_organ: "正在加载管风琴定义..."
+  loading_samples_fmt: "正在加载采样: [%{percent}] %{file}..."
+  loading_complete: "加载采样: [100%] 完成。"
+  organ_loaded_fmt: "成功加载管风琴: %{name}"
+  found_stops_fmt: "找到 %{count} 个音栓。"
+  starting_audio: "正在启动音频引擎..."
+  audio_running: "音频引擎正在运行。"
+  starting_midi_file: "开始播放 MIDI 文件: %{path}"
+  connecting_midi: "正在连接 MIDI 设备: %{name}"
+  no_midi_devices: "未启用 MIDI 设备。将在无 MIDI 输入的情况下运行。"
+  shutting_down: "正在关闭..."
+  
+  list_devices_header: "可用 MIDI 输入设备:"
+  list_devices_none: "  未找到 MIDI 设备。"
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "提示: F1-F12 调用, Shift+F1-F12 保存, 'P' 紧急静音, 方向键 导航, 1-0 切换, E/R 八度, +/- 增益, [ / ] 复音数"
+  recording_active: "录音中"
+  rec_midi_start: "⏺ 录制 MIDI"
+  rec_midi_stop: "⏹ 停止 MIDI"
+  rec_wav_start: "⏺ 录制 WAV"
+  rec_wav_stop: "⏹ 停止 WAV"
+
+  presets_heading: "预设 (Presets)"
+  recall_label: "调用 (F1-F12):"
+  save_label: "保存 (Shift+F1-F12):"
+  default_preset_name_fmt: "预设 F%{num}"
+  tremulants_heading: "颤音器 (Tremulants)"
+  no_tremulants: "未找到颤音器。"
+
+  audio_settings_heading: "音频设置"
+  reverb_label: "混响 (Reverb):"
+  no_reverb: "无混响"
+  reverb_mix_label: "混响混合:"
+  master_gain_label: "主增益 (Gain):"
+  vol_slider_text: "音量"
+  gain_keys_hint: "按键: +/-"
+  polyphony_label: "复音数 (Polyphony):"
+  polyphony_keys_hint: "按键: [ / ]"
+  
+  underrun_alert: "⚠ 音频欠载/卡顿 (UNDERRUN) ⚠"
+  voices_fmt: "发音数: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU 负载: %{load}%"
+
+  selected_stop_label: "当前音栓:"
+  no_selection: "无"
+  btn_all_channels: "所有通道"
+  btn_no_channels: "无通道"
+  btn_panic: "紧急静音 (关闭所有音符)"
+  panic_tooltip: "停止所有正在发声的音符"
+  no_stops_loaded: "未加载音栓。"
+
+  midi_log_heading: "MIDI 日志"
+  midi_activity_heading: "MIDI 活动"
+
+  save_preset_title_fmt: "保存预设 F%{num}"
+  enter_name_prompt: "输入预设名称:"
+  btn_cancel: "取消"
+  btn_save: "保存"
+
+errors:
+  midi_connect_fail: "连接到 %{name} 失败: %{err}"
+  midi_fetch_fail: "获取 MIDI 设备出错: %{err}"
+  loading_ui_fail: "加载 UI 失败: %{err}"
+  recall_preset_fail: "调用预设出错: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDI 映射: %{name}"
+  heading: "通道配置"
+  description: "配置此设备的 MIDI 通道如何映射到管风琴的内部通道。"
+  mode_label: "映射模式:"
+  mode_simple: "简单"
+  mode_complex: "复杂"
+  
+  simple_desc_1: "在简单模式下，来自此设备的所有传入 MIDI 消息"
+  simple_desc_2: "都将路由到管风琴上的单个目标通道。"
+  target_channel_label: "目标通道:"
+  channel_fmt: "通道 %{num}"
+  simple_hint: "适用于单键盘控制器。"
+  
+  complex_desc: "将每个特定的输入通道映射到特定的目标通道。"
+  col_input: "输入通道"
+  col_target: "目标通道"
+  input_channel_fmt: "输入通道 %{num}"
+  
+  btn_done: "完成"
+
+midi_learn:
+  window_title_fmt: "MIDI 学习 (Learn): %{name}"
+  description_1: "配置外部 MIDI 事件如何控制此音栓。"
+  description_2: "点击“学习”，然后按下 MIDI 键盘上的按键。"
+  
+  col_internal_channel: "内部通道"
+  col_enable_event: "启用事件"
+  col_disable_event: "禁用事件"
+  col_actions: "动作"
+  
+  channel_fmt: "通道 %{num}"
+  status_listening: "正在监听..."
+  btn_learn: "学习"
+  btn_clear: "清除"
+  
+  log_mapped_fmt: "已将 %{event} 映射到 %{action}"
+  action_enable: "启用"
+  action_disable: "禁用"
+
+config:
+  window_title: "Rusty Pipes 配置"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "管风琴文件:"
+  group_audio_device: "音频设备:"
+  group_sample_rate: "采样率:"
+  group_midi_inputs: "MIDI 输入:"
+  group_midi_file: "MIDI 文件 (播放):"
+  group_ir_file: "混响 (IR):"
+  group_reverb_mix: "混响混合:"
+  group_gain: "增益:"
+  group_polyphony: "复音数:"
+  group_buffer: "音频缓冲区 (帧):"
+  group_preload: "预加载 (帧):"
+  group_options: "选项:"
+  
+  tooltip_organ: "选择要加载的 Hauptwerk 管风琴文件 (.organ 或 Organ_Hauptwerk_xml)。"
+  tooltip_audio_device: "用于音频输出的设备。"
+  tooltip_sample_rate: "音频混合的频率。数值越高，CPU 占用越高。"
+  tooltip_midi_inputs: "选择用于控制管风琴的 MIDI 设备。"
+  tooltip_midi_file: "选择要播放的 MIDI 文件。"
+  tooltip_ir_file: "用于卷积混响的脉冲响应文件 (WAV)。"
+  tooltip_ir_folder: "打开混响文件夹"
+  tooltip_reverb_mix: "混响应用量。0.0 = 干声 (无混响)，1.0 = 湿声 (仅混响)。"
+  tooltip_gain: "总输出音量。"
+  tooltip_polyphony: "最大同时发音数。"
+  tooltip_buffer: "每个缓冲区的音频帧数。数值越高可减少卡顿，但会增加延迟。"
+  tooltip_preload: "每个采样的前几帧将预加载到内存中。"
+  tooltip_precache: "启用此选项可将所有采样完全加载到内存中，而不是从磁盘流式传输。"
+  tooltip_convert: "启用此选项可将所有采样转换为 16 位，以节省内存。"
+  tooltip_tuning: "使用采样的原始音准/调律。"
+  
+  chk_precache: "预缓存采样 (RAM)"
+  chk_convert: "转换为 16 位"
+  chk_tuning: "使用原始音准"
+  
+  btn_browse: "浏览..."
+  btn_clear: "清除"
+  btn_map: "⚙ 映射"
+  btn_quit: "退出"
+  btn_start: "启动 Rusty Pipes"
+  
+  status_no_devices: "未找到设备"
+  status_no_reverb: "无混响"
+  status_default: "[ 默认 ]"
+  status_none: "无"
+  warn_select_organ: "请选择一个管风琴文件。"
+  
+  picker_organ: "选择管风琴文件"
+  picker_midi: "选择 MIDI 文件 (可选)"
+
+loading:
+  heading: "正在加载管风琴采样..."
+  window_title: "加载中..."
+  app_name: "Rusty Pipes 加载中..."
+  status_init: "正在初始化..."
+
+tui_config:
+  header_title: "配置"
+  footer_nav: "导航: ↑/↓ | 回车: 选择/切换 | S: 启动 | Q: 退出"
+  footer_midi: " 空格: 切换 | 回车: 配置 | Esc: 返回 "
+  
+  title_midi_devs: " MIDI 设备 "
+  title_select_audio: "选择音频设备 (↑/↓, 回车, Esc)"
+  title_select_rate: "选择采样率"
+  title_select_ir: "选择脉冲响应"
+  
+  prompt_reverb: "输入混响混合 (0.0 - 1.0)"
+  prompt_gain: "输入增益 (0.0 - 1.0)"
+  prompt_poly: "输入复音数 (1 - 1024)"
+  prompt_buffer: "输入缓冲区大小"
+  prompt_preload: "输入预加载帧数"
+  prompt_generic: "输入数值"
+
+  fmt_organ:       "管风琴文件:       %{val}"
+  fmt_audio:       "音频设备:         %{val}"
+  fmt_rate:        "采样率:           %{val} Hz"
+  fmt_midi_devs:   "MIDI 输入:        %{count} 已启用"
+  fmt_midi_file:   "MIDI 文件:        %{val}"
+  fmt_ir:          "混响 IR 文件:     %{val}"
+  fmt_mix:         "混响混合:         %{val}"
+  fmt_gain:        "增益:             %{val}"
+  fmt_poly:        "复音数:           %{val}"
+  fmt_buffer:      "音频缓冲区:       %{val} 帧"
+  fmt_preload:     "预加载:           %{val} 帧"
+  fmt_precache:    "预缓存:           %{val}"
+  fmt_convert:     "转换为 16 位:     %{val}"
+  fmt_tuning:      "原始音准:         %{val}"
+  
+  val_on: "开"
+  val_off: "关"
+
+tui_picker:
+  header_title_fmt: "%{title} (按 q 退出)"
+  current_path_fmt: "当前路径: %{path}"
+  entries_title: "项目"
+  footer_nav: "导航: ↑/↓/PgUp/PgDn | 回车/→: 选择 | ←/退格: 上一级 | q: 退出"
+  
+  err_read_dir: "读取目录错误: %{err}"
+  err_generic: "错误: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "内部"
+  hdr_action: "动作"
+  
+  fmt_ch_short: "通道 %{num}"
+  cell_dash: "-"
+  
+  footer_help: "方向键: 导航 | 回车: 学习/清除 | Esc: 关闭"
+
+tui_midi:
+  title_fmt: " 配置映射: %{name} "
+  footer: " 回车: 编辑/切换 | ↑/↓: 数值 | Esc: 返回 "
+  
+  mode_simple: "简单 (所有输入 -> 单个目标)"
+  mode_complex: "复杂 (按通道映射)"
+  
+  lbl_mode: "模式: %{val}"
+  lbl_target: "目标通道: %{ch}"
+  lbl_complex: "输入通道 %{input} -> 目标通道 %{out}"
+  
+  suffix_editing: "%{val} <编辑中>"
+
+tui:
+  status_rec_midi_wav: " [录制 MIDI+WAV] "
+  status_rec_midi: " [录制 MIDI] "
+  status_rec_wav: " [录制 WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | 增益: %{gain}% | 发音数: %{active}/%{poly} | [Q]退出 [P]急停 +/-:增益 E/R:八度 [/]:复音数 F1-12:调用 Shift+F1-12:保存 [I]:MIDI学习"
+  
+  err_underrun: "⚠ 音频缓冲区不足 (UNDERRUN) ⚠"
+  
+  save_title: "保存预设"
+  save_header_fmt: "保存预设 F%{num}"
+  save_prompt: "输入名称:"
+  save_footer: "按 [回车] 保存，[Esc] 取消"
+  
+  no_stops: "未加载音栓。"
+  midi_log_title: "MIDI 日志"
+  piano_roll_title: "钢琴卷帘 (Piano Roll)"

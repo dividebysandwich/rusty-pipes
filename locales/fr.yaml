@@ -1,0 +1,254 @@
+# YAML localization file for French (fr)
+
+main:
+  title: "Rusty Pipes - Simulateur d'Orgue Virtuel v%{version}"
+  config_cancelled: "Configuration annulée. Sortie."
+  loading_organ: "Chargement de la définition de l'orgue..."
+  loading_samples_fmt: "Chargement des échantillons: [%{percent}] %{file}..."
+  loading_complete: "Chargement des échantillons: [100%] Terminé."
+  organ_loaded_fmt: "Orgue chargé avec succès: %{name}"
+  found_stops_fmt: "%{count} jeux trouvés."
+  starting_audio: "Démarrage du moteur audio..."
+  audio_running: "Moteur audio en marche."
+  starting_midi_file: "Démarrage de la lecture du fichier MIDI: %{path}"
+  connecting_midi: "Connexion au périphérique MIDI: %{name}"
+  no_midi_devices: "Aucun périphérique MIDI activé. Exécution sans entrée MIDI."
+  shutting_down: "Arrêt en cours..."
+  
+  list_devices_header: "Périphériques d'entrée MIDI disponibles:"
+  list_devices_none: "  Aucun périphérique MIDI trouvé."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Astuce: F1-F12 Rappel, Shift+F1-F12 Sauver, 'P' Panique, Flèches Navigation, 1-0 Basculer, E/R Octave, +/- Gain, [ / ] Polyphonie"
+  recording_active: "ENREGISTREMENT"
+  rec_midi_start: "⏺ Enr. MIDI"
+  rec_midi_stop: "⏹ Stop MIDI"
+  rec_wav_start: "⏺ Enr. WAV"
+  rec_wav_stop: "⏹ Stop WAV"
+
+  presets_heading: "Préréglages"
+  recall_label: "Rappel (F1-F12):"
+  save_label: "Sauver (Shift+F1-F12):"
+  default_preset_name_fmt: "Preset F%{num}"
+  tremulants_heading: "Trémolos"
+  no_tremulants: "Aucun trémolo trouvé."
+
+  audio_settings_heading: "Paramètres Audio"
+  reverb_label: "Réverbération:"
+  no_reverb: "Sans Réverb"
+  reverb_mix_label: "Mix Réverb:"
+  master_gain_label: "Gain Principal:"
+  vol_slider_text: "Vol"
+  gain_keys_hint: "Touches: +/-"
+  polyphony_label: "Polyphonie:"
+  polyphony_keys_hint: "Touches: [ / ]"
+  
+  underrun_alert: "⚠ DISCONTINUITÉ AUDIO (UNDERRUN) ⚠"
+  voices_fmt: "Voix: %{voices}/%{poly}"
+  cpu_load_fmt: "Charge CPU: %{load}%"
+
+  selected_stop_label: "Jeu Sélectionné:"
+  no_selection: "Aucun"
+  btn_all_channels: "Tous Canaux"
+  btn_no_channels: "Aucun Canal"
+  btn_panic: "PANIQUE (Arrêt des notes)"
+  panic_tooltip: "Arrête toutes les notes en cours"
+  no_stops_loaded: "Aucun jeu chargé."
+
+  midi_log_heading: "Journal MIDI"
+  midi_activity_heading: "Activité MIDI"
+
+  save_preset_title_fmt: "Sauver Preset F%{num}"
+  enter_name_prompt: "Entrez un nom pour le préréglage:"
+  btn_cancel: "Annuler"
+  btn_save: "Sauver"
+
+errors:
+  midi_connect_fail: "Échec de connexion à %{name}: %{err}"
+  midi_fetch_fail: "Erreur lors de la récupération des périphériques MIDI: %{err}"
+  loading_ui_fail: "Le chargement de l'UI a échoué: %{err}"
+  recall_preset_fail: "ERREUR lors du rappel du préréglage: %{err}"
+
+midi_config:
+  window_title_fmt: "Mappage MIDI: %{name}"
+  heading: "Configuration des Canaux"
+  description: "Configurez comment les canaux MIDI de ce périphérique correspondent aux canaux internes de l'orgue."
+  mode_label: "Mode de Mappage:"
+  mode_simple: "Simple"
+  mode_complex: "Complexe"
+  
+  simple_desc_1: "En Mode Simple, tous les messages MIDI entrants de ce périphérique"
+  simple_desc_2: "sont dirigés vers un seul canal cible sur l'orgue."
+  target_channel_label: "Canal Cible:"
+  channel_fmt: "Canal %{num}"
+  simple_hint: "Utilisez ceci pour les contrôleurs à clavier unique."
+  
+  complex_desc: "Mappez chaque canal d'entrée spécifique à un canal cible spécifique."
+  col_input: "Canal Entrée"
+  col_target: "Canal Cible"
+  input_channel_fmt: "Canal Entrée %{num}"
+  
+  btn_done: "Terminé"
+
+midi_learn:
+  window_title_fmt: "Apprentissage MIDI: %{name}"
+  description_1: "Configurez comment les événements MIDI externes contrôlent ce jeu."
+  description_2: "Cliquez sur 'Apprendre', puis appuyez sur une touche de votre clavier MIDI."
+  
+  col_internal_channel: "Canal Interne"
+  col_enable_event: "Événement Activer"
+  col_disable_event: "Événement Désactiver"
+  col_actions: "Actions"
+  
+  channel_fmt: "Canal %{num}"
+  status_listening: "Écoute..."
+  btn_learn: "Apprendre"
+  btn_clear: "Effacer"
+  
+  log_mapped_fmt: "Mappé %{event} à %{action}"
+  action_enable: "Activer"
+  action_disable: "Désactiver"
+
+config:
+  window_title: "Configuration Rusty Pipes"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Fichier d'Orgue:"
+  group_audio_device: "Périphérique Audio:"
+  group_sample_rate: "Fréq. Échantillonnage:"
+  group_midi_inputs: "Entrées MIDI:"
+  group_midi_file: "Fichier MIDI (Lecture):"
+  group_ir_file: "Réverb (IR):"
+  group_reverb_mix: "Mix Réverb:"
+  group_gain: "Gain:"
+  group_polyphony: "Polyphonie:"
+  group_buffer: "Tampon Audio (frames):"
+  group_preload: "Préchargement Frames:"
+  group_options: "Options:"
+  
+  tooltip_organ: "Sélectionnez le fichier d'orgue Hauptwerk (.organ ou Organ_Hauptwerk_xml) à charger."
+  tooltip_audio_device: "Le périphérique qui sera utilisé pour la sortie audio."
+  tooltip_sample_rate: "La fréquence à laquelle l'audio sera mixé. Des valeurs élevées utilisent plus de CPU."
+  tooltip_midi_inputs: "Sélectionnez les périphériques MIDI à utiliser pour contrôler l'orgue."
+  tooltip_midi_file: "Sélectionnez un fichier MIDI à lire."
+  tooltip_ir_file: "Fichier de réponse impulsionnelle pour la réverbération (WAV)."
+  tooltip_ir_folder: "Ouvrir dossier Réverb"
+  tooltip_reverb_mix: "Quantité de réverbération appliquée. 0.0 = sec, 1.0 = mouillé (réverb seule)."
+  tooltip_gain: "Volume de sortie global."
+  tooltip_polyphony: "Nombre maximum de voix simultanées."
+  tooltip_buffer: "Nombre de frames audio par tampon. Des valeurs élevées augmentent la latence."
+  tooltip_preload: "Les premières frames de chaque échantillon seront préchargées en RAM."
+  tooltip_precache: "Activez ceci pour charger complètement tous les échantillons en RAM."
+  tooltip_convert: "Activez ceci pour convertir tous les échantillons en 16 bits."
+  tooltip_tuning: "Utiliser l'accordage original des échantillons."
+  
+  chk_precache: "Pré-cache des Échantillons"
+  chk_convert: "Convertir en 16-bit"
+  chk_tuning: "Utiliser l'Accordage Original"
+  
+  btn_browse: "Parcourir..."
+  btn_clear: "Effacer"
+  btn_map: "⚙ Mappage"
+  btn_quit: "Quitter"
+  btn_start: "Démarrer Rusty Pipes"
+  
+  status_no_devices: "Aucun périphérique"
+  status_no_reverb: "Sans Réverb"
+  status_default: "[ Défaut ]"
+  status_none: "Aucun"
+  warn_select_organ: "Veuillez sélectionner un fichier d'orgue."
+  
+  picker_organ: "Sélectionner Fichier d'Orgue"
+  picker_midi: "Sélectionner Fichier MIDI (Optionnel)"
+
+loading:
+  heading: "Chargement des Échantillons..."
+  window_title: "Chargement..."
+  app_name: "Rusty Pipes Chargement..."
+  status_init: "Initialisation..."
+
+tui_config:
+  header_title: "Configuration"
+  footer_nav: "Nav: ↑/↓ | Entrée: Sélec/Basculer | S: Démarrer | Q: Quitter"
+  footer_midi: " Espace: Basculer | Entrée: Configurer | Échap: Retour "
+  
+  title_midi_devs: " Périphériques MIDI "
+  title_select_audio: "Sélec. Périph. Audio (↑/↓, Entrée, Échap)"
+  title_select_rate: "Sélec. Taux d'Échantillonnage"
+  title_select_ir: "Sélec. Réponse Impulsionnelle"
+  
+  prompt_reverb: "Entrez Mix Réverb (0.0 - 1.0)"
+  prompt_gain: "Entrez Gain (0.0 - 1.0)"
+  prompt_poly: "Entrez Polyphonie (1 - 1024)"
+  prompt_buffer: "Entrez Taille Tampon Audio"
+  prompt_preload: "Entrez Frames de Préchargement"
+  prompt_generic: "Entrez Valeur"
+
+  fmt_organ:       "Fichier Orgue:    %{val}"
+  fmt_audio:       "Périph. Audio:    %{val}"
+  fmt_rate:        "Taux Échantillon: %{val} Hz"
+  fmt_midi_devs:   "Entrées MIDI:     %{count} activés"
+  fmt_midi_file:   "Fichier MIDI:     %{val}"
+  fmt_ir:          "Fichier IR Réverb:%{val}"
+  fmt_mix:         "Mix Réverb:       %{val}"
+  fmt_gain:        "Gain:             %{val}"
+  fmt_poly:        "Polyphonie:       %{val}"
+  fmt_buffer:      "Tampon Audio:     %{val} frames"
+  fmt_preload:     "Précharge Frames: %{val} frames"
+  fmt_precache:    "Pré-cache:        %{val}"
+  fmt_convert:     "Conv. en 16-bit:  %{val}"
+  fmt_tuning:      "Accordage Orig.:  %{val}"
+  
+  val_on: "ON"
+  val_off: "OFF"
+
+tui_picker:
+  header_title_fmt: "%{title} (q pour quitter)"
+  current_path_fmt: "Chemin Actuel: %{path}"
+  entries_title: "Entrées"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDown | Entrée/→: Sélec | ←/Backspace: Haut | q: Quitter"
+  
+  err_read_dir: "Erreur lecture dossier: %{err}"
+  err_generic: "Erreur: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Interne"
+  hdr_action: "Action"
+  
+  fmt_ch_short: "Can %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Flèches: Naviguer | Entrée: Apprendre/Effacer | Échap: Fermer"
+
+tui_midi:
+  title_fmt: " Configurer Mappage: %{name} "
+  footer: " Entrée: Éditer/Basculer | ↑/↓: Naviguer/Valeur | Échap: Retour "
+  
+  mode_simple: "Simple (Toutes Entrées -> Une Cible)"
+  mode_complex: "Complexe (Mappage par Canal)"
+  
+  lbl_mode: "Mode: %{val}"
+  lbl_target: "Canal Cible: %{ch}"
+  lbl_complex: "Entrée Can %{input} -> Cible Can %{out}"
+  
+  suffix_editing: "%{val} <Édition>"
+
+tui:
+  status_rec_midi_wav: " [ENR MIDI+WAV] "
+  status_rec_midi: " [ENR MIDI] "
+  status_rec_wav: " [ENR WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Voix: %{active}/%{poly} | [Q]uitter [P]anique +/-:Gain E/R:Oct [/]:Poly F1-12:Rappel Shift+F1-12:Sauver [I]:MIDI Learn"
+  
+  err_underrun: "⚠ DISCONTINUITÉ AUDIO (UNDERRUN) ⚠"
+  
+  save_title: "Sauver Preset"
+  save_header_fmt: "Sauver Preset F%{num}"
+  save_prompt: "Entrez un nom:"
+  save_footer: "Appuyez sur [Entrée] pour sauver, [Échap] pour annuler"
+  
+  no_stops: "Aucun jeu chargé."
+  midi_log_title: "Journal MIDI"
+  piano_roll_title: "Piano Roll"

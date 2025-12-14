@@ -1,0 +1,254 @@
+# YAML localization file for Hungarian (hu)
+
+main:
+  title: "Rusty Pipes - Virtuális Sípocsorona Szimulátor v%{version}"
+  config_cancelled: "Konfiguráció megszakítva. Kilépés."
+  loading_organ: "Orgonadefiníció betöltése..."
+  loading_samples_fmt: "Minták betöltése: [%{percent}] %{file}..."
+  loading_complete: "Minták betöltése: [100%] Kész."
+  organ_loaded_fmt: "Orgona sikeresen betöltve: %{name}"
+  found_stops_fmt: "%{count} regiszter található."
+  starting_audio: "Audiomotor indítása..."
+  audio_running: "Az audiomotor fut."
+  starting_midi_file: "MIDI fájl lejátszásának indítása: %{path}"
+  connecting_midi: "Csatlakozás a MIDI eszközhöz: %{name}"
+  no_midi_devices: "Nincs engedélyezett MIDI eszköz. Futtatás MIDI bemenet nélkül."
+  shutting_down: "Leállítás..."
+  
+  list_devices_header: "Elérhető MIDI bemeneti eszközök:"
+  list_devices_none: "  Nem található MIDI eszköz."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Tipp: F1-F12 Betölt, Shift+F1-F12 Ment, 'P' Pánik, Nyilak: Navigáció, 1-0 Váltás, E/R Oktáv, +/- Erősítés, [ / ] Polifónia"
+  recording_active: "FELVÉTEL"
+  rec_midi_start: "⏺ MIDI Felv."
+  rec_midi_stop: "⏹ MIDI Stop"
+  rec_wav_start: "⏺ WAV Felv."
+  rec_wav_stop: "⏹ WAV Stop"
+
+  presets_heading: "Presetek"
+  recall_label: "Betöltés (F1-F12):"
+  save_label: "Mentés (Shift+F1-F12):"
+  default_preset_name_fmt: "Preset F%{num}"
+  tremulants_heading: "Tremulánsok"
+  no_tremulants: "Nem található tremuláns."
+
+  audio_settings_heading: "Hangbeállítások"
+  reverb_label: "Zengetés (Reverb):"
+  no_reverb: "Nincs Zengetés"
+  reverb_mix_label: "Zengetés Mix:"
+  master_gain_label: "Fő Erősítés (Gain):"
+  vol_slider_text: "Hangerő"
+  gain_keys_hint: "Gombok: +/-"
+  polyphony_label: "Polifónia:"
+  polyphony_keys_hint: "Gombok: [ / ]"
+  
+  underrun_alert: "⚠ AUDIO KIESÉS (UNDERRUN) ⚠"
+  voices_fmt: "Hangok: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU Terhelés: %{load}%"
+
+  selected_stop_label: "Kiválasztott Regiszter:"
+  no_selection: "Nincs"
+  btn_all_channels: "Minden Csatorna"
+  btn_no_channels: "Nincs Csatorna"
+  btn_panic: "PÁNIK (Minden Hang Ki)"
+  panic_tooltip: "Azonnal elnémít minden hangot"
+  no_stops_loaded: "Nincs betöltött regiszter."
+
+  midi_log_heading: "MIDI Napló"
+  midi_activity_heading: "MIDI Aktivitás"
+
+  save_preset_title_fmt: "Preset F%{num} Mentése"
+  enter_name_prompt: "Adja meg a preset nevét:"
+  btn_cancel: "Mégse"
+  btn_save: "Mentés"
+
+errors:
+  midi_connect_fail: "Sikertelen csatlakozás ehhez: %{name} (%{err})"
+  midi_fetch_fail: "Hiba a MIDI eszközök lekérésekor: %{err}"
+  loading_ui_fail: "A kezelőfelület betöltése sikertelen: %{err}"
+  recall_preset_fail: "HIBA a preset betöltésekor: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDI Hozzárendelés: %{name}"
+  heading: "Csatorna Konfiguráció"
+  description: "Állítsa be, hogyan legyenek hozzárendelve az eszköz MIDI csatornái az orgona belső csatornáihoz."
+  mode_label: "Hozzárendelési Mód:"
+  mode_simple: "Egyszerű"
+  mode_complex: "Összetett"
+  
+  simple_desc_1: "Egyszerű módban az eszközről érkező összes MIDI üzenet"
+  simple_desc_2: "az orgona egyetlen célcsatornájára irányul."
+  target_channel_label: "Célcsatorna:"
+  channel_fmt: "%{num}. Csatorna"
+  simple_hint: "Ezt használja egyetlen billentyűzettel rendelkező vezérlőkhöz."
+  
+  complex_desc: "Minden bemeneti csatornát egy adott célcsatornához rendelhet."
+  col_input: "Bemeneti Csatorna"
+  col_target: "Célcsatorna"
+  input_channel_fmt: "Bemenet %{num}. Csat."
+  
+  btn_done: "Kész"
+
+midi_learn:
+  window_title_fmt: "MIDI Tanulás: %{name}"
+  description_1: "Állítsa be, hogyan vezéreljék külső MIDI események ezt a regisztert."
+  description_2: "Kattintson a 'Tanulás' gombra, majd nyomjon meg egy billentyűt a MIDI eszközön."
+  
+  col_internal_channel: "Belső Csatorna"
+  col_enable_event: "Bekapcsolási Esemény"
+  col_disable_event: "Kikapcsolási Esemény"
+  col_actions: "Műveletek"
+  
+  channel_fmt: "%{num}. Csatorna"
+  status_listening: "Figyelés..."
+  btn_learn: "Tanulás"
+  btn_clear: "Törlés"
+  
+  log_mapped_fmt: "%{event} hozzárendelve ehhez: %{action}"
+  action_enable: "Engedélyezés"
+  action_disable: "Tiltás"
+
+config:
+  window_title: "Rusty Pipes Konfiguráció"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Orgonafájl:"
+  group_audio_device: "Hangeszköz:"
+  group_sample_rate: "Mintavételi Frekvencia:"
+  group_midi_inputs: "MIDI Bemenetek:"
+  group_midi_file: "MIDI Fájl (Lejátszás):"
+  group_ir_file: "Zengetés (IR):"
+  group_reverb_mix: "Zengetés Mix:"
+  group_gain: "Erősítés (Gain):"
+  group_polyphony: "Polifónia:"
+  group_buffer: "Audio Puffer (képkocka):"
+  group_preload: "Előtöltés (képkocka):"
+  group_options: "Beállítások:"
+  
+  tooltip_organ: "Válassza ki a betöltendő Hauptwerk orgonafájlt (.organ vagy Organ_Hauptwerk_xml)."
+  tooltip_audio_device: "A hangkimenethez használandó eszköz."
+  tooltip_sample_rate: "A hangkeverés frekvenciája. A magasabb értékek jobban terhelik a CPU-t."
+  tooltip_midi_inputs: "Válassza ki az orgona vezérléséhez használt MIDI eszközöket."
+  tooltip_midi_file: "Válasszon ki egy lejátszandó MIDI fájlt."
+  tooltip_ir_file: "Impulzusválasz fájl a konvolúciós zengetéshez (WAV)."
+  tooltip_ir_folder: "Zengető Mappa Megnyitása"
+  tooltip_reverb_mix: "A zengetés mértéke. 0.0 = száraz (nincs zengetés), 1.0 = nedves (csak zengetés)."
+  tooltip_gain: "Általános kimeneti hangerő."
+  tooltip_polyphony: "Az egyidejűleg megszólaló hangok maximális száma."
+  tooltip_buffer: "Audio képkockák száma pufferenként. A magasabb értékek csökkentik a hibákat, de növelik a késleltetést."
+  tooltip_preload: "Minden minta első néhány képkockája előre betöltődik a RAM-ba."
+  tooltip_precache: "Engedélyezze ezt az összes minta teljes betöltéséhez a RAM-ba (lemezről olvasás helyett)."
+  tooltip_convert: "Engedélyezze ezt az összes minta 16 bitesre konvertálásához (RAM megtakarítás)."
+  tooltip_tuning: "A minták eredeti hangolásának használata."
+  
+  chk_precache: "Minták Gyorsítótárazása"
+  chk_convert: "Konvertálás 16 bitre"
+  chk_tuning: "Eredeti Hangolás Használata"
+  
+  btn_browse: "Tallózás..."
+  btn_clear: "Törlés"
+  btn_map: "⚙ Hozzárendelés"
+  btn_quit: "Kilépés"
+  btn_start: "Rusty Pipes Indítása"
+  
+  status_no_devices: "Nem található eszköz"
+  status_no_reverb: "Nincs Zengetés"
+  status_default: "[ Alapértelmezett ]"
+  status_none: "Nincs"
+  warn_select_organ: "Kérjük, válasszon egy Orgonafájlt."
+  
+  picker_organ: "Orgonafájl Kiválasztása"
+  picker_midi: "MIDI Fájl Kiválasztása (Opcionális)"
+
+loading:
+  heading: "Orgonaminták Betöltése..."
+  window_title: "Betöltés..."
+  app_name: "Rusty Pipes Tölt..."
+  status_init: "Inicializálás..."
+
+tui_config:
+  header_title: "Konfiguráció"
+  footer_nav: "Nav: ↑/↓ | Enter: Kiválaszt/Vált | S: Start | Q: Kilép"
+  footer_midi: " Szóköz: Vált | Enter: Konfig | Esc: Vissza "
+  
+  title_midi_devs: " MIDI Eszközök "
+  title_select_audio: "Hangeszköz Kiválasztása (↑/↓, Enter, Esc)"
+  title_select_rate: "Mintavételi Frekvencia Kiválasztása"
+  title_select_ir: "Impulzusválasz Kiválasztása"
+  
+  prompt_reverb: "Adja meg a Zengetés Mixet (0.0 - 1.0)"
+  prompt_gain: "Adja meg az Erősítést (0.0 - 1.0)"
+  prompt_poly: "Adja meg a Polifóniát (1 - 1024)"
+  prompt_buffer: "Adja meg a Puffer Méretét"
+  prompt_preload: "Adja meg az Előtöltési Képkockákat"
+  prompt_generic: "Adjon meg egy értéket"
+
+  fmt_organ:       "Orgonafájl:       %{val}"
+  fmt_audio:       "Hangeszköz:       %{val}"
+  fmt_rate:        "Mintavétel:       %{val} Hz"
+  fmt_midi_devs:   "MIDI Bemenetek:   %{count} engedélyezve"
+  fmt_midi_file:   "MIDI Fájl:        %{val}"
+  fmt_ir:          "Zengető IR Fájl:  %{val}"
+  fmt_mix:         "Zengetés Mix:     %{val}"
+  fmt_gain:        "Erősítés:         %{val}"
+  fmt_poly:        "Polifónia:        %{val}"
+  fmt_buffer:      "Audio Puffer:     %{val} képkocka"
+  fmt_preload:     "Előtöltés:        %{val} képkocka"
+  fmt_precache:    "Gyorsítótár:      %{val}"
+  fmt_convert:     "16 bitre konv.:   %{val}"
+  fmt_tuning:      "Eredeti Hangolás: %{val}"
+  
+  val_on: "BE"
+  val_off: "KI"
+
+tui_picker:
+  header_title_fmt: "%{title} (q a kilépéshez)"
+  current_path_fmt: "Jelenlegi útvonal: %{path}"
+  entries_title: "Elemek"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDn | Enter/→: Kiválaszt | ←/Bksp: Fel | q: Kilép"
+  
+  err_read_dir: "Hiba a könyvtár olvasásakor: %{err}"
+  err_generic: "Hiba: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Belső"
+  hdr_action: "Művelet"
+  
+  fmt_ch_short: "Csat %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Nyilak: Navigáció | Enter: Tanul/Töröl | Esc: Bezár"
+
+tui_midi:
+  title_fmt: " Hozzárendelés Konfigurálása: %{name} "
+  footer: " Enter: Szerkeszt/Vált | ↑/↓: Érték | Esc: Vissza "
+  
+  mode_simple: "Egyszerű (Minden Bemenet -> Egy Cél)"
+  mode_complex: "Összetett (Csatornánkénti Hozzárendelés)"
+  
+  lbl_mode: "Mód: %{val}"
+  lbl_target: "Célcsatorna: %{ch}"
+  lbl_complex: "Bemenet %{input}. Csat -> Cél %{out}. Csat"
+  
+  suffix_editing: "%{val} <Szerkesztés>"
+
+tui:
+  status_rec_midi_wav: " [FELV MIDI+WAV] "
+  status_rec_midi: " [FELV MIDI] "
+  status_rec_wav: " [FELV WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Hangok: %{active}/%{poly} | [Q]Kilép [P]ánik +/-:Gain E/R:Okt [/]:Poly F1-12:Betölt Shift+F1-12:Ment [I]:MIDI Tanulás"
+  
+  err_underrun: "⚠ AUDIO KIESÉS (UNDERRUN) ⚠"
+  
+  save_title: "Preset Mentése"
+  save_header_fmt: "Preset F%{num} Mentése"
+  save_prompt: "Adjon meg egy nevet:"
+  save_footer: "Nyomjon [Enter]-t a mentéshez, [Esc]-et a megszakításhoz"
+  
+  no_stops: "Nincs betöltött regiszter."
+  midi_log_title: "MIDI Napló"
+  piano_roll_title: "Piano Roll"

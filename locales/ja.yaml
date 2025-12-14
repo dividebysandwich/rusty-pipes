@@ -1,0 +1,254 @@
+# YAML localization file for Japanese (ja)
+
+main:
+  title: "Rusty Pipes - バーチャルパイプオルガン・シミュレータ v%{version}"
+  config_cancelled: "設定がキャンセルされました。終了します。"
+  loading_organ: "オルガン定義を読み込み中..."
+  loading_samples_fmt: "サンプル読み込み中: [%{percent}] %{file}..."
+  loading_complete: "サンプル読み込み: [100%] 完了。"
+  organ_loaded_fmt: "オルガンの読み込みに成功しました: %{name}"
+  found_stops_fmt: "%{count} 個のストップが見つかりました。"
+  starting_audio: "オーディオエンジンを起動中..."
+  audio_running: "オーディオエンジン実行中。"
+  starting_midi_file: "MIDIファイルの再生を開始: %{path}"
+  connecting_midi: "MIDIデバイスに接続中: %{name}"
+  no_midi_devices: "有効なMIDIデバイスがありません。MIDI入力なしで実行します。"
+  shutting_down: "シャットダウン中..."
+  
+  list_devices_header: "利用可能なMIDI入力デバイス:"
+  list_devices_none: "  MIDIデバイスが見つかりませんでした。"
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "ヒント: F1-F12 呼び出し, Shift+F1-F12 保存, 'P' パニック, 矢印 移動, 1-0 切替, E/R オクターブ, +/- ゲイン, [ / ] 同時発音数"
+  recording_active: "録音中"
+  rec_midi_start: "⏺ MIDI録音"
+  rec_midi_stop: "⏹ MIDI停止"
+  rec_wav_start: "⏺ WAV録音"
+  rec_wav_stop: "⏹ WAV停止"
+
+  presets_heading: "プリセット"
+  recall_label: "呼び出し (F1-F12):"
+  save_label: "保存 (Shift+F1-F12):"
+  default_preset_name_fmt: "プリセット F%{num}"
+  tremulants_heading: "トレムラント"
+  no_tremulants: "トレムラントが見つかりません。"
+
+  audio_settings_heading: "オーディオ設定"
+  reverb_label: "リバーブ:"
+  no_reverb: "リバーブなし"
+  reverb_mix_label: "リバーブミックス:"
+  master_gain_label: "マスターゲイン:"
+  vol_slider_text: "音量"
+  gain_keys_hint: "キー: +/-"
+  polyphony_label: "同時発音数:"
+  polyphony_keys_hint: "キー: [ / ]"
+  
+  underrun_alert: "⚠ オーディオ・アンダーラン ⚠"
+  voices_fmt: "発音数: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU負荷: %{load}%"
+
+  selected_stop_label: "選択中のストップ:"
+  no_selection: "なし"
+  btn_all_channels: "全チャンネル"
+  btn_no_channels: "チャンネルなし"
+  btn_panic: "パニック (全音停止)"
+  panic_tooltip: "鳴っているすべての音を停止します"
+  no_stops_loaded: "ストップが読み込まれていません。"
+
+  midi_log_heading: "MIDIログ"
+  midi_activity_heading: "MIDIアクティビティ"
+
+  save_preset_title_fmt: "プリセット F%{num} を保存"
+  enter_name_prompt: "プリセット名を入力してください:"
+  btn_cancel: "キャンセル"
+  btn_save: "保存"
+
+errors:
+  midi_connect_fail: "%{name} への接続に失敗: %{err}"
+  midi_fetch_fail: "MIDIデバイス取得エラー: %{err}"
+  loading_ui_fail: "UI読み込み失敗: %{err}"
+  recall_preset_fail: "プリセット呼び出しエラー: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDIマッピング: %{name}"
+  heading: "チャンネル設定"
+  description: "このデバイスからのMIDIチャンネルをオルガンの内部チャンネルにマッピングする方法を設定します。"
+  mode_label: "マッピングモード:"
+  mode_simple: "シンプル"
+  mode_complex: "詳細 (Complex)"
+  
+  simple_desc_1: "シンプルモードでは、このデバイスからのすべてのMIDIメッセージが"
+  simple_desc_2: "オルガンの単一のターゲットチャンネルにルーティングされます。"
+  target_channel_label: "ターゲットチャンネル:"
+  channel_fmt: "チャンネル %{num}"
+  simple_hint: "シングルキーボードのコントローラーにはこれを使用してください。"
+  
+  complex_desc: "特定の入力チャンネルを特定のターゲットチャンネルにマッピングします。"
+  col_input: "入力チャンネル"
+  col_target: "ターゲットチャンネル"
+  input_channel_fmt: "入力チャンネル %{num}"
+  
+  btn_done: "完了"
+
+midi_learn:
+  window_title_fmt: "MIDIラーン (学習): %{name}"
+  description_1: "外部MIDIイベントがこのストップを制御する方法を設定します。"
+  description_2: "「学習」をクリックしてから、MIDIキーボードのキーを押してください。"
+  
+  col_internal_channel: "内部チャンネル"
+  col_enable_event: "有効化イベント"
+  col_disable_event: "無効化イベント"
+  col_actions: "アクション"
+  
+  channel_fmt: "チャンネル %{num}"
+  status_listening: "待機中..."
+  btn_learn: "学習"
+  btn_clear: "クリア"
+  
+  log_mapped_fmt: "%{event} を %{action} にマッピングしました"
+  action_enable: "有効化"
+  action_disable: "無効化"
+
+config:
+  window_title: "Rusty Pipes 設定"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "オルガンファイル:"
+  group_audio_device: "オーディオデバイス:"
+  group_sample_rate: "サンプルレート:"
+  group_midi_inputs: "MIDI入力:"
+  group_midi_file: "MIDIファイル (再生):"
+  group_ir_file: "リバーブ (IR):"
+  group_reverb_mix: "リバーブミックス:"
+  group_gain: "ゲイン:"
+  group_polyphony: "同時発音数:"
+  group_buffer: "オーディオバッファ (frames):"
+  group_preload: "プリロード (frames):"
+  group_options: "オプション:"
+  
+  tooltip_organ: "読み込むHauptwerkオルガンファイル (.organ または Organ_Hauptwerk_xml) を選択してください。"
+  tooltip_audio_device: "音声出力に使用するオーディオデバイス。"
+  tooltip_sample_rate: "オーディオをミックスするレート。高い値ほどCPUを使用します。"
+  tooltip_midi_inputs: "オルガンの演奏に使用するMIDIデバイスを選択してください。"
+  tooltip_midi_file: "再生するMIDIファイルを選択してください。"
+  tooltip_ir_file: "コンボリューションリバーブ用のインパルス応答ファイル (WAV)。"
+  tooltip_ir_folder: "リバーブフォルダを開く"
+  tooltip_reverb_mix: "リバーブの適用量。0.0 = ドライ (リバーブなし), 1.0 = ウェット (リバーブのみ)。"
+  tooltip_gain: "全体的な出力音量。"
+  tooltip_polyphony: "同時に発音できる最大音数。"
+  tooltip_buffer: "バッファごとのオーディオフレーム数。高い値はノイズを減らしますが、レイテンシーが増加します。"
+  tooltip_preload: "各サンプルの最初の数フレームをRAMにプリロードします。"
+  tooltip_precache: "これを有効にすると、すべてのサンプルをディスクからストリーミングする代わりにRAMに完全に読み込みます。"
+  tooltip_convert: "これを有効にすると、すべてのサンプルを16ビットに変換してRAM使用量を削減します。"
+  tooltip_tuning: "サンプルの元のチューニングを使用します。"
+  
+  chk_precache: "サンプルをプリキャッシュ"
+  chk_convert: "16ビットに変換"
+  chk_tuning: "元のチューニングを使用"
+  
+  btn_browse: "参照..."
+  btn_clear: "クリア"
+  btn_map: "⚙ マップ"
+  btn_quit: "終了"
+  btn_start: "Rusty Pipes を開始"
+  
+  status_no_devices: "デバイスなし"
+  status_no_reverb: "リバーブなし"
+  status_default: "[ デフォルト ]"
+  status_none: "なし"
+  warn_select_organ: "オルガンファイルを選択してください。"
+  
+  picker_organ: "オルガンファイルの選択"
+  picker_midi: "MIDIファイルの選択 (任意)"
+
+loading:
+  heading: "オルガンサンプルを読み込み中..."
+  window_title: "読み込み中..."
+  app_name: "Rusty Pipes 読み込み中..."
+  status_init: "初期化中..."
+
+tui_config:
+  header_title: "設定"
+  footer_nav: "ナビ: ↑/↓ | Enter: 選択/切替 | S: 開始 | Q: 終了"
+  footer_midi: " Space: 切替 | Enter: 設定 | Esc: 戻る "
+  
+  title_midi_devs: " MIDIデバイス "
+  title_select_audio: "オーディオデバイス選択 (↑/↓, Enter, Esc)"
+  title_select_rate: "サンプルレート選択"
+  title_select_ir: "インパルス応答選択"
+  
+  prompt_reverb: "リバーブミックスを入力 (0.0 - 1.0)"
+  prompt_gain: "ゲインを入力 (0.0 - 1.0)"
+  prompt_poly: "同時発音数を入力 (1 - 1024)"
+  prompt_buffer: "オーディオバッファサイズを入力"
+  prompt_preload: "プリロードフレームを入力"
+  prompt_generic: "値を入力"
+
+  fmt_organ:       "オルガンファイル: %{val}"
+  fmt_audio:       "音声デバイス:     %{val}"
+  fmt_rate:        "サンプルレート:   %{val} Hz"
+  fmt_midi_devs:   "MIDI入力デバイス: %{count} 有効"
+  fmt_midi_file:   "MIDIファイル:     %{val}"
+  fmt_ir:          "リバーブIR:       %{val}"
+  fmt_mix:         "リバーブミックス: %{val}"
+  fmt_gain:        "ゲイン:           %{val}"
+  fmt_poly:        "同時発音数:       %{val}"
+  fmt_buffer:      "音声バッファ:     %{val} frames"
+  fmt_preload:     "プリロード:       %{val} frames"
+  fmt_precache:    "プリキャッシュ:   %{val}"
+  fmt_convert:     "16bit変換:        %{val}"
+  fmt_tuning:      "元の調律:         %{val}"
+  
+  val_on: "ON"
+  val_off: "OFF"
+
+tui_picker:
+  header_title_fmt: "%{title} (q で終了)"
+  current_path_fmt: "現在のパス: %{path}"
+  entries_title: "項目"
+  footer_nav: "ナビ: ↑/↓/PgUp/PgDn | Enter/→: 選択 | ←/BS: 上へ | q: 終了"
+  
+  err_read_dir: "ディレクトリ読み込みエラー: %{err}"
+  err_generic: "エラー: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "内部"
+  hdr_action: "動作"
+  
+  fmt_ch_short: "Ch %{num}"
+  cell_dash: "-"
+  
+  footer_help: "矢印: 移動 | Enter: 学習/クリア | Esc: 閉じる"
+
+tui_midi:
+  title_fmt: " マッピング設定: %{name} "
+  footer: " Enter: 編集/切替 | ↑/↓: 移動/値 | Esc: 戻る "
+  
+  mode_simple: "シンプル (全入力 -> 単一ターゲット)"
+  mode_complex: "詳細 (チャンネルごとのマッピング)"
+  
+  lbl_mode: "モード: %{val}"
+  lbl_target: "ターゲットCh: %{ch}"
+  lbl_complex: "入力Ch %{input} -> ターゲットCh %{out}"
+  
+  suffix_editing: "%{val} <編集中>"
+
+tui:
+  status_rec_midi_wav: " [録音 MIDI+WAV] "
+  status_rec_midi: " [録音 MIDI] "
+  status_rec_wav: " [録音 WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Voices: %{active}/%{poly} | [Q]終了 [P]パニック +/-:ゲイン E/R:オクターブ [/]:発音数 F1-12:呼出 Shift+F1-12:保存 [I]:MIDI学習"
+  
+  err_underrun: "⚠ オーディオ・アンダーラン ⚠"
+  
+  save_title: "プリセット保存"
+  save_header_fmt: "プリセット F%{num} を保存"
+  save_prompt: "名前を入力:"
+  save_footer: "[Enter] 保存, [Esc] キャンセル"
+  
+  no_stops: "ストップが読み込まれていません。"
+  midi_log_title: "MIDIログ"
+  piano_roll_title: "ピアノロール"
