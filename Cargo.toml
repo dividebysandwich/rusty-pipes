@@ -42,8 +42,8 @@ sys-locale = "0.3.2"
 open = "5.3.3"
 chrono = "0.4"
 actix-web = "4"
-utoipa = { version = "4", features = ["actix_extras"] }
-utoipa-swagger-ui = { version = "4", features = ["actix-web"] }
+utoipa = { version = "5.4", features = ["actix_extras"] }
+utoipa-swagger-ui = { version = "9.0", features = ["actix-web"] }
 rust-i18n = "3"
 
 [features]
