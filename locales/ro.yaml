@@ -1,0 +1,254 @@
+# YAML localization file for Romanian (ro)
+
+main:
+  title: "Rusty Pipes - Simulator Virtual de Orgă cu Tuburi v%{version}"
+  config_cancelled: "Configurare anulată. Se iese."
+  loading_organ: "Se încarcă definiția orgii..."
+  loading_samples_fmt: "Se încarcă eșantioane: [%{percent}] %{file}..."
+  loading_complete: "Încărcare eșantioane: [100%] Complet."
+  organ_loaded_fmt: "Orgă încărcată cu succes: %{name}"
+  found_stops_fmt: "S-au găsit %{count} registre."
+  starting_audio: "Se pornește motorul audio..."
+  audio_running: "Motorul audio rulează."
+  starting_midi_file: "Se începe redarea fișierului MIDI: %{path}"
+  connecting_midi: "Se conectează la dispozitivul MIDI: %{name}"
+  no_midi_devices: "Niciun dispozitiv MIDI activat. Se rulează fără intrare MIDI."
+  shutting_down: "Se oprește..."
+  
+  list_devices_header: "Dispozitive de intrare MIDI disponibile:"
+  list_devices_none: "  Nu s-au găsit dispozitive MIDI."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Sfat: F1-F12 Încarcă, Shift+F1-F12 Salvează, 'P' Panică, Săgeți Navigare, 1-0 Comutare, E/R Octavă, +/- Câștig, [ / ] Polifonie"
+  recording_active: "ÎNREGISTRARE"
+  rec_midi_start: "⏺ Înreg MIDI"
+  rec_midi_stop: "⏹ Stop MIDI"
+  rec_wav_start: "⏺ Înreg WAV"
+  rec_wav_stop: "⏹ Stop WAV"
+
+  presets_heading: "Presetări"
+  recall_label: "Încarcă (F1-F12):"
+  save_label: "Salvează (Shift+F1-F12):"
+  default_preset_name_fmt: "Presetare F%{num}"
+  tremulants_heading: "Tremulante"
+  no_tremulants: "Nu s-au găsit tremulante."
+
+  audio_settings_heading: "Setări Audio"
+  reverb_label: "Reverberație:"
+  no_reverb: "Fără Reverb"
+  reverb_mix_label: "Mix Reverb:"
+  master_gain_label: "Câștig Principal (Gain):"
+  vol_slider_text: "Vol"
+  gain_keys_hint: "Taste: +/-"
+  polyphony_label: "Polifonie:"
+  polyphony_keys_hint: "Taste: [ / ]"
+  
+  underrun_alert: "⚠ ÎNTRERUPERE AUDIO (UNDERRUN) ⚠"
+  voices_fmt: "Voci: %{voices}/%{poly}"
+  cpu_load_fmt: "Încărcare CPU: %{load}%"
+
+  selected_stop_label: "Registru Selectat:"
+  no_selection: "Niciunul"
+  btn_all_channels: "Toate Canalele"
+  btn_no_channels: "Niciun Canal"
+  btn_panic: "PANICĂ (Oprește Sunetul)"
+  panic_tooltip: "Oprește toate notele care sună"
+  no_stops_loaded: "Nu sunt registre încărcate."
+
+  midi_log_heading: "Jurnal MIDI"
+  midi_activity_heading: "Activitate MIDI"
+
+  save_preset_title_fmt: "Salvează Presetare F%{num}"
+  enter_name_prompt: "Introduceți un nume pentru presetare:"
+  btn_cancel: "Anulează"
+  btn_save: "Salvează"
+
+errors:
+  midi_connect_fail: "Conectare eșuată la %{name}: %{err}"
+  midi_fetch_fail: "Eroare la preluarea dispozitivelor MIDI: %{err}"
+  loading_ui_fail: "Încărcarea interfeței a eșuat: %{err}"
+  recall_preset_fail: "EROARE la încărcarea presetării: %{err}"
+
+midi_config:
+  window_title_fmt: "Mapare MIDI: %{name}"
+  heading: "Configurare Canale"
+  description: "Configurați modul în care canalele MIDI de la acest dispozitiv sunt mapate la canalele interne ale orgii."
+  mode_label: "Mod Mapare:"
+  mode_simple: "Simplu"
+  mode_complex: "Complex"
+  
+  simple_desc_1: "În Modul Simplu, toate mesajele MIDI primite de la acest dispozitiv"
+  simple_desc_2: "sunt direcționate către un singur canal țintă al orgii."
+  target_channel_label: "Canal Țintă:"
+  channel_fmt: "Canal %{num}"
+  simple_hint: "Folosiți aceasta pentru controlere cu o singură claviatură."
+  
+  complex_desc: "Mapează fiecare canal de intrare specific la un canal țintă specific."
+  col_input: "Canal Intrare"
+  col_target: "Canal Țintă"
+  input_channel_fmt: "Intrare Canal %{num}"
+  
+  btn_done: "Gata"
+
+midi_learn:
+  window_title_fmt: "Învățare MIDI: %{name}"
+  description_1: "Configurați modul în care evenimentele MIDI externe controlează acest registru."
+  description_2: "Faceți clic pe 'Învață', apoi apăsați o tastă pe claviatura MIDI."
+  
+  col_internal_channel: "Canal Intern"
+  col_enable_event: "Eveniment Activare"
+  col_disable_event: "Eveniment Dezactivare"
+  col_actions: "Acțiuni"
+  
+  channel_fmt: "Canal %{num}"
+  status_listening: "Se ascultă..."
+  btn_learn: "Învață"
+  btn_clear: "Șterge"
+  
+  log_mapped_fmt: "Mapat %{event} la %{action}"
+  action_enable: "Activează"
+  action_disable: "Dezactivează"
+
+config:
+  window_title: "Configurare Rusty Pipes"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Fișier Orgă:"
+  group_audio_device: "Dispozitiv Audio:"
+  group_sample_rate: "Rată de Eșantionare:"
+  group_midi_inputs: "Intrări MIDI:"
+  group_midi_file: "Fișier MIDI (Redare):"
+  group_ir_file: "Reverberație (IR):"
+  group_reverb_mix: "Mix Reverb:"
+  group_gain: "Câștig (Gain):"
+  group_polyphony: "Polifonie:"
+  group_buffer: "Buffer Audio (cadre):"
+  group_preload: "Preîncărcare (cadre):"
+  group_options: "Opțiuni:"
+  
+  tooltip_organ: "Selectați fișierul de orgă Hauptwerk (.organ sau Organ_Hauptwerk_xml) de încărcat."
+  tooltip_audio_device: "Dispozitivul care va fi utilizat pentru ieșirea audio."
+  tooltip_sample_rate: "Frecvența la care va fi mixat sunetul. Valori mai mari utilizează mai mult CPU."
+  tooltip_midi_inputs: "Selectați ce dispozitive MIDI vor fi utilizate pentru a controla orga."
+  tooltip_midi_file: "Selectați un fișier MIDI de redat."
+  tooltip_ir_file: "Fișier de răspuns la impuls pentru reverberație prin convoluție (WAV)."
+  tooltip_ir_folder: "Deschide Dosar Reverb"
+  tooltip_reverb_mix: "Cantitatea de reverberație aplicată. 0.0 = uscat (fără reverb), 1.0 = umed (doar reverb)."
+  tooltip_gain: "Volumul general de ieșire."
+  tooltip_polyphony: "Numărul maxim de voci simultane."
+  tooltip_buffer: "Numărul de cadre audio per buffer. Valori mai mari reduc întreruperile, dar cresc latența."
+  tooltip_preload: "Primele câteva cadre ale fiecărui eșantion vor fi preîncărcate în RAM."
+  tooltip_precache: "Activați pentru a încărca complet toate eșantioanele în RAM în loc de a le reda de pe disc."
+  tooltip_convert: "Activați pentru a converti toate eșantioanele la 16 biți (economie de RAM)."
+  tooltip_tuning: "Utilizează acordajul original al eșantioanelor."
+  
+  chk_precache: "Pre-cache Eșantioane"
+  chk_convert: "Convertește la 16-bit"
+  chk_tuning: "Utilizează Acordaj Original"
+  
+  btn_browse: "Răsfoiește..."
+  btn_clear: "Șterge"
+  btn_map: "⚙ Mapare"
+  btn_quit: "Ieșire"
+  btn_start: "Pornește Rusty Pipes"
+  
+  status_no_devices: "Nu s-au găsit dispozitive"
+  status_no_reverb: "Fără Reverb"
+  status_default: "[ Implicit ]"
+  status_none: "Niciunul"
+  warn_select_organ: "Vă rugăm să selectați un Fișier de Orgă."
+  
+  picker_organ: "Selectare Fișier Orgă"
+  picker_midi: "Selectare Fișier MIDI (Opțional)"
+
+loading:
+  heading: "Se încarcă Eșantioanele Orgii..."
+  window_title: "Se încarcă..."
+  app_name: "Rusty Pipes Se încarcă..."
+  status_init: "Inițializare..."
+
+tui_config:
+  header_title: "Configurare"
+  footer_nav: "Nav: ↑/↓ | Enter: Select/Comută | S: Start | Q: Ieșire"
+  footer_midi: " Spațiu: Comută | Enter: Config | Esc: Înapoi "
+  
+  title_midi_devs: " Dispozitive MIDI "
+  title_select_audio: "Select. Disp. Audio (↑/↓, Enter, Esc)"
+  title_select_rate: "Select. Rată Eșantionare"
+  title_select_ir: "Select. Răspuns Impuls"
+  
+  prompt_reverb: "Introduceți Mix Reverb (0.0 - 1.0)"
+  prompt_gain: "Introduceți Câștig (0.0 - 1.0)"
+  prompt_poly: "Introduceți Polifonie (1 - 1024)"
+  prompt_buffer: "Introduceți Dimensiune Buffer"
+  prompt_preload: "Introduceți Cadre Preîncărcare"
+  prompt_generic: "Introduceți Valoare"
+
+  fmt_organ:       "Fișier Orgă:      %{val}"
+  fmt_audio:       "Disp. Audio:      %{val}"
+  fmt_rate:        "Rată Eșant.:      %{val} Hz"
+  fmt_midi_devs:   "Intrări MIDI:     %{count} activate"
+  fmt_midi_file:   "Fișier MIDI:      %{val}"
+  fmt_ir:          "Fișier IR Reverb: %{val}"
+  fmt_mix:         "Mix Reverb:       %{val}"
+  fmt_gain:        "Câștig:           %{val}"
+  fmt_poly:        "Polifonie:        %{val}"
+  fmt_buffer:      "Buffer Audio:     %{val} cadre"
+  fmt_preload:     "Preîncărcare:     %{val} cadre"
+  fmt_precache:    "Pre-cache:        %{val}"
+  fmt_convert:     "Conv. 16-bit:     %{val}"
+  fmt_tuning:      "Acordaj Orig.:    %{val}"
+  
+  val_on: "PORNIT"
+  val_off: "OPRIT"
+
+tui_picker:
+  header_title_fmt: "%{title} (q pentru ieșire)"
+  current_path_fmt: "Cale Curentă: %{path}"
+  entries_title: "Elemente"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDn | Enter/→: Select | ←/Bksp: Sus | q: Ieșire"
+  
+  err_read_dir: "Eroare citire director: %{err}"
+  err_generic: "Eroare: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Intern"
+  hdr_action: "Acțiune"
+  
+  fmt_ch_short: "Can %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Săgeți: Navigare | Enter: Învață/Șterge | Esc: Închide"
+
+tui_midi:
+  title_fmt: " Configurare Mapare: %{name} "
+  footer: " Enter: Editare/Comutare | ↑/↓: Valoare | Esc: Înapoi "
+  
+  mode_simple: "Simplu (Toate Intrările -> O Țintă)"
+  mode_complex: "Complex (Mapare per Canal)"
+  
+  lbl_mode: "Mod: %{val}"
+  lbl_target: "Canal Țintă: %{ch}"
+  lbl_complex: "Intrare Can %{input} -> Țintă Can %{out}"
+  
+  suffix_editing: "%{val} <Editare>"
+
+tui:
+  status_rec_midi_wav: " [ÎNREG MIDI+WAV] "
+  status_rec_midi: " [ÎNREG MIDI] "
+  status_rec_wav: " [ÎNREG WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Voci: %{active}/%{poly} | [Q]Ieșire [P]anică +/-:Gain E/R:Oct [/]:Poly F1-12:Încarcă Shift+F1-12:Salvează [I]:MIDI Learn"
+  
+  err_underrun: "⚠ ÎNTRERUPERE AUDIO (UNDERRUN) ⚠"
+  
+  save_title: "Salvează Presetare"
+  save_header_fmt: "Salvează Presetare F%{num}"
+  save_prompt: "Introduceți un nume:"
+  save_footer: "Apăsați [Enter] pentru salvare, [Esc] pentru anulare"
+  
+  no_stops: "Nu sunt registre încărcate."
+  midi_log_title: "Jurnal MIDI"
+  piano_roll_title: "Piano Roll"
