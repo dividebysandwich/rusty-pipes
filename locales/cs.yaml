@@ -1,0 +1,254 @@
+# YAML localization file for Czech (cs)
+
+main:
+  title: "Rusty Pipes - Virtuální simulátor píšťalových varhan v%{version}"
+  config_cancelled: "Konfigurace zrušena. Ukončuji."
+  loading_organ: "Načítám definici varhan..."
+  loading_samples_fmt: "Načítám samply: [%{percent}] %{file}..."
+  loading_complete: "Načítání samplů: [100%] Hotovo."
+  organ_loaded_fmt: "Varhany úspěšně načteny: %{name}"
+  found_stops_fmt: "Nalezeno %{count} rejstříků."
+  starting_audio: "Spouštím audio engine..."
+  audio_running: "Audio engine běží."
+  starting_midi_file: "Spouštím přehrávání MIDI souboru: %{path}"
+  connecting_midi: "Připojuji k MIDI zařízení: %{name}"
+  no_midi_devices: "Žádná MIDI zařízení nejsou povolena. Spouštím bez MIDI vstupu."
+  shutting_down: "Vypínám..."
+  
+  list_devices_header: "Dostupná MIDI vstupní zařízení:"
+  list_devices_none: "  Nebyla nalezena žádná MIDI zařízení."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Tip: F1-F12 Načíst, Shift+F1-F12 Uložit, 'P' Panika, Šipky Navigace, 1-0 Přepínání, E/R Oktáva, +/- Zisk, [ / ] Polyfonie"
+  recording_active: "NÁHRÁVÁNÍ"
+  rec_midi_start: "⏺ Rec MIDI"
+  rec_midi_stop: "⏹ Stop MIDI"
+  rec_wav_start: "⏺ Rec WAV"
+  rec_wav_stop: "⏹ Stop WAV"
+
+  presets_heading: "Předvolby (Presets)"
+  recall_label: "Načíst (F1-F12):"
+  save_label: "Uložit (Shift+F1-F12):"
+  default_preset_name_fmt: "Předvolba F%{num}"
+  tremulants_heading: "Tremulanty"
+  no_tremulants: "Nebyly nalezeny žádné tremulanty."
+
+  audio_settings_heading: "Nastavení zvuku"
+  reverb_label: "Dozvuk (Reverb):"
+  no_reverb: "Žádný dozvuk"
+  reverb_mix_label: "Mix dozvuku:"
+  master_gain_label: "Hlavní zisk (Gain):"
+  vol_slider_text: "Hlas."
+  gain_keys_hint: "Klávesy: +/-"
+  polyphony_label: "Polyfonie:"
+  polyphony_keys_hint: "Klávesy: [ / ]"
+  
+  underrun_alert: "⚠ VÝPADEK ZVUKU (UNDERRUN) ⚠"
+  voices_fmt: "Hlasy: %{voices}/%{poly}"
+  cpu_load_fmt: "Zátěž CPU: %{load}%"
+
+  selected_stop_label: "Vybraný rejstřík:"
+  no_selection: "Žádný"
+  btn_all_channels: "Všechny kanály"
+  btn_no_channels: "Žádné kanály"
+  btn_panic: "PANIKA (Vypnout vše)"
+  panic_tooltip: "Zastaví všechny znějící tóny"
+  no_stops_loaded: "Žádné rejstříky načteny."
+
+  midi_log_heading: "MIDI Log"
+  midi_activity_heading: "MIDI Aktivita"
+
+  save_preset_title_fmt: "Uložit předvolbu F%{num}"
+  enter_name_prompt: "Zadejte název předvolby:"
+  btn_cancel: "Zrušit"
+  btn_save: "Uložit"
+
+errors:
+  midi_connect_fail: "Nepodařilo se připojit k %{name}: %{err}"
+  midi_fetch_fail: "Chyba při získávání MIDI zařízení: %{err}"
+  loading_ui_fail: "Načítání UI selhalo: %{err}"
+  recall_preset_fail: "CHYBA při načítání předvolby: %{err}"
+
+midi_config:
+  window_title_fmt: "Mapování MIDI: %{name}"
+  heading: "Konfigurace kanálů"
+  description: "Nastavte, jak se MIDI kanály z tohoto zařízení mapují na interní kanály varhan."
+  mode_label: "Režim mapování:"
+  mode_simple: "Jednoduchý"
+  mode_complex: "Komplexní"
+  
+  simple_desc_1: "V jednoduchém režimu jsou všechny příchozí MIDI zprávy"
+  simple_desc_2: "směrovány na jeden cílový kanál varhan."
+  target_channel_label: "Cílový kanál:"
+  channel_fmt: "Kanál %{num}"
+  simple_hint: "Použijte toto pro ovladače s jednou klaviaturou."
+  
+  complex_desc: "Mapujte každý konkrétní vstupní kanál na specifický cílový kanál."
+  col_input: "Vstupní kanál"
+  col_target: "Cílový kanál"
+  input_channel_fmt: "Vstup Kanál %{num}"
+  
+  btn_done: "Hotovo"
+
+midi_learn:
+  window_title_fmt: "MIDI Learn: %{name}"
+  description_1: "Nastavte, jak externí MIDI události ovládají tento rejstřík."
+  description_2: "Klikněte na 'Učit se' a poté stiskněte klávesu na MIDI klaviatuře."
+  
+  col_internal_channel: "Interní kanál"
+  col_enable_event: "Událost zapnutí"
+  col_disable_event: "Událost vypnutí"
+  col_actions: "Akce"
+  
+  channel_fmt: "Kanál %{num}"
+  status_listening: "Poslouchám..."
+  btn_learn: "Učit se"
+  btn_clear: "Vymazat"
+  
+  log_mapped_fmt: "Namapováno %{event} na %{action}"
+  action_enable: "Povolit"
+  action_disable: "Zakázat"
+
+config:
+  window_title: "Konfigurace Rusty Pipes"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Soubor varhan:"
+  group_audio_device: "Zvukové zařízení:"
+  group_sample_rate: "Vzorkovací frekvence:"
+  group_midi_inputs: "MIDI vstupy:"
+  group_midi_file: "MIDI soubor (Přehrávání):"
+  group_ir_file: "Dozvuk (IR):"
+  group_reverb_mix: "Mix dozvuku:"
+  group_gain: "Zisk (Gain):"
+  group_polyphony: "Polyfonie:"
+  group_buffer: "Audio buffer (snímky):"
+  group_preload: "Přednačtení (snímky):"
+  group_options: "Možnosti:"
+  
+  tooltip_organ: "Vyberte soubor varhan Hauptwerk (.organ nebo Organ_Hauptwerk_xml) k načtení."
+  tooltip_audio_device: "Zařízení, které bude použito pro zvukový výstup."
+  tooltip_sample_rate: "Frekvence, při které se bude zvuk míchat. Vyšší hodnoty více zatěžují CPU."
+  tooltip_midi_inputs: "Vyberte, která MIDI zařízení se mají použít k ovládání varhan."
+  tooltip_midi_file: "Vyberte MIDI soubor k přehrání."
+  tooltip_ir_file: "Soubor impulsní odezvy pro konvoluční dozvuk (WAV)."
+  tooltip_ir_folder: "Otevřít složku dozvuků"
+  tooltip_reverb_mix: "Množství aplikovaného dozvuku. 0.0 = suchý (bez dozvuku), 1.0 = mokrý (pouze dozvuk)."
+  tooltip_gain: "Celková výstupní hlasitost."
+  tooltip_polyphony: "Maximální počet současně znějících hlasů."
+  tooltip_buffer: "Počet audio snímků na buffer. Vyšší hodnoty snižují výpadky, ale zvyšují latenci."
+  tooltip_preload: "Prvních pár snímků každého samplu se přednačte do RAM."
+  tooltip_precache: "Povolte toto pro kompletní načtení všech samplů do RAM místo streamování z disku."
+  tooltip_convert: "Povolte toto pro konverzi všech samplů na 16 bitů (úspora RAM)."
+  tooltip_tuning: "Použít původní ladění samplů."
+  
+  chk_precache: "Přednačíst samply do RAM"
+  chk_convert: "Konvertovat na 16 bitů"
+  chk_tuning: "Použít původní ladění"
+  
+  btn_browse: "Procházet..."
+  btn_clear: "Vymazat"
+  btn_map: "⚙ Mapovat"
+  btn_quit: "Ukončit"
+  btn_start: "Spustit Rusty Pipes"
+  
+  status_no_devices: "Nenalezena žádná zařízení"
+  status_no_reverb: "Žádný dozvuk"
+  status_default: "[ Výchozí ]"
+  status_none: "Žádný"
+  warn_select_organ: "Vyberte prosím soubor varhan."
+  
+  picker_organ: "Vybrat soubor varhan"
+  picker_midi: "Vybrat MIDI soubor (Volitelné)"
+
+loading:
+  heading: "Načítám samply varhan..."
+  window_title: "Načítání..."
+  app_name: "Rusty Pipes Načítá..."
+  status_init: "Inicializace..."
+
+tui_config:
+  header_title: "Konfigurace"
+  footer_nav: "Nav: ↑/↓ | Enter: Vybrat/Přepnout | S: Start | Q: Ukončit"
+  footer_midi: " Mezerník: Přepnout | Enter: Konfig | Esc: Zpět "
+  
+  title_midi_devs: " MIDI Zařízení "
+  title_select_audio: "Vybrat audio zařízení (↑/↓, Enter, Esc)"
+  title_select_rate: "Vybrat vzorkovací frekvenci"
+  title_select_ir: "Vybrat impulsní odezvu"
+  
+  prompt_reverb: "Zadejte Mix dozvuku (0.0 - 1.0)"
+  prompt_gain: "Zadejte Zisk (0.0 - 1.0)"
+  prompt_poly: "Zadejte Polyfonii (1 - 1024)"
+  prompt_buffer: "Zadejte velikost bufferu"
+  prompt_preload: "Zadejte snímky přednačtení"
+  prompt_generic: "Zadejte hodnotu"
+
+  fmt_organ:       "Soubor varhan:    %{val}"
+  fmt_audio:       "Audio zařízení:   %{val}"
+  fmt_rate:        "Vzorkování:       %{val} Hz"
+  fmt_midi_devs:   "MIDI vstupy:      %{count} povoleno"
+  fmt_midi_file:   "MIDI soubor:      %{val}"
+  fmt_ir:          "Dozvuk IR soubor: %{val}"
+  fmt_mix:         "Mix dozvuku:      %{val}"
+  fmt_gain:        "Zisk:             %{val}"
+  fmt_poly:        "Polyfonie:        %{val}"
+  fmt_buffer:      "Audio buffer:     %{val} snímků"
+  fmt_preload:     "Přednačtení:      %{val} snímků"
+  fmt_precache:    "RAM Cache:        %{val}"
+  fmt_convert:     "Konv. na 16-bit:  %{val}"
+  fmt_tuning:      "Původní ladění:   %{val}"
+  
+  val_on: "ZAP"
+  val_off: "VYP"
+
+tui_picker:
+  header_title_fmt: "%{title} (q pro ukončení)"
+  current_path_fmt: "Aktuální cesta: %{path}"
+  entries_title: "Položky"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDn | Enter/→: Vybrat | ←/Bksp: Nahoru | q: Ukončit"
+  
+  err_read_dir: "Chyba čtení adresáře: %{err}"
+  err_generic: "Chyba: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Interní"
+  hdr_action: "Akce"
+  
+  fmt_ch_short: "Kan %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Šipky: Navigace | Enter: Učit/Vymazat | Esc: Zavřít"
+
+tui_midi:
+  title_fmt: " Konfigurovat mapování: %{name} "
+  footer: " Enter: Upravit/Přepnout | ↑/↓: Hodnota | Esc: Zpět "
+  
+  mode_simple: "Jednoduchý (Všechny vstupy -> Jeden cíl)"
+  mode_complex: "Komplexní (Mapování po kanálech)"
+  
+  lbl_mode: "Režim: %{val}"
+  lbl_target: "Cílový kanál: %{ch}"
+  lbl_complex: "Vstup Kan %{input} -> Cíl Kan %{out}"
+  
+  suffix_editing: "%{val} <Úprava>"
+
+tui:
+  status_rec_midi_wav: " [REC MIDI+WAV] "
+  status_rec_midi: " [REC MIDI] "
+  status_rec_wav: " [REC WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Hlasy: %{active}/%{poly} | [Q]Ukončit [P]anika +/-:Gain E/R:Okt [/]:Poly F1-12:Načíst Shift+F1-12:Uložit [I]:MIDI Learn"
+  
+  err_underrun: "⚠ VÝPADEK ZVUKU (UNDERRUN) ⚠"
+  
+  save_title: "Uložit předvolbu"
+  save_header_fmt: "Uložit předvolbu F%{num}"
+  save_prompt: "Zadejte název:"
+  save_footer: "Stiskněte [Enter] pro uložení, [Esc] pro zrušení"
+  
+  no_stops: "Žádné rejstříky načteny."
+  midi_log_title: "MIDI Log"
+  piano_roll_title: "Piano Roll"

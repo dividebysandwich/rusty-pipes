@@ -1,0 +1,254 @@
+# YAML localization file for Finnish (fi)
+
+main:
+  title: "Rusty Pipes - Virtuaalinen urkusimulaattori v%{version}"
+  config_cancelled: "Määritys peruutettu. Lopetetaan."
+  loading_organ: "Ladataan urkumääritystä..."
+  loading_samples_fmt: "Ladataan sampleja: [%{percent}] %{file}..."
+  loading_complete: "Ladataan sampleja: [100%] Valmis."
+  organ_loaded_fmt: "Urut ladattu onnistuneesti: %{name}"
+  found_stops_fmt: "Löydetty %{count} äänikertaa."
+  starting_audio: "Käynnistetään äänimoottoria..."
+  audio_running: "Äänimoottori käynnissä."
+  starting_midi_file: "Aloitetaan MIDI-tiedoston toisto: %{path}"
+  connecting_midi: "Yhdistetään MIDI-laitteeseen: %{name}"
+  no_midi_devices: "Ei käytössä olevia MIDI-laitteita. Suoritetaan ilman MIDI-tuloa."
+  shutting_down: "Sammutetaan..."
+  
+  list_devices_header: "Käytettävissä olevat MIDI-tulolaitteet:"
+  list_devices_none: "  MIDI-laitteita ei löytynyt."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Vihje: F1-F12 Lataa, Shift+F1-F12 Tallenna, 'P' Paniikki, Nuolet Siirry, 1-0 Vaihda, E/R Oktaavi, +/- Gain, [ / ] Polyfonia"
+  recording_active: "TALLENNETAAN"
+  rec_midi_start: "⏺ Tallenna MIDI"
+  rec_midi_stop: "⏹ Pysäytä MIDI"
+  rec_wav_start: "⏺ Tallenna WAV"
+  rec_wav_stop: "⏹ Pysäytä WAV"
+
+  presets_heading: "Esiasetukset (Presets)"
+  recall_label: "Lataa (F1-F12):"
+  save_label: "Tallenna (Shift+F1-F12):"
+  default_preset_name_fmt: "Esiasetus F%{num}"
+  tremulants_heading: "Tremulantit"
+  no_tremulants: "Tremulantteja ei löytynyt."
+
+  audio_settings_heading: "Ääniasetukset"
+  reverb_label: "Kaiku (Reverb):"
+  no_reverb: "Ei kaikua"
+  reverb_mix_label: "Kaikusekoitus (Mix):"
+  master_gain_label: "Päävoimakkuus (Gain):"
+  vol_slider_text: "Vol"
+  gain_keys_hint: "Näppäimet: +/-"
+  polyphony_label: "Polyfonia:"
+  polyphony_keys_hint: "Näppäimet: [ / ]"
+  
+  underrun_alert: "⚠ ÄÄNIPUSKURIN ALIVUOTO (UNDERRUN) ⚠"
+  voices_fmt: "Äänet: %{voices}/%{poly}"
+  cpu_load_fmt: "CPU-kuorma: %{load}%"
+
+  selected_stop_label: "Valittu äänikerta:"
+  no_selection: "Ei mitään"
+  btn_all_channels: "Kaikki kanavat"
+  btn_no_channels: "Ei kanavia"
+  btn_panic: "PANIIKKI (Kaikki äänet pois)"
+  panic_tooltip: "Pysäyttää kaikki soivat äänet"
+  no_stops_loaded: "Äänikertoja ei ole ladattu."
+
+  midi_log_heading: "MIDI-loki"
+  midi_activity_heading: "MIDI-toiminta"
+
+  save_preset_title_fmt: "Tallenna esiasetus F%{num}"
+  enter_name_prompt: "Anna esiasetukselle nimi:"
+  btn_cancel: "Peruuta"
+  btn_save: "Tallenna"
+
+errors:
+  midi_connect_fail: "Yhteys laitteeseen %{name} epäonnistui: %{err}"
+  midi_fetch_fail: "Virhe haettaessa MIDI-laitteita: %{err}"
+  loading_ui_fail: "Käyttöliittymän lataus epäonnistui: %{err}"
+  recall_preset_fail: "VIRHE ladattaessa esiasetusta: %{err}"
+
+midi_config:
+  window_title_fmt: "MIDI-kartoitus: %{name}"
+  heading: "Kanavamääritys"
+  description: "Määritä, miten tämän laitteen MIDI-kanavat kartoitetaan urkujen sisäisiin kanaviin."
+  mode_label: "Kartoitustila:"
+  mode_simple: "Yksinkertainen"
+  mode_complex: "Monimutkainen"
+  
+  simple_desc_1: "Yksinkertaisessa tilassa kaikki tämän laitteen MIDI-viestit"
+  simple_desc_2: "ohjataan yhteen urkujen kohdekanavaan."
+  target_channel_label: "Kohdekanava:"
+  channel_fmt: "Kanava %{num}"
+  simple_hint: "Käytä tätä yhden koskettimiston ohjaimille."
+  
+  complex_desc: "Kartoita jokainen tulokanava tiettyyn kohdekanavaan."
+  col_input: "Tulokanava"
+  col_target: "Kohdekanava"
+  input_channel_fmt: "Tulo Kanava %{num}"
+  
+  btn_done: "Valmis"
+
+midi_learn:
+  window_title_fmt: "MIDI-oppiminen (Learn): %{name}"
+  description_1: "Määritä, miten ulkoiset MIDI-tapahtumat ohjaavat tätä äänikertaa."
+  description_2: "Napsauta 'Opi' ja paina sitten MIDI-koskettimiston näppäintä."
+  
+  col_internal_channel: "Sisäinen kanava"
+  col_enable_event: "Ota käyttöön -tapahtuma"
+  col_disable_event: "Poista käytöstä -tapahtuma"
+  col_actions: "Toiminnot"
+  
+  channel_fmt: "Kanava %{num}"
+  status_listening: "Kuunnellaan..."
+  btn_learn: "Opi (Learn)"
+  btn_clear: "Tyhjennä"
+  
+  log_mapped_fmt: "Kartoitettu %{event} toimintoon %{action}"
+  action_enable: "Ota käyttöön"
+  action_disable: "Poista käytöstä"
+
+config:
+  window_title: "Rusty Pipes -asetukset"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Urkutiedosto:"
+  group_audio_device: "Äänilaite:"
+  group_sample_rate: "Näytteenottotaajuus:"
+  group_midi_inputs: "MIDI-tulot:"
+  group_midi_file: "MIDI-tiedosto (Toisto):"
+  group_ir_file: "Kaiku (IR):"
+  group_reverb_mix: "Kaikusekoitus (Mix):"
+  group_gain: "Vahvistus (Gain):"
+  group_polyphony: "Polyfonia:"
+  group_buffer: "Äänipuskuri (kehykset):"
+  group_preload: "Esilataus (kehykset):"
+  group_options: "Asetukset:"
+  
+  tooltip_organ: "Valitse ladattava Hauptwerk-urkutiedosto (.organ tai Organ_Hauptwerk_xml)."
+  tooltip_audio_device: "Laite, jota käytetään äänilähtöön."
+  tooltip_sample_rate: "Taajuus, jolla ääni miksataan. Korkeammat arvot käyttävät enemmän CPU:ta."
+  tooltip_midi_inputs: "Valitse MIDI-laitteet, joilla urkuja ohjataan."
+  tooltip_midi_file: "Valitse toistettava MIDI-tiedosto."
+  tooltip_ir_file: "Impulssivastetiedosto konvoluutiokaiulle (WAV)."
+  tooltip_ir_folder: "Avaa kaikukansio"
+  tooltip_reverb_mix: "Käytetyn kaiun määrä. 0.0 = kuiva (ei kaikua), 1.0 = märkä (vain kaiku)."
+  tooltip_gain: "Yleinen lähtövoimakkuus."
+  tooltip_polyphony: "Samanaikaisten äänten enimmäismäärä."
+  tooltip_buffer: "Äänikehysten määrä puskuria kohden. Korkeammat arvot vähentävät pätkimistä mutta lisäävät viivettä."
+  tooltip_preload: "Kunkin samplen ensimmäiset kehykset esiladataan RAM-muistiin."
+  tooltip_precache: "Ota tämä käyttöön ladataksesi kaikki samplet kokonaan RAM-muistiin levyltä suoratoiston sijaan."
+  tooltip_convert: "Ota tämä käyttöön muuntaaksesi kaikki samplet 16-bittisiksi (säästää RAM-muistia)."
+  tooltip_tuning: "Käytä samplejen alkuperäistä viritystä."
+  
+  chk_precache: "Välimuistita samplet RAMiin"
+  chk_convert: "Muunna 16-bittiseksi"
+  chk_tuning: "Käytä alkuperäistä viritystä"
+  
+  btn_browse: "Selaa..."
+  btn_clear: "Tyhjennä"
+  btn_map: "⚙ Kartoita"
+  btn_quit: "Lopeta"
+  btn_start: "Käynnistä Rusty Pipes"
+  
+  status_no_devices: "Laitteita ei löytynyt"
+  status_no_reverb: "Ei kaikua"
+  status_default: "[ Oletus ]"
+  status_none: "Ei mitään"
+  warn_select_organ: "Valitse urkutiedosto."
+  
+  picker_organ: "Valitse urkutiedosto"
+  picker_midi: "Valitse MIDI-tiedosto (Valinnainen)"
+
+loading:
+  heading: "Ladataan urkusampleja..."
+  window_title: "Ladataan..."
+  app_name: "Rusty Pipes lataa..."
+  status_init: "Alustetaan..."
+
+tui_config:
+  header_title: "Asetukset"
+  footer_nav: "Nav: ↑/↓ | Enter: Valitse/Vaihda | S: Käynnistä | Q: Lopeta"
+  footer_midi: " Välilyönti: Vaihda | Enter: Määritä | Esc: Takaisin "
+  
+  title_midi_devs: " MIDI-laitteet "
+  title_select_audio: "Valitse äänilaite (↑/↓, Enter, Esc)"
+  title_select_rate: "Valitse näytteenottotaajuus"
+  title_select_ir: "Valitse impulssivaste"
+  
+  prompt_reverb: "Anna kaikusekoitus (0.0 - 1.0)"
+  prompt_gain: "Anna vahvistus (0.0 - 1.0)"
+  prompt_poly: "Anna polyfonia (1 - 1024)"
+  prompt_buffer: "Anna puskurin koko"
+  prompt_preload: "Anna esilatauskehykset"
+  prompt_generic: "Anna arvo"
+
+  fmt_organ:       "Urkutiedosto:     %{val}"
+  fmt_audio:       "Äänilaite:        %{val}"
+  fmt_rate:        "Taajuus:          %{val} Hz"
+  fmt_midi_devs:   "MIDI-tulot:       %{count} päällä"
+  fmt_midi_file:   "MIDI-tiedosto:    %{val}"
+  fmt_ir:          "Kaiku IR-tiedosto:%{val}"
+  fmt_mix:         "Kaikusekoitus:    %{val}"
+  fmt_gain:        "Vahvistus:        %{val}"
+  fmt_poly:        "Polyfonia:        %{val}"
+  fmt_buffer:      "Äänipuskuri:      %{val} kehystä"
+  fmt_preload:     "Esilataus:        %{val} kehystä"
+  fmt_precache:    "Välimuisti RAM:   %{val}"
+  fmt_convert:     "Muunna 16-bit:    %{val}"
+  fmt_tuning:      "Orig. viritys:    %{val}"
+  
+  val_on: "PÄÄLLÄ"
+  val_off: "POIS"
+
+tui_picker:
+  header_title_fmt: "%{title} (q lopettaaksesi)"
+  current_path_fmt: "Nykyinen polku: %{path}"
+  entries_title: "Kohteet"
+  footer_nav: "Nav: ↑/↓/PgUp/PgDn | Enter/→: Valitse | ←/Bksp: Ylös | q: Lopeta"
+  
+  err_read_dir: "Virhe luettaessa hakemistoa: %{err}"
+  err_generic: "Virhe: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Sisäinen"
+  hdr_action: "Toiminto"
+  
+  fmt_ch_short: "Kan %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Nuolet: Siirry | Enter: Opi/Tyhjennä | Esc: Sulje"
+
+tui_midi:
+  title_fmt: " Määritä kartoitus: %{name} "
+  footer: " Enter: Muokkaa/Vaihda | ↑/↓: Arvo | Esc: Takaisin "
+  
+  mode_simple: "Yksink. (Kaikki tulot -> Yksi kohde)"
+  mode_complex: "Monimutk. (Kanavakohtainen)"
+  
+  lbl_mode: "Tila: %{val}"
+  lbl_target: "Kohdekanava: %{ch}"
+  lbl_complex: "Tulo Kan %{input} -> Kohde Kan %{out}"
+  
+  suffix_editing: "%{val} <Muokataan>"
+
+tui:
+  status_rec_midi_wav: " [REC MIDI+WAV] "
+  status_rec_midi: " [REC MIDI] "
+  status_rec_wav: " [REC WAV] "
+  
+  status_bar_fmt: "%{rec}CPU: %{cpu}% | Gain: %{gain}% | Äänet: %{active}/%{poly} | [Q]Lopeta [P]aniikki +/-:Gain E/R:Okt [/]:Poly F1-12:Lataa Shift+F1-12:Tall [I]:MIDI Learn"
+  
+  err_underrun: "⚠ ÄÄNIPUSKURIN ALIVUOTO (UNDERRUN) ⚠"
+  
+  save_title: "Tallenna esiasetus"
+  save_header_fmt: "Tallenna esiasetus F%{num}"
+  save_prompt: "Anna nimi:"
+  save_footer: "Paina [Enter] tallentaaksesi, [Esc] peruuttaaksesi"
+  
+  no_stops: "Äänikertoja ei ole ladattu."
+  midi_log_title: "MIDI-loki"
+  piano_roll_title: "Piano Roll"

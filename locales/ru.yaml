@@ -1,0 +1,254 @@
+# YAML localization file for Russian (ru)
+
+main:
+  title: "Rusty Pipes - Симулятор виртуального органа v%{version}"
+  config_cancelled: "Настройка отменена. Выход."
+  loading_organ: "Загрузка определения органа..."
+  loading_samples_fmt: "Загрузка семплов: [%{percent}] %{file}..."
+  loading_complete: "Загрузка семплов: [100%] Готово."
+  organ_loaded_fmt: "Орган успешно загружен: %{name}"
+  found_stops_fmt: "Найдено %{count} регистров."
+  starting_audio: "Запуск аудиодвижка..."
+  audio_running: "Аудиодвижок работает."
+  starting_midi_file: "Запуск воспроизведения MIDI-файла: %{path}"
+  connecting_midi: "Подключение к MIDI-устройству: %{name}"
+  no_midi_devices: "Нет активных MIDI-устройств. Запуск без MIDI-входа."
+  shutting_down: "Выключение..."
+  
+  list_devices_header: "Доступные устройства MIDI-ввода:"
+  list_devices_none: "  MIDI-устройства не найдены."
+
+gui:
+  app_title_fmt: "Rusty Pipes - %{name}"
+  
+  footer_tip: "Подсказка: F1-F12 Загрузить, Shift+F1-F12 Сохранить, 'P' Паника, Стрелки: Навигация, 1-0 Перекл., E/R Октава, +/- Усиление, [ / ] Полифония"
+  recording_active: "ЗАПИСЬ"
+  rec_midi_start: "⏺ Запись MIDI"
+  rec_midi_stop: "⏹ Стоп MIDI"
+  rec_wav_start: "⏺ Запись WAV"
+  rec_wav_stop: "⏹ Стоп WAV"
+
+  presets_heading: "Пресеты"
+  recall_label: "Загрузить (F1-F12):"
+  save_label: "Сохранить (Shift+F1-F12):"
+  default_preset_name_fmt: "Пресет F%{num}"
+  tremulants_heading: "Тремулянты"
+  no_tremulants: "Тремулянты не найдены."
+
+  audio_settings_heading: "Настройки аудио"
+  reverb_label: "Реверберация:"
+  no_reverb: "Без реверберации"
+  reverb_mix_label: "Микс реверберации:"
+  master_gain_label: "Общее усиление (Gain):"
+  vol_slider_text: "Громк."
+  gain_keys_hint: "Клав: +/-"
+  polyphony_label: "Полифония:"
+  polyphony_keys_hint: "Клав: [ / ]"
+  
+  underrun_alert: "⚠ СБОЙ АУДИО (UNDERRUN) ⚠"
+  voices_fmt: "Голоса: %{voices}/%{poly}"
+  cpu_load_fmt: "Загр. ЦП: %{load}%"
+
+  selected_stop_label: "Выбранный регистр:"
+  no_selection: "Нет"
+  btn_all_channels: "Все каналы"
+  btn_no_channels: "Нет каналов"
+  btn_panic: "ПАНИКА (Выкл. звук)"
+  panic_tooltip: "Останавливает все звучащие ноты"
+  no_stops_loaded: "Регистры не загружены."
+
+  midi_log_heading: "Журнал MIDI"
+  midi_activity_heading: "Активность MIDI"
+
+  save_preset_title_fmt: "Сохранить пресет F%{num}"
+  enter_name_prompt: "Введите имя пресета:"
+  btn_cancel: "Отмена"
+  btn_save: "Сохранить"
+
+errors:
+  midi_connect_fail: "Не удалось подключиться к %{name}: %{err}"
+  midi_fetch_fail: "Ошибка получения MIDI-устройств: %{err}"
+  loading_ui_fail: "Ошибка загрузки интерфейса: %{err}"
+  recall_preset_fail: "ОШИБКА при загрузке пресета: %{err}"
+
+midi_config:
+  window_title_fmt: "Назначение MIDI: %{name}"
+  heading: "Конфигурация каналов"
+  description: "Настройте привязку MIDI-каналов этого устройства к внутренним каналам органа."
+  mode_label: "Режим привязки:"
+  mode_simple: "Простой"
+  mode_complex: "Сложный"
+  
+  simple_desc_1: "В простом режиме все входящие MIDI-сообщения"
+  simple_desc_2: "направляются на один целевой канал органа."
+  target_channel_label: "Целевой канал:"
+  channel_fmt: "Канал %{num}"
+  simple_hint: "Используйте для контроллеров с одной клавиатурой."
+  
+  complex_desc: "Привяжите каждый конкретный входной канал к целевому каналу."
+  col_input: "Входной канал"
+  col_target: "Целевой канал"
+  input_channel_fmt: "Вход канал %{num}"
+  
+  btn_done: "Готово"
+
+midi_learn:
+  window_title_fmt: "Обучение MIDI: %{name}"
+  description_1: "Настройте управление этим регистром через внешние MIDI-события."
+  description_2: "Нажмите 'Обучить', затем нажмите клавишу на MIDI-клавиатуре."
+  
+  col_internal_channel: "Внутренний канал"
+  col_enable_event: "Событие вкл."
+  col_disable_event: "Событие выкл."
+  col_actions: "Действия"
+  
+  channel_fmt: "Канал %{num}"
+  status_listening: "Ожидание..."
+  btn_learn: "Обучить"
+  btn_clear: "Очистить"
+  
+  log_mapped_fmt: "Привязано %{event} к %{action}"
+  action_enable: "Включить"
+  action_disable: "Выключить"
+
+config:
+  window_title: "Настройки Rusty Pipes"
+  subtitle: "Indicia MMXXV"
+  
+  group_organ_file: "Файл органа:"
+  group_audio_device: "Аудиоустройство:"
+  group_sample_rate: "Частота дискретизации:"
+  group_midi_inputs: "MIDI-входы:"
+  group_midi_file: "MIDI-файл (Воспр.):"
+  group_ir_file: "Реверберация (IR):"
+  group_reverb_mix: "Микс реверберации:"
+  group_gain: "Усиление:"
+  group_polyphony: "Полифония:"
+  group_buffer: "Аудиобуфер (фреймы):"
+  group_preload: "Предзагрузка (фреймы):"
+  group_options: "Опции:"
+  
+  tooltip_organ: "Выберите файл органа Hauptwerk (.organ или Organ_Hauptwerk_xml) для загрузки."
+  tooltip_audio_device: "Устройство для вывода звука."
+  tooltip_sample_rate: "Частота микширования звука. Высокие значения нагружают ЦП."
+  tooltip_midi_inputs: "Выберите MIDI-устройства для управления органом."
+  tooltip_midi_file: "Выберите MIDI-файл для воспроизведения."
+  tooltip_ir_file: "Файл импульсной характеристики для сверточной реверберации (WAV)."
+  tooltip_ir_folder: "Открыть папку реверберации"
+  tooltip_reverb_mix: "Уровень реверберации. 0.0 = сухой, 1.0 = влажный (только эхо)."
+  tooltip_gain: "Общая громкость выхода."
+  tooltip_polyphony: "Максимальное число одновременных голосов."
+  tooltip_buffer: "Размер буфера. Больше = меньше сбоев, но больше задержка."
+  tooltip_preload: "Первые кадры каждого семпла будут предзагружены в RAM."
+  tooltip_precache: "Включите, чтобы полностью загрузить все семплы в RAM."
+  tooltip_convert: "Включите для конвертации всех семплов в 16-бит (экономия RAM)."
+  tooltip_tuning: "Использовать оригинальный строй семплов."
+  
+  chk_precache: "Кэшировать семплы в RAM"
+  chk_convert: "Конвертировать в 16-бит"
+  chk_tuning: "Оригинальный строй"
+  
+  btn_browse: "Обзор..."
+  btn_clear: "Очистить"
+  btn_map: "⚙ Привязка"
+  btn_quit: "Выход"
+  btn_start: "Запустить Rusty Pipes"
+  
+  status_no_devices: "Устройства не найдены"
+  status_no_reverb: "Нет реверберации"
+  status_default: "[ По умолчанию ]"
+  status_none: "Нет"
+  warn_select_organ: "Пожалуйста, выберите файл органа."
+  
+  picker_organ: "Выберите файл органа"
+  picker_midi: "Выберите MIDI-файл (опционально)"
+
+loading:
+  heading: "Загрузка семплов органа..."
+  window_title: "Загрузка..."
+  app_name: "Rusty Pipes загружается..."
+  status_init: "Инициализация..."
+
+tui_config:
+  header_title: "Настройка"
+  footer_nav: "Нав: ↑/↓ | Enter: Выбор/Перекл | S: Старт | Q: Выход"
+  footer_midi: " Пробел: Перекл | Enter: Настр | Esc: Назад "
+  
+  title_midi_devs: " MIDI-устройства "
+  title_select_audio: "Выбор аудиоустройства (↑/↓, Enter, Esc)"
+  title_select_rate: "Выбор частоты дискретизации"
+  title_select_ir: "Выбор импульсной характеристики"
+  
+  prompt_reverb: "Введите микс реверберации (0.0 - 1.0)"
+  prompt_gain: "Введите усиление (0.0 - 1.0)"
+  prompt_poly: "Введите полифонию (1 - 1024)"
+  prompt_buffer: "Введите размер буфера"
+  prompt_preload: "Введите кадры предзагрузки"
+  prompt_generic: "Введите значение"
+
+  fmt_organ:       "Файл органа:      %{val}"
+  fmt_audio:       "Аудиоустройство:  %{val}"
+  fmt_rate:        "Частота:          %{val} Гц"
+  fmt_midi_devs:   "MIDI-входы:       %{count} вкл."
+  fmt_midi_file:   "MIDI-файл:        %{val}"
+  fmt_ir:          "Файл IR реверб.:  %{val}"
+  fmt_mix:         "Микс реверб.:     %{val}"
+  fmt_gain:        "Усиление:         %{val}"
+  fmt_poly:        "Полифония:        %{val}"
+  fmt_buffer:      "Аудиобуфер:       %{val} фр."
+  fmt_preload:     "Предзагрузка:     %{val} фр."
+  fmt_precache:    "Кэширование RAM:  %{val}"
+  fmt_convert:     "Конв. в 16-бит:   %{val}"
+  fmt_tuning:      "Ориг. строй:      %{val}"
+  
+  val_on: "ВКЛ"
+  val_off: "ВЫКЛ"
+
+tui_picker:
+  header_title_fmt: "%{title} (q для выхода)"
+  current_path_fmt: "Текущий путь: %{path}"
+  entries_title: "Элементы"
+  footer_nav: "Нав: ↑/↓/PgUp/PgDn | Enter/→: Выбор | ←/Bksp: Вверх | q: Выход"
+  
+  err_read_dir: "Ошибка чтения папки: %{err}"
+  err_generic: "Ошибка: %{err}"
+
+tui_midi_learn:
+  hdr_internal: "Внутр."
+  hdr_action: "Действие"
+  
+  fmt_ch_short: "Кан %{num}"
+  cell_dash: "-"
+  
+  footer_help: "Стрелки: Навигация | Enter: Обучить/Очистить | Esc: Закрыть"
+
+tui_midi:
+  title_fmt: " Настройка привязки: %{name} "
+  footer: " Enter: Редаг./Перекл | ↑/↓: Значение | Esc: Назад "
+  
+  mode_simple: "Простой (Все входы -> Одна цель)"
+  mode_complex: "Сложный (Привязка по каналам)"
+  
+  lbl_mode: "Режим: %{val}"
+  lbl_target: "Целевой кан.: %{ch}"
+  lbl_complex: "Вход Кан %{input} -> Цель Кан %{out}"
+  
+  suffix_editing: "%{val} <Редактирование>"
+
+tui:
+  status_rec_midi_wav: " [ЗАПИСЬ MIDI+WAV] "
+  status_rec_midi: " [ЗАПИСЬ MIDI] "
+  status_rec_wav: " [ЗАПИСЬ WAV] "
+  
+  status_bar_fmt: "%{rec}ЦП: %{cpu}% | Gain: %{gain}% | Голоса: %{active}/%{poly} | [Q]Выход [P]аника +/-:Gain E/R:Окт [/]:Poly F1-12:Загр Shift+F1-12:Сохр [I]:MIDI Обуч"
+  
+  err_underrun: "⚠ СБОЙ АУДИО (UNDERRUN) ⚠"
+  
+  save_title: "Сохранить пресет"
+  save_header_fmt: "Сохранить пресет F%{num}"
+  save_prompt: "Введите имя:"
+  save_footer: "Нажмите [Enter] для сохранения, [Esc] для отмены"
+  
+  no_stops: "Регистры не загружены."
+  midi_log_title: "Журнал MIDI"
+  piano_roll_title: "Piano Roll"
