@@ -10,6 +10,8 @@ Music samples:
 
 Bach - Praeludium in E Minor BWV 548 - Friesach organ: [[FLAC](https://playspoon.com/files/RustyPipes-Bach-Praeludium-in-e-minor-BWV548.flac)] [[OGG](https://playspoon.com/files/RustyPipes-Bach-Praeludium-in-e-minor-BWV548.ogg)]
 
+Bach - Klavier Uebung BWV 669 - Strassburg organ: [[FLAC](https://playspoon.com/files/RustyPipes-Bach-Klavier_Uebung_BWV-669-Strassburg.flac)] [[OGG](https://playspoon.com/files/RustyPipes-Bach-Klavier_Uebung_BWV-669-Strassburg.ogg)]
+
 Vierne - Organ Symphony No.2 - Allegro - Friesach organ: [[FLAC](https://playspoon.com/files/RustyPipes-Vierne-Symphony-No2-Allegro.flac)] [[OGG](https://playspoon.com/files/RustyPipes-Vierne-Symphony-No2-Allegro.ogg)]
 
 Vierne - Organ Symphony No.2 - Scherzo - Friesach organ: [[FLAC](https://playspoon.com/files/RustyPipes-Vierne-Symphony-No2-Scherzo.flac)] [[OGG](https://playspoon.com/files/RustyPipes-Vierne-Symphony-No2-Scherzo.ogg)]
