@@ -495,7 +495,8 @@ impl AppState {
         let mut to_reinsert = Vec::new();
 
         if let Some(mut played_note) = self.active_midi_notes.remove(&(channel, note)) {
-             played_note.end_time = Some(end_time);
+            played_note.end_time = Some(end_time);
+            self.finished_notes_display.push_back(played_note);
         }
 
         for (n, mut played_note) in self.currently_playing_notes.drain() {
