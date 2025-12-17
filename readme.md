@@ -1,4 +1,4 @@
-<img width="847" height="414" alt="image" src="https://github.com/user-attachments/assets/6e8e3674-f26a-48d1-8b37-13ee2ca8fd97" />
+<img width="847" height="398" alt="image" src="https://github.com/user-attachments/assets/0ee17867-191f-403b-8c14-ea8402e4931f" />
 
 # Rusty Pipes
 
