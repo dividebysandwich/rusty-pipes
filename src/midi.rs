@@ -181,6 +181,20 @@ pub fn play_midi_file(
             }
         };
         
+        // Calculate total ticks for progress reporting
+        let mut total_ticks = 0;
+        for track in &smf.tracks {
+            let mut track_len = 0;
+            for event in track {
+                track_len += event.delta.as_int();
+            }
+            if track_len > total_ticks {
+                total_ticks = track_len;
+            }
+        }
+        let total_ticks_f = total_ticks as f32;
+        let mut last_progress_sent = 0.0;
+
         // Set up playback state
         // Default tempo: 120 BPM = 500,000 microseconds per quarter note
         let mut micros_per_quarter = 500_000.0;
@@ -230,10 +244,20 @@ pub fn play_midi_file(
             
             // Update this track's "next event time"
             track_next_event_times[track_idx] = next_event_tick;
-            
+
             // Calculate time to wait since the last event
             let ticks_to_wait = next_event_tick - global_ticks;
             global_ticks = next_event_tick;
+
+            // Send Progress Update
+            if total_ticks_f > 0.0 {
+                let progress = global_ticks as f32 / total_ticks_f;
+                // Only send if progress advanced by 1% to avoid flooding the channel
+                if (progress - last_progress_sent).abs() > 0.01 {
+                    let _ = tui_tx.send(TuiMessage::MidiProgress(progress));
+                    last_progress_sent = progress;
+                }
+            }
 
             if ticks_to_wait > 0 {
                 let micros_per_tick = micros_per_quarter / tpqn;

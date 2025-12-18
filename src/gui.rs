@@ -651,7 +651,7 @@ impl EguiApp {
                         ui.add_space(5.0);
 
                         // Prepare Data
-                        let (is_playing, has_file, filename_display) = {
+                        let (is_playing, has_file, filename_display, progress) = {
                             let state = self.app_state.lock().unwrap();
                             let raw_name = state.midi_file_path.as_ref()
                                 .and_then(|p| p.file_name())
@@ -659,13 +659,12 @@ impl EguiApp {
                                 .unwrap_or_else(|| "No file selected".to_string());
                             
                             let display = if raw_name.len() > 26 {
-                                // Truncate: first 12 ... last 14 = 26 chars total (including ...)
                                 format!("{}...{}", &raw_name[0..12], &raw_name[raw_name.len()-14..])
                             } else {
                                 raw_name
                             };
                             
-                            (state.is_midi_file_playing, state.midi_file_path.is_some(), display)
+                            (state.is_midi_file_playing, state.midi_file_path.is_some(), display, state.midi_playback_progress)
                         };
 
                         // Buttons Row (Open | Play/Stop)
@@ -676,7 +675,7 @@ impl EguiApp {
                             // Enforce same height (e.g., 25.0)
                             let player_btn_size = egui::vec2(btn_width, 25.0); 
 
-                            // --- OPEN BUTTON ---
+                            // Open button
                             if ui.add_sized(player_btn_size, egui::Button::new("📂 Open")).clicked() {
                                 if let Some(path) = rfd::FileDialog::new()
                                     .add_filter("MIDI", &["mid", "midi"])
@@ -717,6 +716,14 @@ impl EguiApp {
                                 });
                             }
                         });
+
+                        ui.add_space(5.0);
+                        
+                        // Progress bar
+                        ui.add(egui::ProgressBar::new(progress)
+                            .animate(false)
+                            .corner_radius(0.0)
+                            .desired_height(10.0));
 
                         // Filename Label Row (Below buttons)
                         ui.add_space(2.0);

@@ -97,6 +97,7 @@ pub struct AppState {
     pub last_midi_event_received: Option<(MidiEventSpec, Instant)>,
     pub midi_file_path: Option<PathBuf>,
     pub is_midi_file_playing: bool,
+    pub midi_playback_progress: f32,
     pub midi_file_stop_signal: Arc<AtomicBool>,
 }
 
@@ -145,6 +146,7 @@ impl AppState {
             last_midi_event_received: None,
             midi_file_path: None,
             is_midi_file_playing: false,
+            midi_playback_progress: 0.0,
             midi_file_stop_signal: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -316,9 +318,13 @@ impl AppState {
             TuiMessage::TuiNoteOn(note, channel, start_time) => self.handle_tui_note_on(note, channel, start_time),
             TuiMessage::TuiNoteOff(note, channel, end_time) => self.handle_tui_note_off(note, channel, end_time),
             TuiMessage::TuiAllNotesOff => self.handle_tui_all_notes_off(),
+            TuiMessage::MidiProgress(progress) => {
+                self.midi_playback_progress = progress;
+            },
             TuiMessage::MidiPlaybackFinished => {
                 self.is_midi_file_playing = false;
                 self.midi_file_stop_signal.store(false, Ordering::Relaxed);
+                self.midi_playback_progress = 0.0;
                 self.handle_tui_all_notes_off();
             }
         }

@@ -48,6 +48,7 @@ pub enum TuiMessage {
     MidiNoteOff(u8, u8),
     /// (channel)
     MidiChannelNotesOff(u8),
+    MidiProgress(f32),
     MidiPlaybackFinished,
 }
 
