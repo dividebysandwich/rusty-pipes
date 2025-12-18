@@ -151,7 +151,7 @@ Select the audio output device. Note that if your device has more than 2 channel
 
 ### MIDI file
 
-This option allows for the selection of a MIDI file to play back. When this is used, MIDI control with input devices is not available.
+This option allows for the selection of a MIDI file to play back. This can be done on startup as well as while playing.
 
 Command line example: ```rusty-pipes /path/to/name.organ /path/to/file.mid```
 
