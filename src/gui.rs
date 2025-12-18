@@ -647,66 +647,79 @@ impl EguiApp {
                         ui.separator();
                 
                         // --- MIDI File Player Section ---
-                        ui.heading("MIDI Player");
+                        ui.heading(t!("gui.midi_player_label"));
                         ui.add_space(5.0);
 
-                        // Prepare Data
-                        let (is_playing, has_file, filename_display, progress) = {
+                        let (is_playing, has_file, filename_display, progress, curr_sec, total_sec) = {
                             let state = self.app_state.lock().unwrap();
                             let raw_name = state.midi_file_path.as_ref()
                                 .and_then(|p| p.file_name())
                                 .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_else(|| "No file selected".to_string());
+                                .unwrap_or_else(|| t!("gui.midi_player_nofile").to_string());
                             
-                            let display = if raw_name.len() > 26 {
+                            let display = if raw_name.len() > 38 {
                                 format!("{}...{}", &raw_name[0..12], &raw_name[raw_name.len()-14..])
                             } else {
                                 raw_name
                             };
                             
-                            (state.is_midi_file_playing, state.midi_file_path.is_some(), display, state.midi_playback_progress)
+                            (state.is_midi_file_playing, state.midi_file_path.is_some(), display, state.midi_playback_progress, state.midi_current_time_secs, state.midi_total_time_secs)
                         };
 
-                        // Buttons Row (Open | Play/Stop)
+                        // Button row
                         ui.horizontal(|ui| {
                             let spacing = ui.spacing().item_spacing.x;
-                            // Calculate width to fit exactly 2 buttons
-                            let btn_width = (ui.available_width() - spacing) / 2.0; 
-                            // Enforce same height (e.g., 25.0)
-                            let player_btn_size = egui::vec2(btn_width, 25.0); 
+                            let num_buttons = 4.0;
+                            // Calculate precise width for even buttons
+                            let btn_width = (ui.available_width() - ((num_buttons - 1.0) * spacing)) / num_buttons; 
+                            let ctrl_btn_size = egui::vec2(btn_width, 25.0); 
 
-                            // Open button
-                            if ui.add_sized(player_btn_size, egui::Button::new("📂 Open")).clicked() {
-                                if let Some(path) = rfd::FileDialog::new()
-                                    .add_filter("MIDI", &["mid", "midi"])
-                                    .pick_file() 
-                                {
+                            // Open file browser
+                            if ui.add_sized(ctrl_btn_size, egui::Button::new("📂")).on_hover_text(t!("config.picker_midi")).clicked() {
+                                if let Some(path) = rfd::FileDialog::new().add_filter("MIDI", &["mid", "midi"]).pick_file() {
                                     let mut state = self.app_state.lock().unwrap();
                                     state.midi_file_path = Some(path);
                                     if state.is_midi_file_playing {
                                         state.midi_file_stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
                                     }
+                                    state.midi_playback_progress = 0.0;
+                                    state.midi_current_time_secs = 0;
+                                    state.midi_total_time_secs = 0;
                                 }
                             }
 
-                            // Play/Stop button
+                            // Rewind button
+                            if ui.add_enabled_ui(is_playing, |ui| {
+                                ui.add_sized(ctrl_btn_size, egui::Button::new("⏪"))
+                            }).inner.on_hover_text(t!("gui.midi_player_rewind")).clicked() {
+                                let state = self.app_state.lock().unwrap();
+                                let _ = self.audio_tx.send(AppMessage::AllNotesOff);
+                                if let Some(tx) = &state.midi_seek_tx {
+                                    let _ = tx.send(-15);
+                                }
+                            }
+
+                            // Play / Stop button
                             if is_playing {
-                                if ui.add_sized(player_btn_size, egui::Button::new("⏹ Stop").fill(egui::Color32::RED)).clicked() {
-                                     self.app_state.lock().unwrap().midi_file_stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
-                                     let _ = self.audio_tx.send(AppMessage::AllNotesOff);
+                                if ui.add_sized(ctrl_btn_size, egui::Button::new("⏹").fill(egui::Color32::RED)).on_hover_text(t!("gui.midi_player_stop")).clicked() {
+                                    let mut state = self.app_state.lock().unwrap();
+
+                                    state.midi_file_stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    state.is_midi_file_playing = false;
+                                    state.handle_tui_all_notes_off();
+                                    state.channel_active_notes.clear();
+                                    let _ = self.audio_tx.send(AppMessage::AllNotesOff);
                                 }
                             } else {
                                 // We use add_enabled so the button looks disabled if no file is selected
                                 ui.add_enabled_ui(has_file, |ui| {
-                                    if ui.add_sized(player_btn_size, egui::Button::new("▶ Play")).clicked() {
+                                    if ui.add_sized(ctrl_btn_size, egui::Button::new("▶")).on_hover_text(t!("gui.midi_player_play")).clicked() {
                                         let mut state = self.app_state.lock().unwrap();
                                         if let Some(path) = state.midi_file_path.clone() {
                                             state.is_midi_file_playing = true;
                                             state.midi_file_stop_signal.store(false, std::sync::atomic::Ordering::Relaxed);
-                                            
                                             let stop_sig = state.midi_file_stop_signal.clone();
                                             let tui_tx_clone = self.tui_tx.clone();
-                                            
                                             if let Err(e) = crate::midi::play_midi_file(path, tui_tx_clone, stop_sig) {
                                                 state.add_midi_log(format!("Error playing MIDI: {}", e));
                                                 state.is_midi_file_playing = false;
@@ -715,20 +728,71 @@ impl EguiApp {
                                     }
                                 });
                             }
+
+                            // Seek foward button
+                            if ui.add_enabled_ui(is_playing, |ui| {
+                                ui.add_sized(ctrl_btn_size, egui::Button::new("⏩"))
+                            }).inner.on_hover_text(t!("gui.midi_player_fastforward")).clicked() {
+                                let state = self.app_state.lock().unwrap();
+                                let _ = self.audio_tx.send(AppMessage::AllNotesOff);
+                                if let Some(tx) = &state.midi_seek_tx {
+                                    let _ = tx.send(15);
+                                }
+                            }
                         });
 
                         ui.add_space(5.0);
                         
                         // Progress bar
-                        ui.add(egui::ProgressBar::new(progress)
-                            .animate(false)
+                        let progress_bar = egui::ProgressBar::new(progress)
+                            .animate(false) // Animate if playing
                             .corner_radius(0.0)
-                            .desired_height(10.0));
+                            .desired_height(15.0); // Slightly taller target
 
-                        // Filename Label Row (Below buttons)
+                        let response = ui.add(progress_bar);
+                        
+                        // Add interaction to the progress bar rect
+                        let interact = ui.interact(response.rect, response.id, egui::Sense::click());
+                        
+                        // Change cursor to pointer to indicate clickability
+                        if interact.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+
+                        if interact.clicked() {
+                            // Calculate click percentage
+                            if let Some(hover_pos) = interact.hover_pos() {
+                                let rect = response.rect;
+                                // Clamp ensure we don't go out of bounds if clicked on the very edge
+                                let ratio = ((hover_pos.x - rect.min.x) / rect.width()).clamp(0.0, 1.0);
+                                
+                                // Calculate target time in seconds
+                                let target_time = ratio as f64 * total_sec as f64;
+                                let current_time = curr_sec as f64;
+                                
+                                // Calculate delta (seconds to skip) needed by midi.rs
+                                let delta = (target_time - current_time) as i32;
+
+                                // Send command
+                                let state = self.app_state.lock().unwrap();
+                                // Silence notes before jumping
+                                let _ = self.audio_tx.send(AppMessage::AllNotesOff);
+                                
+                                if let Some(tx) = &state.midi_seek_tx {
+                                    // midi.rs handles the math: new_time = current + delta
+                                    let _ = tx.send(delta);
+                                }
+                            }
+                        }
+
+                        // Time & Filename Display
+                        let format_time = |s: u32| format!("{:02}:{:02}", s / 60, s % 60);
                         ui.add_space(2.0);
-                        // Center the filename text relative to the panel width
                         ui.vertical_centered(|ui| {
+                            // Time
+                            ui.label(egui::RichText::new(format!("{} / {}", format_time(curr_sec), format_time(total_sec)))
+                            .small().strong());
+                            // Filename
                             ui.label(egui::RichText::new(filename_display).weak().italics());
                         });
 
@@ -969,14 +1033,13 @@ impl EguiApp {
             let split_x = (full_rect.left() + LOG_WIDTH).min(full_rect.right());
             let (log_rect, indicator_rect) = full_rect.split_left_right_at_x(split_x);
 
-            // Column 0: MIDI Log
+            // Column 0: Log
             ui.scope_builder( 
                 UiBuilder{ 
                     max_rect: Some(log_rect),
                     layout: Some(egui::Layout::top_down(egui::Align::LEFT)),
                     ..Default::default()
                 }, |ui| {
-                ui.heading(t!("gui.midi_log_heading"));
                     
                 egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap); 

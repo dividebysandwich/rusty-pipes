@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, TryRecvError};
 use std::path::PathBuf;
 use std::fs;
 use std::thread::{self, JoinHandle};
@@ -148,178 +149,259 @@ fn parse_and_send(message: &[u8], tui_tx: &Sender<TuiMessage>, channel: u8) {
     }
 }
 
+// Helper to scan file for total duration in seconds
+fn get_midi_duration_seconds(smf: &Smf) -> f64 {
+    let mut duration = 0.0;
+    let mut micros_per_quarter = 500_000.0;
+    
+    let tpqn = match smf.header.timing {
+        midly::Timing::Metrical(t) => t.as_int() as f64,
+        _ => return 0.0,
+    };
+
+    // Estimate duration by dry-running all MIDI events
+    let mut tracks: Vec<_> = smf.tracks.iter().map(|t| t.iter().peekable()).collect();
+    let mut track_next_tick: Vec<u32> = vec![0; tracks.len()];
+    let mut global_ticks = 0;
+
+    loop {
+        let mut next_event_tick = u32::MAX;
+        let mut next_track_idx = None;
+
+        for (i, track) in tracks.iter_mut().enumerate() {
+            if let Some(event) = track.peek() {
+                let t = track_next_tick[i] + event.delta.as_int();
+                if t < next_event_tick {
+                    next_event_tick = t;
+                    next_track_idx = Some(i);
+                }
+            }
+        }
+
+        let idx = match next_track_idx {
+            Some(i) => i,
+            None => break,
+        };
+
+        let event = tracks[idx].next().unwrap();
+        track_next_tick[idx] = next_event_tick;
+        
+        let delta_ticks = next_event_tick - global_ticks;
+        global_ticks = next_event_tick;
+
+        if delta_ticks > 0 {
+            let micros_per_tick = micros_per_quarter / tpqn;
+            duration += (delta_ticks as f64 * micros_per_tick) / 1_000_000.0;
+        }
+
+        if let TrackEventKind::Meta(MetaMessage::Tempo(micros)) = event.kind {
+            micros_per_quarter = micros.as_int() as f64;
+        }
+    }
+    duration
+}
+
 /// Spawns a new thread to play a MIDI file.
 pub fn play_midi_file(
     path: PathBuf,
     tui_tx: Sender<TuiMessage>,
     stop_signal: Arc<AtomicBool>,
 ) -> Result<JoinHandle<()>> {
+    
+    // Create a channel for seek commands
+    let (seek_tx, seek_rx) = mpsc::channel::<i32>();
+    
+    // Send the seek channel back to the main thread so the GUI can use it
+    let _ = tui_tx.send(TuiMessage::MidiSeekChannel(seek_tx));
 
     let handle = thread::spawn(move || {
         // Load and parse the MIDI file
         let data = match fs::read(&path) {
             Ok(d) => d,
-            Err(e) => {
-                let _ = tui_tx.send(TuiMessage::Error(format!("Failed to read MIDI file: {}", e)));
-                return;
-            }
+            Err(e) => { let _ = tui_tx.send(TuiMessage::Error(format!("Read fail: {}", e))); return; }
         };
-
         let smf = match Smf::parse(&data) {
             Ok(s) => s,
-            Err(e) => {
-                let _ = tui_tx.send(TuiMessage::Error(format!("Failed to parse MIDI file: {}", e)));
-                return;
-            }
+            Err(e) => { let _ = tui_tx.send(TuiMessage::Error(format!("Parse fail: {}", e))); return; }
         };
 
         let tpqn = match smf.header.timing {
             midly::Timing::Metrical(t) => t.as_int() as f64,
-            _ => {
-                let _ = tui_tx.send(TuiMessage::Error("Unsupported MIDI timing format (must be Metrical/TPQN)".into()));
-                return;
-            }
+            _ => 480.0,
         };
-        
-        // Calculate total ticks for progress reporting
-        let mut total_ticks = 0;
-        for track in &smf.tracks {
-            let mut track_len = 0;
-            for event in track {
-                track_len += event.delta.as_int();
-            }
-            if track_len > total_ticks {
-                total_ticks = track_len;
-            }
-        }
-        let total_ticks_f = total_ticks as f32;
-        let mut last_progress_sent = 0.0;
 
-        // Set up playback state
-        // Default tempo: 120 BPM = 500,000 microseconds per quarter note
-        let mut micros_per_quarter = 500_000.0;
-        
-        // Create peekable iterators for each track
-        let mut tracks: Vec<_> = smf.tracks.iter()
-            .map(|track| track.iter().peekable())
-            .collect();
-        
-        // Store the absolute tick time for the *next* event in each track
-        let mut track_next_event_times: Vec<u32> = vec![0; tracks.len()];
-        let mut global_ticks: u32 = 0;
+        // Calculate Total Duration
+        let _ = tui_tx.send(TuiMessage::MidiLog("Calculating duration...".into()));
+        let total_seconds = get_midi_duration_seconds(&smf);
+        let _ = tui_tx.send(TuiMessage::MidiLog(format!("Duration: {:.0}s", total_seconds)));
 
-        let _ = tui_tx.send(TuiMessage::MidiLog(format!("Starting playback of {}...", path.display())));
+        // For restarting playback (rewind/seek)
+        let mut start_at_seconds = 0.0;
 
-        // Start the playback loop
         loop {
+            // Yield
+            thread::yield_now();
 
-            if stop_signal.load(Ordering::Relaxed) {
-                let _ = tui_tx.send(TuiMessage::MidiLog("Playback stopped by user.".into()));
-                let _ = tui_tx.send(TuiMessage::TuiAllNotesOff);
-                break;
-            }
+            // Check stop before starting a loop
+            if stop_signal.load(Ordering::Relaxed) { break; }
 
-            let mut next_event_tick = u32::MAX;
-            let mut next_track_idx = None;
-
-            // Find the track with the earliest upcoming event
-            for (i, track_iter) in tracks.iter_mut().enumerate() {
-                if let Some(event) = track_iter.peek() {
-                    let event_time = track_next_event_times[i] + event.delta.as_int();
-                    if event_time < next_event_tick {
-                        next_event_tick = event_time;
-                        next_track_idx = Some(i);
-                    }
-                }
-            }
-
-            // Get the index of the track with the next event
-            let track_idx = match next_track_idx {
-                Some(idx) => idx,
-                None => break, // All tracks are finished
-            };
-
-            // This is safe because we peeked
-            let event = tracks[track_idx].next().unwrap();
+            let mut micros_per_quarter = 500_000.0;
+            let mut tracks: Vec<_> = smf.tracks.iter().map(|t| t.iter().peekable()).collect();
+            let mut track_next_tick: Vec<u32> = vec![0; tracks.len()];
+            let mut global_ticks = 0;
+            let mut current_time_seconds = 0.0;
             
-            // Update this track's "next event time"
-            track_next_event_times[track_idx] = next_event_tick;
+            // Should we play audio?
+            // If fast-forwarding to a seek point, we mute NoteOns.
+            let mut is_fast_forwarding = start_at_seconds > 0.0;
+            
+            // Delay start only if we are at the very beginning
+            if start_at_seconds == 0.0 {
+                let _ = tui_tx.send(TuiMessage::MidiProgress(0.0, 0, total_seconds as u32));
+                thread::sleep(Duration::from_millis(500));
+            } else {
+                let _ = tui_tx.send(TuiMessage::MidiLog(format!("Seeking to {:.0}s...", start_at_seconds)));
+            }
+            
+            let mut last_progress_update = Instant::now();
 
-            // Calculate time to wait since the last event
-            let ticks_to_wait = next_event_tick - global_ticks;
-            global_ticks = next_event_tick;
+            // Event processing loop
+            loop {
+                // Yield
+                thread::yield_now();
 
-            // Send Progress Update
-            if total_ticks_f > 0.0 {
-                let progress = global_ticks as f32 / total_ticks_f;
-                // Only send if progress advanced by 1% to avoid flooding the channel
-                if (progress - last_progress_sent).abs() > 0.01 {
-                    let _ = tui_tx.send(TuiMessage::MidiProgress(progress));
-                    last_progress_sent = progress;
+                // Check stop signal
+                if stop_signal.load(Ordering::Relaxed) { return; }
+
+                // Check Seek Command
+                match seek_rx.try_recv() {
+                    Ok(skip_sec) => {
+                        let new_time = (current_time_seconds + skip_sec as f64).max(0.0);
+                        
+                        // Prevent endless restart loop if rewinding past 0 while already at 0
+                        if new_time == 0.0 && current_time_seconds < 0.5 {
+                            // Do nothing, just continue playing
+                        } else {
+                            start_at_seconds = new_time;
+                            // Send "All Notes Off" to clear hanging notes
+                            let _ = tui_tx.send(TuiMessage::TuiAllNotesOff); 
+                            // 0xB0 123 is All Notes Off standard CC, do for channel 0 (visual aid mostly)
+                            let _ = tui_tx.send(TuiMessage::MidiChannelNotesOff(0)); 
+                            
+                            break; // BREAK inner loop -> Restarts Outer Loop with new `start_at_seconds`
+                        }
+                    },
+                    Err(TryRecvError::Disconnected) => return,
+                    Err(TryRecvError::Empty) => {}
                 }
-            }
 
-            if ticks_to_wait > 0 {
-                let micros_per_tick = micros_per_quarter / tpqn;
-                let wait_micros = (ticks_to_wait as f64 * micros_per_tick) as u64;
-                thread::sleep(Duration::from_micros(wait_micros));
-            }
-            let now = Instant::now();
+                // Find next event
+                let mut next_event_tick = u32::MAX;
+                let mut next_track_idx = None;
 
-            // Process the MIDI event
-            match event.kind {
-                TrackEventKind::Midi { channel, message } => {
-                    let channel_num = channel.as_int(); // This is 0-15
-                    match message {
-                        MidlyMidiMessage::NoteOn { key, vel } => {
-                            let key = key.as_int();
-                            let vel = vel.as_int();
-                            let note_name = midi_note_to_name(key);
-                            if vel > 0 {
-                                let log_msg = format!("Note On: {} (Ch {}, Vel {})", note_name, channel_num + 1, vel);
-                                let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                                let _ = tui_tx.send(TuiMessage::TuiNoteOn(key, channel_num, now));
-                                let _ = tui_tx.send(TuiMessage::MidiNoteOn(key, vel, channel_num));
-                            } else {
-                                // Velocity 0 is a Note Off
-                                let log_msg = format!("Note Off: {} (Ch {})", note_name, channel_num + 1);
-                                let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                                let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, channel_num,now));
-                                let _ = tui_tx.send(TuiMessage::MidiNoteOff(key, channel_num));
-                            }
-                        },
-                        MidlyMidiMessage::NoteOff { key, vel: _ } => {
-                            let key = key.as_int();
-                            let note_name = midi_note_to_name(key);
-                            let log_msg = format!("Note Off: {} (Ch {})", note_name, channel_num + 1);
-                            let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                            let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, channel_num, now));
-                            let _ = tui_tx.send(TuiMessage::MidiNoteOff(key, channel_num));
-                        },
-                        MidlyMidiMessage::Controller { controller, value: _ } => {
-                            // CC #123 is "All Notes Off"
-                            if controller.as_int() == 123 {
-                                let log_msg = format!("All Off (Ch {})", channel_num + 1);
-                                let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
-                                let _ = tui_tx.send(TuiMessage::MidiChannelNotesOff(channel_num));
-                                let _ = tui_tx.send(TuiMessage::TuiAllNotesOff);
-                            }
-                            // TODO: Handle Sustain command (CC #64)
-                        },
-                        _ => {} // Ignore other MIDI messages
+                for (i, track) in tracks.iter_mut().enumerate() {
+                    if let Some(event) = track.peek() {
+                        let t = track_next_tick[i] + event.delta.as_int();
+                        if t < next_event_tick {
+                            next_event_tick = t;
+                            next_track_idx = Some(i);
+                        }
                     }
-                },
-                TrackEventKind::Meta(MetaMessage::Tempo(micros)) => {
-                    micros_per_quarter = micros.as_int() as f64;
-                    let _ = tui_tx.send(TuiMessage::MidiLog(format!("Tempo {} μs/q", micros.as_int())));
-                },
-                _ => {} // Ignore Sysex or other meta events
-            }
-        }
-        
-        let _ = tui_tx.send(TuiMessage::MidiLog("Playback finished.".into()));
-        let _ = tui_tx.send(TuiMessage::MidiPlaybackFinished);
-    });
+                }
 
+                // Get the index of the track with the next event
+                let idx = match next_track_idx {
+                    Some(i) => i,
+                    None => {
+                        // End of song
+                        let _ = tui_tx.send(TuiMessage::MidiLog("Playback finished.".into()));
+                        let _ = tui_tx.send(TuiMessage::MidiPlaybackFinished);
+                        return; // Exit thread
+                    },
+                };
+
+                let event = tracks[idx].next().unwrap();
+                track_next_tick[idx] = next_event_tick;
+                
+                let ticks_to_wait = next_event_tick - global_ticks;
+                global_ticks = next_event_tick;
+
+                // Time math
+                let micros_per_tick = micros_per_quarter / tpqn;
+                let delta_seconds = (ticks_to_wait as f64 * micros_per_tick) / 1_000_000.0;
+                
+                // If we were fast forwarding, check if we reached the target
+                if is_fast_forwarding && (current_time_seconds + delta_seconds) >= start_at_seconds {
+                    is_fast_forwarding = false;
+                    // Adjust current time exactly
+                    current_time_seconds = start_at_seconds;
+                } else {
+                    current_time_seconds += delta_seconds;
+                }
+
+                // Sleep logic
+                if !is_fast_forwarding && ticks_to_wait > 0 {
+                    let wait_micros = (ticks_to_wait as f64 * micros_per_tick) as u64;
+                    thread::sleep(Duration::from_micros(wait_micros));
+                }
+
+                // Check stop signal again after sleep
+                if stop_signal.load(Ordering::Relaxed) { return; }
+
+                // Send progress (throttled)
+                if last_progress_update.elapsed().as_millis() > 250 {
+                     let progress = if total_seconds > 0.0 { current_time_seconds / total_seconds } else { 0.0 };
+                     let _ = tui_tx.send(TuiMessage::MidiProgress(
+                         progress as f32, 
+                         current_time_seconds as u32, 
+                         total_seconds as u32
+                    ));
+                    last_progress_update = Instant::now();
+                }
+
+                // Process the MIDI event
+                match event.kind {
+                    TrackEventKind::Midi { channel, message } => {
+                        // If fast-forwarding, we SKIP NoteOn messages to avoid noise bursts,
+                        // but we process other events (controllers) if needed.
+                        if !is_fast_forwarding {
+                             let channel_num = channel.as_int();
+                             match message {
+                                MidlyMidiMessage::NoteOn { key, vel } => {
+                                     let key = key.as_int();
+                                     let vel = vel.as_int();
+                                     if vel > 0 {
+                                         let _ = tui_tx.send(TuiMessage::MidiNoteOn(key, vel, channel_num));
+                                         let _ = tui_tx.send(TuiMessage::TuiNoteOn(key, channel_num, Instant::now()));
+                                     } else {
+                                         let _ = tui_tx.send(TuiMessage::MidiNoteOff(key, channel_num));
+                                         let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, channel_num, Instant::now()));
+                                     }
+                                },
+                                MidlyMidiMessage::NoteOff { key, .. } => {
+                                    let key = key.as_int();
+                                    let _ = tui_tx.send(TuiMessage::MidiNoteOff(key, channel_num));
+                                    let _ = tui_tx.send(TuiMessage::TuiNoteOff(key, channel_num, Instant::now()));
+                                },
+                                MidlyMidiMessage::Controller { controller, .. } => {
+                                    // CC #123 is "All Notes Off"
+                                    if controller.as_int() == 123 {
+                                        let _ = tui_tx.send(TuiMessage::MidiChannelNotesOff(channel_num));
+                                        let _ = tui_tx.send(TuiMessage::TuiAllNotesOff);
+                                    }
+                                    // TODO: Handle Sustain command (CC #64)
+                                },
+                                _ => {} // Ignore other MIDI messages
+                             }
+                        }
+                    },
+                    TrackEventKind::Meta(MetaMessage::Tempo(micros)) => {
+                        micros_per_quarter = micros.as_int() as f64;
+                    },
+                    _ => {} // Ignore Sysex or other meta events
+                }
+            } // End Inner Loop
+        } // End Outer Loop
+    });
     Ok(handle)
 }

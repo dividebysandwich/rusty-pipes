@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Annuleren"
   btn_save: "Opslaan"
 
+  midi_player_label: "MIDI-speler"
+  midi_player_nofile: "Geen bestand geselecteerd"
+  midi_player_rewind: "Terugspoelen"
+  midi_player_play: "Afspelen"
+  midi_player_stop: "Stoppen"
+  midi_player_fastforward: "Vooruitspoelen"
+
 errors:
   midi_connect_fail: "Verbinding met %{name} mislukt: %{err}"
   midi_fetch_fail: "Fout bij ophalen MIDI-apparaten: %{err}"

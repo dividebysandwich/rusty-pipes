@@ -64,6 +64,13 @@ gui:
   btn_cancel: "qIl"
   btn_save: "pol"
 
+  midi_player_label: "MIDI ghemwI'"
+  midi_player_nofile: "teywI' wIvbe'"
+  midi_player_rewind: "DoH"
+  midi_player_play: "ghem"
+  midi_player_stop: "mev"
+  midi_player_fastforward: "nom ghoS"
+
 errors:
   midi_connect_fail: "%{name} rar laHbe': %{err}"
   midi_fetch_fail: "MIDI jan Qagh: %{err}"

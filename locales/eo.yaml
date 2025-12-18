@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Nuligi"
   btn_save: "Konservi"
 
+  midi_player_label: "MIDI-Ludilo"
+  midi_player_nofile: "Neniu dosiero elektita"
+  midi_player_rewind: "Reen"
+  midi_player_play: "Ludi"
+  midi_player_stop: "Halti"
+  midi_player_fastforward: "Antaŭen"
+
 errors:
   midi_connect_fail: "Malsukcesis konekti al %{name}: %{err}"
   midi_fetch_fail: "Eraro dum ricevado de MIDI-aparatoj: %{err}"

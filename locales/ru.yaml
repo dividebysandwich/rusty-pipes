@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Отмена"
   btn_save: "Сохранить"
 
+  midi_player_label: "MIDI-плеер"
+  midi_player_nofile: "Файл не выбран"
+  midi_player_rewind: "Перемотать назад"
+  midi_player_play: "Воспроизвести"
+  midi_player_stop: "Стоп"
+  midi_player_fastforward: "Перемотать вперед"
+
 errors:
   midi_connect_fail: "Не удалось подключиться к %{name}: %{err}"
   midi_fetch_fail: "Ошибка получения MIDI-устройств: %{err}"

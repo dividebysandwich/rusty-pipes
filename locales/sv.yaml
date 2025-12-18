@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Avbryt"
   btn_save: "Spara"
 
+  midi_player_label: "MIDI-spelare"
+  midi_player_nofile: "Ingen fil vald"
+  midi_player_rewind: "Spola tillbaka"
+  midi_player_play: "Spela"
+  midi_player_stop: "Stoppa"
+  midi_player_fastforward: "Spola framåt"
+
 errors:
   midi_connect_fail: "Kunde inte ansluta till %{name}: %{err}"
   midi_fetch_fail: "Fel vid hämtning av MIDI-enheter: %{err}"

@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Abbrechen"
   btn_save: "Speichern"
 
+  midi_player_label: "MIDI-Player"
+  midi_player_nofile: "Keine Datei ausgewählt"
+  midi_player_rewind: "Zurückspulen"
+  midi_player_play: "Wiedergabe"
+  midi_player_stop: "Stopp"
+  midi_player_fastforward: "Vorspulen"
+
 errors:
   midi_connect_fail: "Verbindung zu %{name} fehlgeschlagen: %{err}"
   midi_fetch_fail: "Fehler beim Abrufen der MIDI-Geräte: %{err}"

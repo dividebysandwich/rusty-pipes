@@ -64,6 +64,13 @@ gui:
   btn_cancel: "취소"
   btn_save: "저장"
 
+  midi_player_label: "MIDI 플레이어"
+  midi_player_nofile: "파일이 선택되지 않음"
+  midi_player_rewind: "뒤로 감기"
+  midi_player_play: "재생"
+  midi_player_stop: "정지"
+  midi_player_fastforward: "빨리 감기"
+
 errors:
   midi_connect_fail: "%{name} 연결 실패: %{err}"
   midi_fetch_fail: "MIDI 장치 가져오기 오류: %{err}"

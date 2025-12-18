@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Anulează"
   btn_save: "Salvează"
 
+  midi_player_label: "Player MIDI"
+  midi_player_nofile: "Niciun fișier selectat"
+  midi_player_rewind: "Derulare înapoi"
+  midi_player_play: "Redare"
+  midi_player_stop: "Stop"
+  midi_player_fastforward: "Derulare înainte"
+
 errors:
   midi_connect_fail: "Conectare eșuată la %{name}: %{err}"
   midi_fetch_fail: "Eroare la preluarea dispozitivelor MIDI: %{err}"

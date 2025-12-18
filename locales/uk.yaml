@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Скасувати"
   btn_save: "Зберегти"
 
+  midi_player_label: "MIDI-плеєр"
+  midi_player_nofile: "Файл не вибрано"
+  midi_player_rewind: "Перемотати назад"
+  midi_player_play: "Відтворити"
+  midi_player_stop: "Стоп"
+  midi_player_fastforward: "Перемотати вперед"
+
 errors:
   midi_connect_fail: "Не вдалося підключитися до %{name}: %{err}"
   midi_fetch_fail: "Помилка отримання MIDI-пристроїв: %{err}"

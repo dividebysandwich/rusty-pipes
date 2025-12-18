@@ -99,6 +99,9 @@ pub struct AppState {
     pub is_midi_file_playing: bool,
     pub midi_playback_progress: f32,
     pub midi_file_stop_signal: Arc<AtomicBool>,
+    pub midi_current_time_secs: u32,
+    pub midi_total_time_secs: u32,
+    pub midi_seek_tx: Option<Sender<i32>>, // Sends seconds to skip (+15 or -15)
 }
 
 pub fn get_preset_file_path() -> PathBuf {
@@ -148,6 +151,9 @@ impl AppState {
             is_midi_file_playing: false,
             midi_playback_progress: 0.0,
             midi_file_stop_signal: Arc::new(AtomicBool::new(false)),
+            midi_current_time_secs: 0,
+            midi_total_time_secs: 0,
+            midi_seek_tx: None,
         })
     }
     
@@ -318,8 +324,13 @@ impl AppState {
             TuiMessage::TuiNoteOn(note, channel, start_time) => self.handle_tui_note_on(note, channel, start_time),
             TuiMessage::TuiNoteOff(note, channel, end_time) => self.handle_tui_note_off(note, channel, end_time),
             TuiMessage::TuiAllNotesOff => self.handle_tui_all_notes_off(),
-            TuiMessage::MidiProgress(progress) => {
-                self.midi_playback_progress = progress;
+            TuiMessage::MidiProgress(progress_0_to_1, current_time_secs, total_time_secs) => {
+                self.midi_playback_progress = progress_0_to_1;
+                self.midi_current_time_secs = current_time_secs;
+                self.midi_total_time_secs = total_time_secs;
+            },
+            TuiMessage::MidiSeekChannel(tx) => {
+                self.midi_seek_tx = Some(tx);
             },
             TuiMessage::MidiPlaybackFinished => {
                 self.is_midi_file_playing = false;

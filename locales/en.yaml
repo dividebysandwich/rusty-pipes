@@ -63,6 +63,13 @@ gui:
   btn_cancel: "Cancel"
   btn_save: "Save"
 
+  midi_player_label: "MIDI Player"
+  midi_player_nofile: "No file selected"
+  midi_player_rewind: "Rewind"
+  midi_player_play: "Play"
+  midi_player_stop: "Stop"
+  midi_player_fastforward: "Fast Forward"
+
 errors:
   midi_connect_fail: "Failed to connect to %{name}: %{err}"
   midi_fetch_fail: "Error fetching MIDI devices: %{err}"
@@ -164,7 +171,7 @@ config:
   
   # File Picker Titles
   picker_organ: "Select Organ File"
-  picker_midi: "Select MIDI File (Optional)"
+  picker_midi: "Select MIDI File"
 
 loading:
   heading: "Loading Organ Samples..."

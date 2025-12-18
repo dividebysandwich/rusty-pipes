@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Peruuta"
   btn_save: "Tallenna"
 
+  midi_player_label: "MIDI-soitin"
+  midi_player_nofile: "Ei tiedostoa valittu"
+  midi_player_rewind: "Kelaa taaksepäin"
+  midi_player_play: "Toista"
+  midi_player_stop: "Pysäytä"
+  midi_player_fastforward: "Kelaa eteenpäin"
+
 errors:
   midi_connect_fail: "Yhteys laitteeseen %{name} epäonnistui: %{err}"
   midi_fetch_fail: "Virhe haettaessa MIDI-laitteita: %{err}"

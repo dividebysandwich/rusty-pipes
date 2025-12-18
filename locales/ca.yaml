@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Cancel·lar"
   btn_save: "Desar"
 
+  midi_player_label: "Reproductor MIDI"
+  midi_player_nofile: "Cap fitxer seleccionat"
+  midi_player_rewind: "Rebobinar"
+  midi_player_play: "Reproduir"
+  midi_player_stop: "Aturar"
+  midi_player_fastforward: "Avanç Ràpid"
+
 errors:
   midi_connect_fail: "Error en connectar a %{name}: %{err}"
   midi_fetch_fail: "Error en obtenir dispositius MIDI: %{err}"

@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Sguir"
   btn_save: "Sàbhail"
 
+  midi_player_label: "Cluicheadair MIDI"
+  midi_player_nofile: "Cha deach faidhle a thaghadh"
+  midi_player_rewind: "Ais-thaisbein"
+  midi_player_play: "Cluich"
+  midi_player_stop: "Stad"
+  midi_player_fastforward: "Luath-adhart"
+
 errors:
   midi_connect_fail: "Dh'fhàillig an ceangal ri %{name}: %{err}"
   midi_fetch_fail: "Mearachd a' faighinn uidheaman MIDI: %{err}"

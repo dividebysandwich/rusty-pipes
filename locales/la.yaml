@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Cancellare"
   btn_save: "Servare"
 
+  midi_player_label: "Lusor MIDI"
+  midi_player_nofile: "Nulla plica selecta"
+  midi_player_rewind: "Revolvete"
+  midi_player_play: "Ludere"
+  midi_player_stop: "Sistere"
+  midi_player_fastforward: "Provolvete"
+
 errors:
   midi_connect_fail: "Connexio ad %{name} defecit: %{err}"
   midi_fetch_fail: "Error in recipiendo instrumenta MIDI: %{err}"

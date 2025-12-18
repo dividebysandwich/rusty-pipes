@@ -64,6 +64,13 @@ gui:
   btn_cancel: "キャンセル"
   btn_save: "保存"
 
+  midi_player_label: "MIDIプレーヤー"
+  midi_player_nofile: "ファイル未選択"
+  midi_player_rewind: "巻き戻し"
+  midi_player_play: "再生"
+  midi_player_stop: "停止"
+  midi_player_fastforward: "早送り"
+
 errors:
   midi_connect_fail: "%{name} への接続に失敗: %{err}"
   midi_fetch_fail: "MIDIデバイス取得エラー: %{err}"

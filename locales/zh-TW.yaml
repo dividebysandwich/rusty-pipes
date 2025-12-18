@@ -64,6 +64,13 @@ gui:
   btn_cancel: "取消"
   btn_save: "存檔"
 
+  midi_player_label: "MIDI 播放器"
+  midi_player_nofile: "未選擇檔案"
+  midi_player_rewind: "快退"
+  midi_player_play: "播放"
+  midi_player_stop: "停止"
+  midi_player_fastforward: "快轉"
+
 errors:
   midi_connect_fail: "連接到 %{name} 失敗: %{err}"
   midi_fetch_fail: "獲取 MIDI 裝置出錯: %{err}"

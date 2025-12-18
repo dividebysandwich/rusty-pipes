@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Cancelar"
   btn_save: "Guardar"
 
+  midi_player_label: "Reproductor MIDI"
+  midi_player_nofile: "Ningún archivo seleccionado"
+  midi_player_rewind: "Rebobinar"
+  midi_player_play: "Reproducir"
+  midi_player_stop: "Parar"
+  midi_player_fastforward: "Avance Rápido"
+
 errors:
   midi_connect_fail: "Fallo al conectar a %{name}: %{err}"
   midi_fetch_fail: "Error al obtener dispositivos MIDI: %{err}"

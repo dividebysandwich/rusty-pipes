@@ -1,5 +1,6 @@
 use std::time::Instant;
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 
 /// Messages sent from the TUI and MIDI threads to the Audio thread.
 #[derive(Debug)]
@@ -48,8 +49,9 @@ pub enum TuiMessage {
     MidiNoteOff(u8, u8),
     /// (channel)
     MidiChannelNotesOff(u8),
-    MidiProgress(f32),
     MidiPlaybackFinished,
+    MidiProgress(f32, u32, u32),
+    MidiSeekChannel(Sender<i32>),
 }
 
 /// Holds information about a currently playing note.

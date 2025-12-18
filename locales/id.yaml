@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Batal"
   btn_save: "Simpan"
 
+  midi_player_label: "Pemutar MIDI"
+  midi_player_nofile: "Tidak ada file dipilih"
+  midi_player_rewind: "Mundur"
+  midi_player_play: "Putar"
+  midi_player_stop: "Stop"
+  midi_player_fastforward: "Maju Cepat"
+
 errors:
   midi_connect_fail: "Gagal terhubung ke %{name}: %{err}"
   midi_fetch_fail: "Gagal mengambil perangkat MIDI: %{err}"

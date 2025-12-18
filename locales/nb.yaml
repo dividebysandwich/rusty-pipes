@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Avbryt"
   btn_save: "Lagre"
 
+  midi_player_label: "MIDI-spiller"
+  midi_player_nofile: "Ingen fil valgt"
+  midi_player_rewind: "Spol tilbake"
+  midi_player_play: "Spill av"
+  midi_player_stop: "Stopp"
+  midi_player_fastforward: "Spol frem"
+
 errors:
   midi_connect_fail: "Klarte ikke å koble til %{name}: %{err}"
   midi_fetch_fail: "Feil ved henting av MIDI-enheter: %{err}"

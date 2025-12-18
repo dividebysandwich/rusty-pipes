@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Mégse"
   btn_save: "Mentés"
 
+  midi_player_label: "MIDI Lejátszó"
+  midi_player_nofile: "Nincs fájl kiválasztva"
+  midi_player_rewind: "Visszatekerés"
+  midi_player_play: "Lejátszás"
+  midi_player_stop: "Állj"
+  midi_player_fastforward: "Előretekerés"
+
 errors:
   midi_connect_fail: "Sikertelen csatlakozás ehhez: %{name} (%{err})"
   midi_fetch_fail: "Hiba a MIDI eszközök lekérésekor: %{err}"

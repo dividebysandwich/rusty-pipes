@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Cealaigh"
   btn_save: "Sábháil"
 
+  midi_player_label: "Seinnteoir MIDI"
+  midi_player_nofile: "Níl aon chomhad roghnaithe"
+  midi_player_rewind: "Athchasadh"
+  midi_player_play: "Seinn"
+  midi_player_stop: "Stop"
+  midi_player_fastforward: "Mearchasadh"
+
 errors:
   midi_connect_fail: "Theip ar nascadh le %{name}: %{err}"
   midi_fetch_fail: "Earráid ag fáil gléasanna MIDI: %{err}"

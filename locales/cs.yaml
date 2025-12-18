@@ -64,6 +64,13 @@ gui:
   btn_cancel: "Zrušit"
   btn_save: "Uložit"
 
+  midi_player_label: "MIDI přehrávač"
+  midi_player_nofile: "Nebyl vybrán žádný soubor"
+  midi_player_rewind: "Přetočit zpět"
+  midi_player_play: "Přehrát"
+  midi_player_stop: "Stop"
+  midi_player_fastforward: "Přetočit vpřed"
+
 errors:
   midi_connect_fail: "Nepodařilo se připojit k %{name}: %{err}"
   midi_fetch_fail: "Chyba při získávání MIDI zařízení: %{err}"

@@ -63,6 +63,13 @@ gui:
   enter_name_prompt: "输入预设名称:"
   btn_cancel: "取消"
   btn_save: "保存"
+  
+  midi_player_label: "MIDI 播放器"
+  midi_player_nofile: "未选择文件"
+  midi_player_rewind: "快退"
+  midi_player_play: "播放"
+  midi_player_stop: "停止"
+  midi_player_fastforward: "快进"
 
 errors:
   midi_connect_fail: "连接到 %{name} 失败: %{err}"
