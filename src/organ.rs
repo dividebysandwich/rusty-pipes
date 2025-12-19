@@ -6,7 +6,11 @@ use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::fs;
 use serde::Deserialize;
-use quick_xml::de::from_str;
+use std::io::BufReader;
+use std::fs::File;
+use quick_xml::events::{Event, BytesStart};
+use quick_xml::reader::Reader;
+use quick_xml::de::Deserializer;
 use rayon::prelude::*;
 
 use crate::wav_converter;
@@ -108,92 +112,6 @@ struct ConversionTask {
 fn default_string() -> String { "".to_string() }
 fn default_i64() -> i64 { -1 } // -1 for default release
 
-#[derive(Debug, Deserialize, PartialEq)]
-#[serde(rename = "Hauptwerk")]
-struct HauptwerkXml {
-    #[serde(rename = "ObjectList", default)]
-    object_lists: Vec<ObjectList>,
-}
-
-#[derive(Debug, Deserialize, PartialEq)]
-struct ObjectList {
-    #[serde(rename = "@ObjectType")]
-    object_type: String,
-
-    // --- V4 Specific Lists ---
-    #[serde(rename = "Stop", default)]
-    stops: Vec<XmlStop>,
-    #[serde(rename = "Rank", default)]
-    ranks: Vec<XmlRank>,
-    #[serde(rename = "StopRank", default)]
-    stop_ranks: Vec<XmlStopRank>,
-    #[serde(rename = "_General", default)]
-    general: Vec<XmlGeneral>,
-    #[serde(rename = "Pipe_SoundEngine01", default)]
-    pipes: Vec<XmlPipe>,
-    #[serde(rename = "Pipe_SoundEngine01_Layer", default)]
-    layers: Vec<XmlLayer>,
-    #[serde(rename = "Pipe_SoundEngine01_AttackSample", default)]
-    attack_samples: Vec<XmlAttackSample>,
-    #[serde(rename = "Pipe_SoundEngine01_ReleaseSample", default)]
-    release_samples: Vec<XmlReleaseSample>,
-    #[serde(rename = "Sample", default)]
-    samples: Vec<XmlSample>,
-    #[serde(rename = "Division", default)]
-    divisions: Vec<XmlDivision>,
-
-    // --- V7 Generic List ---
-    // V7 puts everything into generic <o> tags
-    #[serde(rename = "o", default)]
-    v7_objects: Vec<XmlV7Object>,
-
-    // Catch-all for other V4 tags to prevent errors
-    #[serde(rename = "Combination", default)]
-    combinations: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "WindCompartmentLinkage", default)]
-    wind_linkages: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "CombinationElement", default)]
-    combination_elements: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "Switch", default)]
-    switches: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "DisplayPage", default)]
-    display_pages: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "Enclosure", default)]
-    enclosures: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "Key", default)]
-    keys: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "Winding", default)]
-    windings: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "ContinuousControl", default)]
-    continuous_controls: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "ContinuousControlImageSetStage", default)]
-    cc_image_set_stages: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "ContinuousControlLinkage", default)]
-    cc_linkages: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "ContinuousControlStageSwitch", default)]
-    cc_stage_switches: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "DivisionInput", default)]
-    division_inputs: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "ImageSet", default)]
-    image_sets: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "ImageSetElement", default)]
-    image_set_elements: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "ImageSetInstance", default)]
-    image_set_instances: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "KeyAction", default)]
-    key_actions: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "KeyImageSet", default)]
-    key_image_sets: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "Keyboard", default)]
-    keyboards: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "RequiredInstallationPackage", default)]
-    req_packages: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "SwitchLinkage", default)]
-    switch_linkages: Vec<serde::de::IgnoredAny>,
-    #[serde(rename = "WindCompartment", default)]
-    wind_compartments: Vec<serde::de::IgnoredAny>
-}
-
 // --- V7 Generic Object ---
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlV7Object {
@@ -210,7 +128,7 @@ struct XmlV7Object {
 
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlDivision {
-    #[serde(rename = "DivisionID", alias = "a")]
+    #[serde(rename = "DivisionID", alias = "a", default = "default_string")]
     id: String,
     #[serde(rename = "Name", alias = "b", default = "default_string")]
     name: String,
@@ -251,13 +169,15 @@ struct XmlRank {
     division_id: String,
 }
 
+fn default_u8() -> u8 { 0 }
+
 #[derive(Debug, Deserialize, PartialEq)]
 struct XmlPipe {
-    #[serde(rename = "PipeID")]
+    #[serde(rename = "PipeID", default = "default_string")]
     id: String,
-    #[serde(rename = "RankID")]
+    #[serde(rename = "RankID", default = "default_string")]
     rank_id: String,
-    #[serde(rename = "NormalMIDINoteNumber")]
+    #[serde(rename = "NormalMIDINoteNumber", default = "default_u8")]
     midi_note: u8,
 }
 
@@ -583,155 +503,279 @@ impl Organ {
     ) -> Result<Self> {
         let logical_path = Self::normalize_path_preserve_symlinks(path)?;
 
+        let file = File::open(&logical_path).with_context(|| format!("Failed to open {:?}", logical_path))?;
+        let mut reader = Reader::from_reader(BufReader::new(file));
+        // Disable text trimming to ensure we don't accidentally break mixed content during reconstruction
+        reader.config_mut().trim_text(false);
+        reader.config_mut().expand_empty_elements = false; 
+
         println!("Loading Hauptwerk organ from: {:?}", logical_path);
         if let Some(tx) = progress_tx { let _ = tx.send((0.0, "Parsing XML...".to_string())); }
-        
-        // Use the logical path to determine the root. 
-        // This ensures "../OrganInstallationPackages" works even if "OrganDefinitions" is a symlink.
+
         let organ_root_path = logical_path.parent().and_then(|p| p.parent())
             .ok_or_else(|| anyhow!("Invalid Hauptwerk file path structure."))?;
-
-        let file_content = Self::read_file_tolerant(&logical_path)?;
         let organ_name = logical_path.file_stem().unwrap_or_default().to_string_lossy().replace(".Organ_Hauptwerk_xml", "");
         let cache_path = Self::get_organ_cache_dir(&organ_name)?;
 
         let mut organ = Organ {
             base_path: organ_root_path.to_path_buf(),
             cache_path: cache_path.clone(),
-            name: organ_name,
+            name: organ_name.clone(),
             sample_cache: if pre_cache { Some(HashMap::new()) } else { None },
             metadata_cache: if pre_cache { Some(HashMap::new()) } else { None },
             ..Default::default()
         };
 
-        // Deserialize the XML
-        log::debug!("Parsing XML file...");
-        let xml_data: HauptwerkXml = from_str(&file_content)
-            .map_err(|e| anyhow!("Failed to parse Hauptwerk XML: {}", e))?;
-
-        // Extract Objects
         let mut xml_stops = Vec::new();
         let mut xml_ranks = Vec::new();
-        let mut xml_pipes = Vec::new();      
+        let mut xml_stop_ranks = Vec::new();
+        let mut xml_pipes = Vec::new();
         let mut xml_layers = Vec::new();
         let mut xml_attack_samples = Vec::new();
         let mut xml_release_samples = Vec::new();
-        let mut xml_stop_ranks = Vec::new();
-        let mut xml_generals = Vec::new();
         let mut xml_samples = Vec::new();
         let mut xml_divisions = Vec::new();
+        let mut organ_defined_name = String::new();
 
-        for list in xml_data.object_lists {
-            match list.object_type.as_str() {
-                "Stop" => {
-                    xml_stops.extend(list.stops);
-                    // V7 Mapping: a=ID, b=Name, c=DivisionID
-                    for o in list.v7_objects {
-                        xml_stops.push(XmlStop {
-                            id: o.a.unwrap_or_default(),
-                            name: o.b.unwrap_or_default(),
-                            division_id: o.c.unwrap_or_default(),
-                        });
+        let mut buf = Vec::new();
+        let mut current_object_type = String::new();
+
+        // Helper to configure deserializer for snippets
+        fn parse_snippet<'a, T: Deserialize<'a>>(xml: &'a str) -> Result<T> {
+            let mut reader = quick_xml::reader::NsReader::from_str(xml);
+            reader.config_mut().trim_text(true);            
+            reader.config_mut().expand_empty_elements = true;
+            let mut deserializer = Deserializer::borrowing(reader);
+            T::deserialize(&mut deserializer).map_err(|e| anyhow::anyhow!("{}", e))
+        }
+
+        // Manually read events until the matching End tag, rebuilding the XML string.
+        // This avoids 'read_to_end' buffer issues.
+        fn read_element_raw(
+            reader: &mut Reader<BufReader<File>>, 
+            start_event: &BytesStart, 
+            tag_name: &[u8]
+        ) -> Result<String> {
+            let mut depth = 1;
+            let mut xml = String::from("<");
+            let name_str = String::from_utf8_lossy(tag_name);
+            xml.push_str(&name_str);
+
+            for attr in start_event.attributes() {
+                let attr = attr?;
+                xml.push(' ');
+                xml.push_str(&String::from_utf8_lossy(attr.key.as_ref()));
+                xml.push_str("=\"");
+                xml.push_str(&String::from_utf8_lossy(&attr.value));
+                xml.push_str("\"");
+            }
+            xml.push('>');
+
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf)? {
+                    Event::Start(e) => {
+                        depth += 1;
+                        xml.push('<');
+                        xml.push_str(&String::from_utf8_lossy(e.name().as_ref()));
+                        for attr in e.attributes() {
+                            let attr = attr?;
+                            xml.push(' ');
+                            xml.push_str(&String::from_utf8_lossy(attr.key.as_ref()));
+                            xml.push_str("=\"");
+                            xml.push_str(&String::from_utf8_lossy(&attr.value));
+                            xml.push_str("\"");
+                        }
+                        xml.push('>');
                     }
-                },
-                "Rank" => {
-                    xml_ranks.extend(list.ranks);
-                    // V7 Mapping: a=ID, b=Name. DivisionID is often not explicit in V7 rank objects.
-                    for o in list.v7_objects {
-                        xml_ranks.push(XmlRank {
-                            id: o.a.unwrap_or_default(),
-                            name: o.b.unwrap_or_default(),
-                            division_id: "".to_string(), // Will be inferred or skipped
-                        });
-                    }
-                },
-                "StopRank" => {
-                    xml_stop_ranks.extend(list.stop_ranks);
-                    // V7 Mapping: a=StopID, d=RankID (observed in V7 schemas)
-                    for o in list.v7_objects {
-                        if let (Some(stop_id), Some(rank_id)) = (o.a, o.d) {
-                            xml_stop_ranks.push(XmlStopRank { stop_id, rank_id });
+                    Event::End(e) => {
+                        depth -= 1;
+                        xml.push_str("</");
+                        xml.push_str(&String::from_utf8_lossy(e.name().as_ref()));
+                        xml.push('>');
+                        if depth == 0 {
+                            return Ok(xml);
                         }
                     }
-                },
-                "_General" => {
-                    xml_generals.extend(list.general);
-                    // _General is usually not minified into <o>, but retains ObjectType="_General" with readable tags.
-                    // The XmlGeneral struct handles aliases (Name vs Identification_Name).
-                },
-                "Pipe_SoundEngine01" => {
-                    xml_pipes.extend(list.pipes);
-                    // V7 Mapping: a=PipeID, b=RankID, d=MidiNote
-                    for o in list.v7_objects {
-                        let midi_note = o.d.as_deref().unwrap_or("0").parse::<u8>().unwrap_or(0);
-                        xml_pipes.push(XmlPipe {
-                            id: o.a.unwrap_or_default(),
-                            rank_id: o.b.unwrap_or_default(),
-                            midi_note,
-                        });
+                    Event::Empty(e) => {
+                        xml.push('<');
+                        xml.push_str(&String::from_utf8_lossy(e.name().as_ref()));
+                        for attr in e.attributes() {
+                            let attr = attr?;
+                            xml.push(' ');
+                            xml.push_str(&String::from_utf8_lossy(attr.key.as_ref()));
+                            xml.push_str("=\"");
+                            xml.push_str(&String::from_utf8_lossy(&attr.value));
+                            xml.push_str("\"");
+                        }
+                        xml.push_str("/>");
                     }
-                },
-                "Pipe_SoundEngine01_Layer" => {
-                    xml_layers.extend(list.layers);
-                    // V7 Mapping: a=LayerID, b=PipeID
-                    for o in list.v7_objects {
-                        xml_layers.push(XmlLayer {
-                            id: o.a.unwrap_or_default(),
-                            pipe_id: o.b.unwrap_or_default(),
-                        });
+                    Event::Text(e) => xml.push_str(&String::from_utf8_lossy(&e)),
+                    Event::CData(e) => {
+                        xml.push_str("<![CDATA[");
+                        xml.push_str(&String::from_utf8_lossy(&e));
+                        xml.push_str("]]>");
                     }
-                },
-                "Pipe_SoundEngine01_AttackSample" => {
-                    xml_attack_samples.extend(list.attack_samples);
-                    // V7 Mapping: b=LayerID, c=SampleID (a is usually just ID)
-                    for o in list.v7_objects {
-                        xml_attack_samples.push(XmlAttackSample {
-                            layer_id: o.b.unwrap_or_default(),
-                            sample_id: o.c.unwrap_or_default(),
-                        });
-                    }
-                },
-                "Pipe_SoundEngine01_ReleaseSample" => {
-                    xml_release_samples.extend(list.release_samples);
-                    // V7 Mapping: b=LayerID, c=SampleID. Time is harder to pin down in V7 minification, defaulting to -1.
-                    for o in list.v7_objects {
-                        xml_release_samples.push(XmlReleaseSample {
-                            layer_id: o.b.unwrap_or_default(),
-                            sample_id: o.c.unwrap_or_default(),
-                            max_key_press_time_ms: -1, 
-                        });
-                    }
-                },
-                "Sample" => {
-                    xml_samples.extend(list.samples);
-                    // V7 Mapping: a=SampleID, b=PackageID, c=Path
-                    for o in list.v7_objects {
-                        xml_samples.push(XmlSample {
-                            id: o.a.unwrap_or_default(),
-                            installation_package_id: o.b.unwrap_or_default(),
-                            path: o.c.unwrap_or_default(),
-                            pitch_exact_sample_pitch: None, // Often omitted in V7 minified
-                            pitch_normal_midi_note_number: None,
-                        });
-                    }
-                },
-                "Division" => {
-                    xml_divisions.extend(list.divisions);
-                    // V7 Mapping: a=ID, b=Name
-                    for o in list.v7_objects {
-                        xml_divisions.push(XmlDivision {
-                            id: o.a.unwrap_or_default(),
-                            name: o.b.unwrap_or_default(),
-                        });
-                    }
-                },
-                _ => {} 
+                    Event::Eof => return Err(anyhow!("Unexpected EOF while reading {}", name_str)),
+                    _ => {} // Ignore comments/decl
+                }
+                buf.clear();
             }
         }
 
-        if let Some(general) = xml_generals.first() {
-            if !general.name.is_empty() { organ.name = general.name.clone(); }
+        // Helper for <Tag ... /> self-closing
+        fn deserialize_empty_item<T: for<'de> Deserialize<'de>>(
+            empty_event: &BytesStart, 
+            tag_name: &[u8]
+        ) -> Result<T> {
+            let mut xml = String::from("<");
+            let name_str = String::from_utf8_lossy(tag_name);
+            xml.push_str(&name_str);
+            for attr in empty_event.attributes() {
+                let attr = attr?;
+                xml.push(' ');
+                xml.push_str(&String::from_utf8_lossy(attr.key.as_ref()));
+                xml.push_str("=\"");
+                xml.push_str(&String::from_utf8_lossy(&attr.value));
+                xml.push_str("\"");
+            }
+            xml.push_str("/>");
+            parse_snippet(&xml).map_err(|e| anyhow::anyhow!("DeError: {} | XML: {}", e, xml))
         }
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) => {
+                    let name = e.name();
+                    let local = name.local_name();
+                    let tag_name = local.as_ref();
+
+                    match tag_name {
+                        b"ObjectList" => {
+                            if let Some(Ok(attr)) = e.attributes().find(|a| a.as_ref().map_or(false, |a| a.key.local_name().as_ref() == b"ObjectType")) {
+                                current_object_type = String::from_utf8_lossy(&attr.value).to_string();
+                            }
+                        },
+                        b"Stop" if current_object_type == "Stop" => {
+                            if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                if let Ok(s) = parse_snippet(&raw) { xml_stops.push(s); }
+                            }
+                        },
+                        b"Rank" if current_object_type == "Rank" => {
+                            if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                if let Ok(r) = parse_snippet(&raw) { xml_ranks.push(r); }
+                            }
+                        },
+                        b"StopRank" if current_object_type == "StopRank" => {
+                            if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                if let Ok(sr) = parse_snippet(&raw) { xml_stop_ranks.push(sr); }
+                            }
+                        },
+                        b"Pipe_SoundEngine01" => {
+                             if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                if let Ok(p) = parse_snippet(&raw) { xml_pipes.push(p); }
+                             }
+                        },
+                        b"Pipe_SoundEngine01_Layer" => {
+                             if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                if let Ok(l) = parse_snippet(&raw) { xml_layers.push(l); }
+                             }
+                        },
+                        b"Pipe_SoundEngine01_AttackSample" => {
+                             if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                if let Ok(a) = parse_snippet(&raw) { xml_attack_samples.push(a); }
+                             }
+                        },
+                        b"Pipe_SoundEngine01_ReleaseSample" => {
+                             if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                if let Ok(r) = parse_snippet(&raw) { xml_release_samples.push(r); }
+                             }
+                        },
+                        b"Sample" => {
+                             if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                match parse_snippet::<XmlSample>(&raw) {
+                                    Ok(s) => xml_samples.push(s),
+                                    Err(e) => eprintln!("Sample Parse Err: {}", e),
+                                }
+                             }
+                        },
+                        b"Division" => {
+                             if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                if let Ok(d) = parse_snippet(&raw) { xml_divisions.push(d); }
+                             }
+                        },
+                        b"General" | b"_General" => {
+                             if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                if let Ok(g) = parse_snippet::<XmlGeneral>(&raw) {
+                                    if !g.name.is_empty() { organ_defined_name = g.name; }
+                                }
+                             }
+                        },
+                        b"o" => {
+                             if let Ok(raw) = read_element_raw(&mut reader, e, tag_name) {
+                                 if let Ok(obj) = parse_snippet::<XmlV7Object>(&raw) {
+                                     match current_object_type.as_str() {
+                                        "Stop" => xml_stops.push(XmlStop { id: obj.a.unwrap_or_default(), name: obj.b.unwrap_or_default(), division_id: obj.c.unwrap_or_default() }),
+                                        "Rank" => xml_ranks.push(XmlRank { id: obj.a.unwrap_or_default(), name: obj.b.unwrap_or_default(), division_id: "".to_string() }),
+                                        "StopRank" => if let (Some(sid), Some(rid)) = (obj.a, obj.d) { xml_stop_ranks.push(XmlStopRank { stop_id: sid, rank_id: rid }) },
+                                        "Pipe_SoundEngine01" => xml_pipes.push(XmlPipe { id: obj.a.unwrap_or_default(), rank_id: obj.b.unwrap_or_default(), midi_note: obj.d.as_deref().unwrap_or("0").parse().unwrap_or(0) }),
+                                        "Pipe_SoundEngine01_Layer" => xml_layers.push(XmlLayer { id: obj.a.unwrap_or_default(), pipe_id: obj.b.unwrap_or_default() }),
+                                        "Pipe_SoundEngine01_AttackSample" => xml_attack_samples.push(XmlAttackSample { layer_id: obj.b.unwrap_or_default(), sample_id: obj.c.unwrap_or_default() }),
+                                        "Pipe_SoundEngine01_ReleaseSample" => xml_release_samples.push(XmlReleaseSample { layer_id: obj.b.unwrap_or_default(), sample_id: obj.c.unwrap_or_default(), max_key_press_time_ms: -1 }),
+                                        "Sample" => xml_samples.push(XmlSample { id: obj.a.unwrap_or_default(), installation_package_id: obj.b.unwrap_or_default(), path: obj.c.unwrap_or_default(), pitch_exact_sample_pitch: None, pitch_normal_midi_note_number: None }),
+                                        "Division" => xml_divisions.push(XmlDivision { id: obj.a.unwrap_or_default(), name: obj.b.unwrap_or_default() }),
+                                        _ => {}
+                                    }
+                                 }
+                             }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    let name = e.name(); 
+                    let local = name.local_name();
+                    let tag_name = local.as_ref();
+
+                    match tag_name {
+                        b"Stop" if current_object_type == "Stop" => { if let Ok(s) = deserialize_empty_item::<XmlStop>(e, tag_name) { xml_stops.push(s); } },
+                        b"Rank" if current_object_type == "Rank" => { if let Ok(r) = deserialize_empty_item::<XmlRank>(e, tag_name) { xml_ranks.push(r); } },
+                        b"StopRank" if current_object_type == "StopRank" => { if let Ok(sr) = deserialize_empty_item::<XmlStopRank>(e, tag_name) { xml_stop_ranks.push(sr); } },
+                        b"Pipe_SoundEngine01" => { if let Ok(p) = deserialize_empty_item::<XmlPipe>(e, tag_name) { xml_pipes.push(p); } },
+                        b"Pipe_SoundEngine01_Layer" => { if let Ok(l) = deserialize_empty_item::<XmlLayer>(e, tag_name) { xml_layers.push(l); } },
+                        b"Pipe_SoundEngine01_AttackSample" => { if let Ok(a) = deserialize_empty_item::<XmlAttackSample>(e, tag_name) { xml_attack_samples.push(a); } },
+                        b"Pipe_SoundEngine01_ReleaseSample" => { if let Ok(r) = deserialize_empty_item::<XmlReleaseSample>(e, tag_name) { xml_release_samples.push(r); } },
+                        b"Sample" => { if let Ok(s) = deserialize_empty_item::<XmlSample>(e, tag_name) { xml_samples.push(s); } },
+                        b"Division" => { if let Ok(d) = deserialize_empty_item::<XmlDivision>(e, tag_name) { xml_divisions.push(d); } },
+                        b"o" => {
+                             if let Ok(obj) = deserialize_empty_item::<XmlV7Object>(e, tag_name) {
+                                 match current_object_type.as_str() {
+                                    "Stop" => xml_stops.push(XmlStop { id: obj.a.unwrap_or_default(), name: obj.b.unwrap_or_default(), division_id: obj.c.unwrap_or_default() }),
+                                    "Rank" => xml_ranks.push(XmlRank { id: obj.a.unwrap_or_default(), name: obj.b.unwrap_or_default(), division_id: "".to_string() }),
+                                    "StopRank" => if let (Some(sid), Some(rid)) = (obj.a, obj.d) { xml_stop_ranks.push(XmlStopRank { stop_id: sid, rank_id: rid }) },
+                                    "Pipe_SoundEngine01" => xml_pipes.push(XmlPipe { id: obj.a.unwrap_or_default(), rank_id: obj.b.unwrap_or_default(), midi_note: obj.d.as_deref().unwrap_or("0").parse().unwrap_or(0) }),
+                                    "Pipe_SoundEngine01_Layer" => xml_layers.push(XmlLayer { id: obj.a.unwrap_or_default(), pipe_id: obj.b.unwrap_or_default() }),
+                                    "Pipe_SoundEngine01_AttackSample" => xml_attack_samples.push(XmlAttackSample { layer_id: obj.b.unwrap_or_default(), sample_id: obj.c.unwrap_or_default() }),
+                                    "Pipe_SoundEngine01_ReleaseSample" => xml_release_samples.push(XmlReleaseSample { layer_id: obj.b.unwrap_or_default(), sample_id: obj.c.unwrap_or_default(), max_key_press_time_ms: -1 }),
+                                    "Sample" => xml_samples.push(XmlSample { id: obj.a.unwrap_or_default(), installation_package_id: obj.b.unwrap_or_default(), path: obj.c.unwrap_or_default(), pitch_exact_sample_pitch: None, pitch_normal_midi_note_number: None }),
+                                    "Division" => xml_divisions.push(XmlDivision { id: obj.a.unwrap_or_default(), name: obj.b.unwrap_or_default() }),
+                                    _ => {}
+                                }
+                             }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => return Err(anyhow!("XML Parse Error: {}", e)),
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        println!("Loaded: {} Stops, {} Ranks, {} StopRanks, {} Pipes", xml_stops.len(), xml_ranks.len(), xml_stop_ranks.len(), xml_pipes.len());
+
+        if !organ_defined_name.is_empty() { organ.name = organ_defined_name; }
 
         // Build Division Map (ID -> Name)
         let mut division_name_map: HashMap<String, String> = HashMap::new();
