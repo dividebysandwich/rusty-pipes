@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::fs;
 use serde::Deserialize;
 use quick_xml::de::from_str;
 use rayon::prelude::*;
@@ -300,10 +301,21 @@ struct XmlReleaseSample {
 
 impl Organ {
 
+
+    /// Reads a file to a String, falling back to Latin-1 (ISO-8859-1) if UTF-8 fails.
+    fn normalize_path_preserve_symlinks(path: &Path) -> Result<PathBuf> {
+        if path.is_absolute() {
+            Ok(path.to_path_buf())
+        } else {
+            // Join with current directory to make absolute, but do NOT call canonicalize()
+            Ok(std::env::current_dir()?.join(path))
+        }
+    }
+
     /// Reads a file to a String, falling back to Latin-1 (ISO-8859-1) if UTF-8 fails.
     fn read_file_tolerant(path: &Path) -> Result<String> {
-        let bytes = std::fs::read(path)
-            .map_err(|e| anyhow!("Failed to read file {:?}: {}", path, e))?;
+        let bytes = fs::read(path)
+            .with_context(|| format!("Failed to read file {:?}", path))?;
 
         match String::from_utf8(bytes) {
             Ok(s) => Ok(s),
@@ -569,15 +581,18 @@ impl Organ {
         target_sample_rate: u32,
         progress_tx: &Option<mpsc::Sender<(f32, String)>>,
     ) -> Result<Self> {
-        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let logical_path = Self::normalize_path_preserve_symlinks(path)?;
 
-        println!("Loading Hauptwerk organ from: {:?}", canonical_path);
+        println!("Loading Hauptwerk organ from: {:?}", logical_path);
         if let Some(tx) = progress_tx { let _ = tx.send((0.0, "Parsing XML...".to_string())); }
         
-        let organ_root_path = canonical_path.parent().and_then(|p| p.parent())
+        // Use the logical path to determine the root. 
+        // This ensures "../OrganInstallationPackages" works even if "OrganDefinitions" is a symlink.
+        let organ_root_path = logical_path.parent().and_then(|p| p.parent())
             .ok_or_else(|| anyhow!("Invalid Hauptwerk file path structure."))?;
-        let file_content = Self::read_file_tolerant(&canonical_path)?;
-        let organ_name = canonical_path.file_stem().unwrap_or_default().to_string_lossy().replace(".Organ_Hauptwerk_xml", "");
+
+        let file_content = Self::read_file_tolerant(&logical_path)?;
+        let organ_name = logical_path.file_stem().unwrap_or_default().to_string_lossy().replace(".Organ_Hauptwerk_xml", "");
         let cache_path = Self::get_organ_cache_dir(&organ_name)?;
 
         let mut organ = Organ {
@@ -1218,7 +1233,7 @@ impl Organ {
         Ok(organ)
     }
 
-        /// Loads and parses a GrandOrgue (.organ) file.
+    /// Loads and parses a GrandOrgue (.organ) file.
     fn load_grandorgue(
         path: &Path, 
         convert_to_16_bit: bool, 
@@ -1227,18 +1242,18 @@ impl Organ {
         target_sample_rate: u32,
         progress_tx: &Option<mpsc::Sender<(f32, String)>>,
     ) -> Result<Self> {
-        let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        println!("Loading GrandOrgue organ from: {:?}", canonical_path);
+        let logical_path = Self::normalize_path_preserve_symlinks(path)?;
+        println!("Loading GrandOrgue organ from: {:?}", logical_path);
         if let Some(tx) = progress_tx { let _ = tx.send((0.0, "Parsing GrandOrgue INI...".to_string())); }
 
-        let base_path = canonical_path.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
+        let base_path = logical_path.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
         
-        let file_content = Self::read_file_tolerant(&canonical_path)?;
+        let file_content = Self::read_file_tolerant(&logical_path)?;
         
         let safe_content = file_content.replace('#', "__HASH__");
         let conf = inistr!(&safe_content);
 
-        let organ_name = canonical_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let organ_name = logical_path.file_stem().unwrap_or_default().to_string_lossy().to_string();
         let cache_path = Self::get_organ_cache_dir(&organ_name)?;
 
         let mut organ = Organ {
