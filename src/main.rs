@@ -21,6 +21,8 @@ mod midi;
 mod midi_control;
 mod midi_recorder;
 mod organ;
+mod organ_grandorgue;
+mod organ_hauptwerk;
 mod tui;
 mod wav;
 mod wav_converter;
