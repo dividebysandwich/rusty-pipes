@@ -2,6 +2,7 @@ use anyhow::{anyhow, Result};
 use ini::inistr;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::fs::canonicalize;
 use std::sync::mpsc;
 
 use crate::wav_converter;
@@ -21,6 +22,25 @@ impl NonEmpty for String {
     }
 }
 
+/// Determine the GrandOrgue organ root directory based on the file path.
+fn detect_grandorgue_root(file_path: &Path) -> Result<PathBuf> {
+    // Try to resolve the file path to its canonical (physical) location.
+    // This handles cases where the definition file (or its parent folder) is a symlink.
+    if let Ok(physical_file) = canonicalize(file_path) {
+        // GrandOrgue paths are relative to the file, so the parent is the root.
+        if let Some(parent) = physical_file.parent() {
+            log::info!("GrandOrgue: Detected physical root at {:?}", parent);
+            return Ok(parent.to_path_buf());
+        }
+    }
+
+    // If canonicalize fails, use the logical parent.
+    let logical_path = Organ::normalize_path_preserve_symlinks(file_path)?;
+    logical_path.parent()
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| anyhow!("Could not determine parent directory for {:?}", file_path))
+}
+
 /// Loads and parses a GrandOrgue (.organ) file.
 pub fn load_grandorgue(
     path: &Path, 
@@ -31,11 +51,12 @@ pub fn load_grandorgue(
     progress_tx: &Option<mpsc::Sender<(f32, String)>>,
 ) -> Result<Organ> {
     let logical_path = Organ::normalize_path_preserve_symlinks(path)?;
+
+    let organ_base_path = detect_grandorgue_root(&path)?;
+
     println!("Loading GrandOrgue organ from: {:?}", logical_path);
     if let Some(tx) = progress_tx { let _ = tx.send((0.0, "Parsing GrandOrgue INI...".to_string())); }
 
-    let base_path = logical_path.parent().ok_or_else(|| anyhow!("Invalid file path"))?;
-    
     // Access helper from Organ
     let file_content = Organ::read_file_tolerant(&logical_path)?;
     
@@ -46,7 +67,7 @@ pub fn load_grandorgue(
     let cache_path = Organ::get_organ_cache_dir(&organ_name)?;
 
     let mut organ = Organ {
-        base_path: base_path.to_path_buf(),
+        base_path: organ_base_path.to_path_buf(),
         cache_path: cache_path.clone(),
         name: organ_name,
         sample_cache: if pre_cache { Some(HashMap::new()) } else { None },

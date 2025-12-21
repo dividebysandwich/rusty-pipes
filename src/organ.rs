@@ -141,7 +141,7 @@ impl Organ {
         Ok(organ)
     }
 
-    /// Reads a file to a String, falling back to Latin-1 (ISO-8859-1) if UTF-8 fails.
+    /// Normalizes a path to an absolute path without resolving symlinks.
     pub fn normalize_path_preserve_symlinks(path: &Path) -> Result<PathBuf> {
         if path.is_absolute() {
             Ok(path.to_path_buf())

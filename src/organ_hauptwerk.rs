@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
-use std::fs::File;
+use std::fs::{File, canonicalize};
 use std::io::BufReader;
 use serde::Deserialize;
 use quick_xml::events::{Event, BytesStart};
@@ -119,7 +119,52 @@ struct XmlReleaseSample {
     sample_id: String,
 }
 
-// Logic
+/// Determine the organ root directory by checking for the existence
+/// of the 'OrganInstallationPackages' sibling directory.
+fn detect_hauptwerk_organ_root(xml_path: &Path) -> Result<PathBuf> {
+    // Helper to validate and resolve the Packages directory
+    let resolve_packages = |root: &Path| -> Option<PathBuf> {
+        let packages_link = root.join("OrganInstallationPackages");
+        if packages_link.exists() {
+            // Resolve the 'OrganInstallationPackages' directory itself.
+            // If it is a symlink, this gets the physical path on the external drive.
+            // If it is a real directory, it gets the absolute path.
+            if let Ok(canonical_packages) = canonicalize(&packages_link) {
+                // We return the parent of the physical packages folder as the true root.
+                return canonical_packages.parent().map(|p| p.to_path_buf());
+            }
+            // Fallback for weird permissions, though unlikely if exists() returned true
+            return Some(root.to_path_buf());
+        }
+        None
+    };
+
+    // Strategy 1: Check relative to the Logical Path
+    let logical_path = Organ::normalize_path_preserve_symlinks(xml_path)?;
+    if let Some(parent) = logical_path.parent() {
+        if let Some(root) = parent.parent() {
+            if let Some(valid_root) = resolve_packages(root) {
+                log::info!("Located sample data root: {:?}", valid_root);
+                return Ok(valid_root);
+            }
+        }
+    }
+
+    // Strategy 2: Check relative to the Canonical Path
+    if let Ok(physical_path) = canonicalize(xml_path) {
+        if let Some(parent) = physical_path.parent() {
+            if let Some(root) = parent.parent() {
+                if let Some(valid_root) = resolve_packages(root) {
+                    log::info!("Located sample data root via canonical path: {:?}", valid_root);
+                    return Ok(valid_root);
+                }
+            }
+        }
+    }
+
+    // Failure: We can't find the data directory.
+    Err(anyhow!("Invalid Hauptwerk file structure. Could not locate 'OrganInstallationPackages' sibling directory for {:?}", xml_path))
+}
 
 /// Loads and parses a Hauptwerk (.Organ_Hauptwerk_xml) file.
 pub fn load_hauptwerk(
@@ -130,19 +175,17 @@ pub fn load_hauptwerk(
     target_sample_rate: u32,
     progress_tx: &Option<mpsc::Sender<(f32, String)>>,
 ) -> Result<Organ> {
-    let logical_path = Organ::normalize_path_preserve_symlinks(path)?;
+    println!("Loading Hauptwerk organ from: {:?}", path);
+    let organ_root_path = detect_hauptwerk_organ_root(path)?;
 
-    let file = File::open(&logical_path).with_context(|| format!("Failed to open {:?}", logical_path))?;
+    let file = File::open(&path).with_context(|| format!("Failed to open {:?}", path))?;
     let mut reader = Reader::from_reader(BufReader::new(file));
     reader.config_mut().trim_text(false);
     reader.config_mut().expand_empty_elements = false; 
 
-    println!("Loading Hauptwerk organ from: {:?}", logical_path);
     if let Some(tx) = progress_tx { let _ = tx.send((0.0, "Parsing XML...".to_string())); }
 
-    let organ_root_path = logical_path.parent().and_then(|p| p.parent())
-        .ok_or_else(|| anyhow!("Invalid Hauptwerk file path structure."))?;
-    let organ_name = logical_path.file_stem().unwrap_or_default().to_string_lossy().replace(".Organ_Hauptwerk_xml", "");
+    let organ_name = path.file_stem().unwrap_or_default().to_string_lossy().replace(".Organ_Hauptwerk_xml", "");
     let cache_path = Organ::get_organ_cache_dir(&organ_name)?;
 
     let mut organ = Organ {
