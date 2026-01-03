@@ -44,37 +44,50 @@ pub fn get_supported_sample_rates(device_name: Option<String>) -> Result<Vec<u32
 
 fn get_cpal_host() -> cpal::Host {
     let available_hosts = cpal::available_hosts();
-    
-    // Debug log to see what cpal actually detected
     let host_names: Vec<_> = available_hosts.iter().map(|id| id.name()).collect();
     log::info!("[Audio] Available Hosts: {:?}", host_names);
 
-    // Define our priority order
-    let priority_order = ["jack", "pulse", "alsa"];
+    let priority_order = ["jack", "alsa"];
 
     for target_name in priority_order {
-        // Find the host ID that matches the current target name
         if let Some(host_id) = available_hosts.iter().find(|id| id.name().to_lowercase().contains(target_name)) {
-            // Try to initialize the host
             if let Ok(host) = cpal::host_from_id(*host_id) {
-                // Try to actually fetch devices. 
+                log::info!("[Audio] Probing Host: {}", host.id().name());
+
                 match host.output_devices() {
-                    Ok(_devices) => {
-                        // Check if we can actually iterate/read the list
-                        log::info!("[Audio] Selected Host: {} (Status: Online)", host.id().name());
-                        return host;
+                    Ok(mut devices) => {
+                        // Get the first device (or fail if none)
+                        if let Some(device) = devices.next() {
+                            // Interrogate the device!
+                            // Merely existing isn't enough. We try to query its supported configurations.
+                            // If the JACK server is down, this call will fail or return an empty iterator.
+                            match device.supported_output_configs() {
+                                Ok(mut configs) => {
+                                    if configs.next().is_some() {
+                                        log::info!("[Audio] Selected Host: {} (Validated)", host.id().name());
+                                        return host;
+                                    } else {
+                                        log::warn!("[Audio] Host '{}' found a device, but it has 0 supported configs. Skipping.", host.id().name());
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("[Audio] Host '{}' device failed config query: {}. Skipping.", host.id().name(), e);
+                                }
+                            }
+                        } else {
+                            log::warn!("[Audio] Host '{}' initialized but found NO devices. Skipping.", host.id().name());
+                        }
                     },
                     Err(e) => {
-                        log::warn!("[Audio] Host found but unusable: {} (Error: {})", host.id().name(), e);
-                        // Continue loop to try next priority
+                        log::warn!("[Audio] Host '{}' failed to list devices: {}. Skipping.", host.id().name(), e);
                     }
                 }
             }
         }
     }
 
-    // Fallback: If no prioritized host works, try the default
-    log::info!("[Audio] All prioritized hosts failed. Falling back to system default.");
+    // Final Fallback
+    log::info!("[Audio] No prioritized hosts were usable. Falling back to system default.");
     cpal::default_host()
 }
 
