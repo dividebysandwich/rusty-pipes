@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleFormat, SampleRate, Stream, StreamConfig};
+use cpal::{Device, SampleFormat, Stream, StreamConfig};
 use ringbuf::traits::{Observer, Consumer, Producer, Split};
 use ringbuf::HeapRb;
 use std::collections::{HashMap, VecDeque};
@@ -23,7 +23,7 @@ use crate::audio_loader::run_loader_job;
 pub fn get_supported_sample_rates(device_name: Option<String>) -> Result<Vec<u32>> {
     let host = get_cpal_host();
     let device = if let Some(name) = device_name {
-        host.output_devices()?.find(|d| d.name().map_or(false, |n| n == name)).ok_or_else(|| anyhow!("Device not found"))?
+        host.output_devices()?.find(|d| d.id().map_or(false, |n| n.to_string() == name)).ok_or_else(|| anyhow!("Device not found"))?
     } else {
         host.default_output_device().ok_or_else(|| anyhow!("No default device"))?
     };
@@ -31,8 +31,8 @@ pub fn get_supported_sample_rates(device_name: Option<String>) -> Result<Vec<u32
     let mut available_rates = Vec::new();
     let standard_rates = [44100, 48000, 88200, 96000, 176400, 192000];
     for config_range in supported_configs {
-        let min = config_range.min_sample_rate().0;
-        let max = config_range.max_sample_rate().0;
+        let min = config_range.min_sample_rate();
+        let max = config_range.max_sample_rate();
         for &rate in &standard_rates {
             if rate >= min && rate <= max && !available_rates.contains(&rate) { available_rates.push(rate); }
         }
@@ -51,7 +51,7 @@ pub fn get_audio_device_names() -> Result<Vec<String>> {
     let host = get_cpal_host();
     let devices = host.output_devices()?;
     let mut names = Vec::new();
-    for device in devices { if let Ok(name) = device.name() { names.push(name); } }
+    for device in devices { if let Ok(name) = device.id() { names.push(name.to_string()); } }
     Ok(names)
 }
 
@@ -59,7 +59,7 @@ pub fn get_audio_device_names() -> Result<Vec<String>> {
 pub fn get_default_audio_device_name() -> Result<Option<String>> {
     let host = get_cpal_host();
     match host.default_output_device() {
-        Some(device) => Ok(Some(device.name()?)),
+        Some(device) => Ok(Some(device.id()?.to_string())),
         None => Ok(None),
     }
 }
@@ -460,7 +460,7 @@ pub fn start_audio_playback(
     let host = get_cpal_host();
     let device: Device = {
         if let Some(name) = audio_device_name {
-            host.output_devices()?.find(|d| d.name().map_or(false, |n| n == name))
+            host.output_devices()?.find(|d| d.id().map_or(false, |n| n.to_string() == name))
                 .ok_or_else(|| anyhow!("Audio device not found: {}. Falling back to default.", name))
                 .or_else(|e| {
                     log::warn!("{}", e);
@@ -471,20 +471,20 @@ pub fn start_audio_playback(
         }
     };
 
-    log::info!("[Cpal] Using output device: {}", device.name().unwrap_or_else(|_| "Unknown".to_string()));
+    log::info!("[Cpal] Using output device: {}", device.id()?.to_string());
 
     let supported_configs = device.supported_output_configs()?;
-    let target_sample_rate = SampleRate(sample_rate);
+    let target_sample_rate = sample_rate;
 
     let config_range = supported_configs
         .filter(|c| c.sample_format() == SampleFormat::F32 && c.channels() >= 2)
         .find(|c| { c.min_sample_rate() <= target_sample_rate && c.max_sample_rate() >= target_sample_rate })
-        .ok_or_else(|| anyhow!("No supported F32 config found for sample rate {}Hz", target_sample_rate.0))?;
+        .ok_or_else(|| anyhow!("No supported F32 config found for sample rate {}Hz", target_sample_rate))?;
     
     let config = config_range.with_sample_rate(target_sample_rate);
     let sample_format = config.sample_format();
     let stream_config: StreamConfig = config.into();
-    let sample_rate = stream_config.sample_rate.0;
+    let sample_rate = stream_config.sample_rate;
     let device_channels = stream_config.channels as usize;
 
     let mix_channels = 2; 

@@ -3,7 +3,11 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write, Cursor};
 use std::path::{Path, PathBuf};
-use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
+use rubato::{
+    Resampler, SincInterpolationType, SincInterpolationParameters, 
+    WindowFunction, Async, FixedAsync, Indexing
+};
+use audioadapter_buffers::direct::InterleavedSlice;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::probe::Hint;
 use symphonia::core::audio::SampleBuffer;
@@ -457,7 +461,7 @@ pub fn process_sample_file(
     let bits_per_sample;
     let channels;
     let is_float;
-    let mut other_chunks: Vec<OtherChunk> = Vec::new(); // Only populated for WAV
+    let mut other_chunks: Vec<OtherChunk> = Vec::new();
 
     let file = File::open(&full_source_path)
         .with_context(|| format!("Failed to open source file: {:?}", full_source_path))?;
@@ -471,22 +475,9 @@ pub fn process_sample_file(
             channels = fmt.num_channels;
             is_float = fmt.audio_format == 3;
             other_chunks = chunks;
-            
-            // Delay reading data until we know we need it? 
-            // For simplicity in this hybrid function, we read it now or re-open later.
-            // Let's re-read later if needed, but we need data to determine if we skip?
-            // Actually we have metadata, we can decide skip now.
-            
-            // We will read input_waves ONLY if we proceed.
-            input_waves = Vec::new(); // Placeholder
+            input_waves = Vec::new(); 
         },
         Err(e) if e.is::<IsWavPackError>() => {
-            // It is WavPack - We use Symphonia to peek metadata first?
-            // process_sample_file usually processes *everything* passed to it if the params differ.
-            // To save IO, we should Peek.
-            // But read_wavpack_file reads everything.
-            // Let's just read it. Processing usually happens once per organ load/update.
-            
             let (rate, ch, bits, float) = peek_wavpack_info(&full_source_path)?;
             sample_rate = rate;
             channels = ch;
@@ -497,24 +488,13 @@ pub fn process_sample_file(
     }
 
     let mut target_bits = if convert_to_16_bit { 16 } else { bits_per_sample };
-    let target_is_float = is_float && !convert_to_16_bit; // If source was float and we don't downgrade
-
-    if target_is_float {
-        target_bits = 32;
-    }
+    let target_is_float = is_float && !convert_to_16_bit; 
+    if target_is_float { target_bits = 32; }
 
     let needs_resample = sample_rate != target_sample_rate || pitch_tuning_cents != 0.0;
     let needs_bit_change = target_bits != bits_per_sample || (is_float && !target_is_float);
-    
-    // If it was WavPack, we MUST process (convert to WAV cache) because our playback engine (cpal callback)
-    // expects the generic `load_sample_as_f32` which handles both, BUT standardizing on WAV cache is good.
-    // Actually, if `load_sample_as_f32` supports WavPack, we don't strictly *need* to convert if parameters match.
-    // BUT: Decoding WavPack is CPU intensive. Caching as raw WAV is better for load times.
-    // So, if source is WavPack, we ALWAYS generate a cache file.
-    
-    let is_source_wavpack = other_chunks.is_empty() && input_waves.is_empty(); // Heuristic: empty chunks & empty input_waves means we took the Peek path
+    let is_source_wavpack = other_chunks.is_empty() && input_waves.is_empty(); 
 
-    // If no processing needed AND it's a standard WAV, return original
     if !needs_resample && !needs_bit_change && !is_source_wavpack {
         return Ok(full_source_path);
     }
@@ -537,7 +517,6 @@ pub fn process_sample_file(
     }
     
     fs::create_dir_all(&parent_in_cache)?;
-
     log::info!("[WavConvert] Processing -> {:?}", cache_full_path.file_name().unwrap_or_default());
 
     // Now we actually read the data
@@ -546,12 +525,6 @@ pub fn process_sample_file(
         let (waves, _, _, _) = read_wavpack_file(&full_source_path)?;
         input_waves = waves;
     } else {
-        // Read Standard WAV
-        // We need to re-open or seek because we moved the reader earlier? 
-        // Actually we consumed the reader in `parse_wav_metadata` loop but passed it by ref.
-        // But `reader` is `BufReader<File>`. `parse_wav_metadata` advanced it.
-        // It's safer/cleaner to re-open to ensure seek state.
-        
         let file = File::open(&full_source_path)?;
         let mut reader = BufReader::new(file);
         let (_, _, data_offset, data_size) = crate::wav::parse_wav_metadata(&mut reader, &full_source_path)?;
@@ -571,6 +544,18 @@ pub fn process_sample_file(
 
     // Process/Resample
     let output_waves = if needs_resample {
+        let num_channels = input_waves.len();
+        let num_input_frames = input_waves[0].len();
+
+        // Interleave input data (rubato works best with interleaved buffers)
+        let mut input_interleaved = Vec::with_capacity(num_input_frames * num_channels);
+        for i in 0..num_input_frames {
+            for ch in 0..num_channels {
+                input_interleaved.push(input_waves[ch][i]);
+            }
+        }
+
+        // Configure Async Resampler
         let params = SincInterpolationParameters {
             sinc_len: 64,
             f_cutoff: 0.95,
@@ -579,51 +564,67 @@ pub fn process_sample_file(
             window: WindowFunction::BlackmanHarris,
         };
 
-        // FIXED: Process in chunks instead of one massive buffer
         let chunk_size = 1024;
-        let mut resampler = SincFixedIn::<f32>::new(
+        let mut resampler = Async::<f32>::new_sinc(
             resample_ratio,
-            1.0,
-            params,
+            1.1, // Max ratio
+            &params,
             chunk_size,
-            input_waves.len(),
-        )?;
+            num_channels,
+            FixedAsync::Input,
+        ).unwrap();
 
-        let num_frames = input_waves[0].len();
-        let num_chunks = (num_frames + chunk_size - 1) / chunk_size;
+        // Prepare Output Buffer
+        let expected_output_frames = (num_input_frames as f64 * resample_ratio).ceil() as usize + chunk_size * 2;
+        let mut output_interleaved = vec![0.0f32; expected_output_frames * num_channels];
+
+        // Create Adapters
+        let input_adapter = InterleavedSlice::new(&input_interleaved, num_channels, num_input_frames)
+            .map_err(|e| anyhow!("Failed to create input adapter: {:?}", e))?;
+        let mut output_adapter = InterleavedSlice::new_mut(&mut output_interleaved, num_channels, expected_output_frames)
+            .map_err(|e| anyhow!("Failed to create output adapter: {:?}", e))?;
+
+        // Process Loop
+        let mut indexing = Indexing {
+            input_offset: 0,
+            output_offset: 0,
+            active_channels_mask: None,
+            partial_len: None,
+        };
         
-        // Pre-allocate output with estimated size
-        let mut result_waves = vec![Vec::with_capacity((num_frames as f64 * resample_ratio).ceil() as usize + chunk_size); input_waves.len()];
-        
-        for i in 0..num_chunks {
-            let start = i * chunk_size;
-            let end = (start + chunk_size).min(num_frames);
-            let actual_len = end - start;
-            
-            // Prepare chunk input (channels -> chunk)
-            let mut chunk_input: Vec<Vec<f32>> = Vec::with_capacity(input_waves.len());
-            
-            for ch in 0..input_waves.len() {
-                // Slice the input
-                let mut channel_chunk = input_waves[ch][start..end].to_vec();
-                // Pad with zeros if this is the last chunk and it's smaller than chunk_size
-                if actual_len < chunk_size {
-                    channel_chunk.resize(chunk_size, 0.0);
-                }
-                chunk_input.push(channel_chunk);
-            }
-            
-            // Process the chunk
-            let chunk_output = resampler.process(&chunk_input, None)?;
-            
-            // Append result
-            for ch in 0..input_waves.len() {
-                result_waves[ch].extend_from_slice(&chunk_output[ch]);
+        let mut input_frames_next = resampler.input_frames_next();
+        let mut input_frames_left = num_input_frames;
+
+        while input_frames_left >= input_frames_next {
+            let (nbr_in, nbr_out) = resampler
+                .process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing))
+                .map_err(|e| anyhow!("Resampling error: {:?}", e))?;
+
+            indexing.input_offset += nbr_in;
+            indexing.output_offset += nbr_out;
+            input_frames_left -= nbr_in;
+            input_frames_next = resampler.input_frames_next();
+        }
+
+        // Process remaining partial chunk
+        if input_frames_left > 0 {
+            indexing.partial_len = Some(input_frames_left);
+            let (_nbr_in, nbr_out) = resampler
+                .process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing))
+                .map_err(|e| anyhow!("Resampling partial error: {:?}", e))?;
+            indexing.output_offset += nbr_out;
+        }
+
+        let total_output_frames = indexing.output_offset;
+
+        // De-interleave back to Planar (Vec<Vec<f32>>) for writing
+        let mut result_waves = vec![Vec::with_capacity(total_output_frames); num_channels];
+        for i in 0..total_output_frames {
+            for ch in 0..num_channels {
+                result_waves[ch].push(output_interleaved[i * num_channels + ch]);
             }
         }
         
-        // Note: The last chunk might have added a tiny bit of silence due to padding, 
-        // but for organ samples (which decay), this is preferable to clicking.
         result_waves
     } else {
         input_waves 
@@ -902,32 +903,70 @@ pub fn try_extract_release_sample(
         1.0
     };
 
+    // Release Resampling
     let output_waves = if needs_resample {
+        let num_channels = sliced_waves.len();
+        let num_input_frames = sliced_waves[0].len();
+
+        // Interleave
+        let mut input_interleaved = Vec::with_capacity(num_input_frames * num_channels);
+        for i in 0..num_input_frames {
+            for ch in 0..num_channels {
+                input_interleaved.push(sliced_waves[ch][i]);
+            }
+        }
+
+        // Setup Async Resampler
         let params = SincInterpolationParameters {
             sinc_len: 64, f_cutoff: 0.95, interpolation: SincInterpolationType::Linear,
             oversampling_factor: 160, window: WindowFunction::BlackmanHarris,
         };
 
-        // Reuse the chunking logic pattern here for safety
         let chunk_size = 1024;
-        let mut resampler = SincFixedIn::<f32>::new(resample_ratio, 1.0, params, chunk_size, sliced_waves.len())?;
+        let mut resampler = Async::<f32>::new_sinc(
+            resample_ratio, 
+            1.1, 
+            &params, 
+            chunk_size, 
+            num_channels, 
+            FixedAsync::Input
+        ).unwrap();
         
-        let num_frames = sliced_waves[0].len();
-        let num_chunks = (num_frames + chunk_size - 1) / chunk_size;
-        let mut result_waves = vec![Vec::new(); sliced_waves.len()];
+        // Output Buffer
+        let expected_output_frames = (num_input_frames as f64 * resample_ratio).ceil() as usize + chunk_size * 2;
+        let mut output_interleaved = vec![0.0f32; expected_output_frames * num_channels];
 
-        for i in 0..num_chunks {
-            let start = i * chunk_size;
-            let end = (start + chunk_size).min(num_frames);
-            let actual_len = end - start;
-            let mut chunk_input = Vec::new();
-            for ch in 0..sliced_waves.len() {
-                let mut c = sliced_waves[ch][start..end].to_vec();
-                if actual_len < chunk_size { c.resize(chunk_size, 0.0); }
-                chunk_input.push(c);
+        // Adapters
+        let input_adapter = InterleavedSlice::new(&input_interleaved, num_channels, num_input_frames).unwrap();
+        let mut output_adapter = InterleavedSlice::new_mut(&mut output_interleaved, num_channels, expected_output_frames).unwrap();
+
+        // Process
+        let mut indexing = Indexing { input_offset: 0, output_offset: 0, active_channels_mask: None, partial_len: None };
+        let mut frames_left = num_input_frames;
+        let mut frames_next = resampler.input_frames_next();
+
+        while frames_left >= frames_next {
+            let (nin, nout) = resampler.process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing)).unwrap();
+            indexing.input_offset += nin;
+            indexing.output_offset += nout;
+            frames_left -= nin;
+            frames_next = resampler.input_frames_next();
+        }
+
+        if frames_left > 0 {
+            indexing.partial_len = Some(frames_left);
+            let (_, nout) = resampler.process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing)).unwrap();
+            indexing.output_offset += nout;
+        }
+
+        let total_out = indexing.output_offset;
+
+        // De-interleave
+        let mut result_waves = vec![Vec::with_capacity(total_out); num_channels];
+        for i in 0..total_out {
+            for ch in 0..num_channels {
+                result_waves[ch].push(output_interleaved[i * num_channels + ch]);
             }
-            let chunk_out = resampler.process(&chunk_input, None)?;
-            for ch in 0..sliced_waves.len() { result_waves[ch].extend_from_slice(&chunk_out[ch]); }
         }
         result_waves
     } else {
