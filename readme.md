@@ -66,5 +66,5 @@ On Arch linux, just run ```yay -S rusty-pipes``` or ```paru -S rusty-pipes``` to
 
 ## Manual and Documentation
 
-Please visit [https://rusty-pipes.com](rusty-pipes.com) for a complete user guide, installation instructions and FAQ.
+Please visit https://rusty-pipes.com for a complete user guide, installation instructions and FAQ.
 
