@@ -350,19 +350,28 @@ impl EguiApp {
     ) {
         self.draw_footer(ctx);
         self.draw_preset_panel(ctx, presets, organ.clone());
-        self.draw_log_and_midi_indicator_panel( // Renamed and simplified call
+        self.draw_log_and_midi_indicator_panel(
             ctx, 
             midi_log, 
             active_notes, 
         );
 
+        // Determine background based on theme
+        let is_dark = ctx.style().visuals.dark_mode;
+        let panel_fill = if is_dark {
+            egui::Color32::from_rgb(30, 30, 30) // Your preferred dark gray
+        } else {
+            ctx.style().visuals.panel_fill // Standard light mode background
+        };
+
         let panel_frame = egui::Frame {
-            fill: egui::Color32::from_rgb(30, 30, 30),
+            fill: panel_fill,
+            inner_margin: egui::Margin::same(10),
             ..Default::default()
         };
 
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
-            ui.heading(organ.name.clone());
+            ui.heading(egui::RichText::new(organ.name.clone()).heading().strong());
             ui.separator();
             
             self.draw_stop_controls(ui, organ.clone());
@@ -380,61 +389,63 @@ impl EguiApp {
         });
     }
     
-#[cfg_attr(feature = "hotpath", hotpath::measure)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn draw_footer(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::bottom("footer").show(ctx, |ui| {
             ui.horizontal(|ui| {
+                // Theme Toggle Button
+                let is_dark = ui.visuals().dark_mode;
+                let theme_icon = if is_dark { "☀" } else { "🌙" };
+
+                if ui.button(theme_icon).clicked() {
+                    if is_dark {
+                        ctx.set_visuals(egui::Visuals::light());
+                    } else {
+                        ctx.set_visuals(egui::Visuals::dark());
+                    }
+                }
+
+                ui.separator();
                 ui.label(t!("gui.footer_tip"));
 
                 // Right-aligned controls
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    
                     let (is_rec_midi, is_rec_audio) = {
                         let state = self.app_state.lock().unwrap();
                         (state.is_recording_midi, state.is_recording_audio)
                     };
 
-                    // Audio Record Button (Visually the Right-most item)
+                    // Use theme's default widget background instead of fixed gray(60)
+                    let default_btn_color = ui.visuals().widgets.inactive.bg_fill;
+
+                    // Audio Record Button
                     let audio_btn_text = if is_rec_audio { t!("gui.rec_wav_stop") } else { t!("gui.rec_wav_start") };
                     let audio_btn = egui::Button::new(audio_btn_text)
-                        .fill(if is_rec_audio { egui::Color32::RED } else { egui::Color32::from_gray(60) });
+                        .fill(if is_rec_audio { egui::Color32::RED } else { default_btn_color });
 
                     if ui.add(audio_btn).clicked() {
                         let new_state = !is_rec_audio;
                         self.app_state.lock().unwrap().is_recording_audio = new_state;
-                        if new_state {
-                            let _ = self.audio_tx.send(AppMessage::StartAudioRecording);
-                        } else {
-                            let _ = self.audio_tx.send(AppMessage::StopAudioRecording);
-                        }
+                        let _ = self.audio_tx.send(if new_state { AppMessage::StartAudioRecording } else { AppMessage::StopAudioRecording });
                     }
 
-                    ui.add_space(5.0); // Spacing between the buttons
+                    ui.add_space(5.0);
 
-                    // MIDI Record Button (Visually to the left of Audio Btn)
+                    // MIDI Record Button
                     let midi_btn_text = if is_rec_midi { t!("gui.rec_midi_stop") } else { t!("gui.rec_midi_start") };
                     let midi_btn = egui::Button::new(midi_btn_text)
-                        .fill(if is_rec_midi { egui::Color32::RED } else { egui::Color32::from_gray(60) });
-                    
+                        .fill(if is_rec_midi { egui::Color32::RED } else { default_btn_color });
+
                     if ui.add(midi_btn).clicked() {
                         let new_state = !is_rec_midi;
                         self.app_state.lock().unwrap().is_recording_midi = new_state;
-                        if new_state {
-                            let _ = self.audio_tx.send(AppMessage::StartMidiRecording);
-                        } else {
-                            let _ = self.audio_tx.send(AppMessage::StopMidiRecording);
-                        }
+                        let _ = self.audio_tx.send(if new_state { AppMessage::StartMidiRecording } else { AppMessage::StopMidiRecording });
                     }
-                    
-                    // Recording Label (Visually to the left of MIDI Btn)
+
                     if is_rec_midi || is_rec_audio {
                         ui.add_space(5.0);
                         ui.label(egui::RichText::new(t!("gui.recording_active")).color(egui::Color32::RED).strong());
                     }
-                    
-                    // Separator (Visually separates the right group from the empty space)
-                    ui.add_space(5.0);
-                    ui.separator();
                 });
             });
         });
@@ -818,26 +829,15 @@ impl EguiApp {
                         let status_btn_size = egui::vec2(ui.available_width(), 30.0);
 
                         if is_underrun {
-                            ui.add_sized(
-                                status_btn_size,
-                                egui::Button::new(
-                                    egui::RichText::new(t!("gui.underrun_alert"))
-                                        .color(egui::Color32::WHITE)
-                                        .strong(),
-                                )
-                                .fill(egui::Color32::RED),
-                            );
+                            ui.add_sized(status_btn_size, egui::Button::new(
+                            egui::RichText::new(t!("gui.underrun_alert")).color(egui::Color32::WHITE).strong(),
+                            ).fill(egui::Color32::RED));
                         } else {
-                            ui.add_sized(
-                                status_btn_size,
-                                egui::Button::new(
-                                    egui::RichText::new(t!("gui.voices_fmt", voices = active_voice_count, poly = polyphony))
-                                        .color(egui::Color32::GREEN)
-                                        .strong(),
-                                )
-                                .fill(egui::Color32::from_gray(40))
-                                .frame(false),
-                            );
+                            // Use the theme's faint background or noninteractive fill
+                            let bg = ui.visuals().widgets.noninteractive.bg_fill;
+                            ui.add_sized(status_btn_size, egui::Button::new(
+                                egui::RichText::new(t!("gui.voices_fmt", voices = active_voice_count, poly = polyphony)).strong(),
+                            ).fill(bg).frame(true)); 
                         }
 
                         ui.add_space(5.0);
@@ -893,7 +893,7 @@ impl EguiApp {
         });
     }
 
-#[cfg_attr(feature = "hotpath", hotpath::measure)]
+    #[cfg_attr(feature = "hotpath", hotpath::measure)]
     fn draw_stop_list_columns(&mut self, ui: &mut egui::Ui, organ: Arc<Organ>, stop_channels: HashMap<usize, BTreeSet<u8>>) {
         let num_cols = 3;
         let stops: Vec<_> = organ.stops.clone();
@@ -902,6 +902,14 @@ impl EguiApp {
             ui.label(t!("gui.no_stops_loaded"));
             return;
         }
+
+        // Theme-aware colors for text and backgrounds
+        let visuals = ui.visuals().clone();
+        let active_text_color = if visuals.dark_mode {
+            egui::Color32::from_rgb(100, 255, 100) // Bright green for dark mode
+        } else {
+            egui::Color32::from_rgb(0, 120, 0)      // Dark forest green for light mode
+        };
 
         // Calculate how many stops go in each column
         let items_per_column = (stops_count + num_cols - 1) / num_cols;
@@ -924,15 +932,14 @@ impl EguiApp {
 
                     ui.vertical(|ui| { 
                         // --- Stop Name ---
-                        let label_text = egui::RichText::new(&stop.name).size(18.0); 
-                        let label_text = if is_active {
-                            label_text.color(egui::Color32::from_rgb(100, 255, 100))
-                        } else {
-                            label_text
-                        };
+                        let mut label_text = egui::RichText::new(&stop.name).size(18.0).heading().strong(); 
+                        
+                        if is_active && !is_selected {
+                            label_text = label_text.color(active_text_color);
+                        }
 
-                        // The .selectable_label will wrap text automatically
                         let response = ui.selectable_label(is_selected, label_text);
+                        // ... (interaction logic remains the same)
                         if response.clicked() {
                             self.selected_stop_index = Some(i);
                             // User clicked, don't auto-scroll
@@ -948,64 +955,57 @@ impl EguiApp {
                             response.scroll_to_me(Some(egui::Align::Center));
                         }
                         
-                        // Toggles (below)
-                        ui.group(|ui| {
-                            let available_width = ui.available_width();
-                            let spacing = ui.spacing().item_spacing.x;
-                            
-                            // We want to fit 16 buttons. 
-                            // Let's assume a minimum comfortable button width (e.g., 20px) plus spacing.
-                            // 16 buttons * 20px + 15 spaces * 4px ≈ 380px.
-                            // If we have less than that, we wrap to 2 rows.
-                            
-                            // Calculate required width for 16 buttons in one row
-                            let min_btn_width = 20.0;
-                            let required_width_single_row = (16.0 * min_btn_width) + (18.0 * spacing);
-
-                            // Add a small buffer (e.g. 10px) to prevent edge-hugging
-                            let is_wide = available_width > (required_width_single_row + 10.0);
-
-                            // Calculate exact button width to fill the space perfectly
-                            let buttons_per_row = if is_wide { 16.0 } else { 8.0 };
-                            let total_spacing = (buttons_per_row - 1.0) * spacing;
-                            let btn_width = (available_width - total_spacing) / buttons_per_row;
-                            
-                            // We use a fixed height (e.g., 20.0) so rows align perfectly
-                            let btn_size = egui::vec2(btn_width, 20.0);
-
-                            // Helper to draw a specific button
-                            let draw_btn = |ui: &mut egui::Ui, chan: u8| {
-                                let is_on = active_channels.contains(&chan);
-                                let text = (chan + 1).to_string();
+                        // Use a background color that contrasts with the main panel
+                        let group_bg = visuals.extreme_bg_color; 
+                        
+                        egui::Frame::group(ui.style())
+                            .fill(group_bg)
+                            .show(ui, |ui| {
+                                let available_width = ui.available_width();
+                                let spacing = ui.spacing().item_spacing.x;
                                 
-                                // add_sized forces the layout to respect our calculated width
-                                if ui.add_sized(
-                                    btn_size, 
-                                    egui::Button::new(text).selected(is_on)
-                                ).clicked() {
-                                    let mut app_state = self.app_state.lock().unwrap();
-                                    if let Err(e) = app_state.toggle_stop_channel(i, chan, &self.audio_tx) {
-                                        app_state.add_midi_log(format!("ERROR: {}", e));
+                                // We want to fit 16 buttons. 
+                                // Let's assume a minimum comfortable button width (e.g., 20px) plus spacing.
+                                // 16 buttons * 20px + 15 spaces * 4px ≈ 380px.
+                                // If we have less than that, we wrap to 2 rows.
+                            
+                                // Calculate required width for 16 buttons in one row
+                                let min_btn_width = 20.0;
+                                let required_width_single_row = (16.0 * min_btn_width) + (18.0 * spacing);
+                                let is_wide = available_width > (required_width_single_row + 10.0);
+                                let buttons_per_row = if is_wide { 16.0 } else { 8.0 };
+                                let btn_width = (available_width - ((buttons_per_row - 1.0) * spacing)) / buttons_per_row;
+                                let btn_size = egui::vec2(btn_width, 20.0);
+
+                                let draw_btn = |ui: &mut egui::Ui, chan: u8| {
+                                    let is_on = active_channels.contains(&chan);
+                                    let text = egui::RichText::new((chan + 1).to_string()).strong();
+                                    
+                                    // Button will automatically use theme primary colors when .selected(true)
+                                    if ui.add_sized(
+                                        btn_size, 
+                                        egui::Button::new(text).selected(is_on)
+                                    ).clicked() {
+                                        let mut app_state = self.app_state.lock().unwrap();
+                                        if let Err(e) = app_state.toggle_stop_channel(i, chan, &self.audio_tx) {
+                                            app_state.add_midi_log(format!("ERROR: {}", e));
+                                        }
                                     }
+                                };
+
+                                if is_wide {
+                                    // Wide screen: One single row of 16 buttons (No gap in middle)
+                                    ui.horizontal(|ui| { for c in 0..16 { draw_btn(ui, c); } });
+                                } else {
+                                    // Narrow screen: Two stacked rows of 8 buttons
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| { for c in 0..8 { draw_btn(ui, c); } });
+                                        ui.horizontal(|ui| { for c in 8..16 { draw_btn(ui, c); } });
+                                    });
                                 }
-                            };
-
-                            if is_wide {
-                                // Wide screen: One single row of 16 buttons (No gap in middle)
-                                ui.horizontal(|ui| {
-                                    for c in 0..16 { draw_btn(ui, c); }
-                                });
-                            } else {
-                                // Narrow screen: Two stacked rows of 8 buttons
-                                ui.vertical(|ui| {
-                                    ui.horizontal(|ui| { for c in 0..8 { draw_btn(ui, c); } });
-                                    ui.horizontal(|ui| { for c in 8..16 { draw_btn(ui, c); } });
-                                });
-                            }
-                        }); 
+                            }); 
                     });
-
-                    ui.add_space(2.0); // Add a small gap between stops
+                    ui.add_space(4.0);
                 }
             }
         });
@@ -1020,47 +1020,42 @@ impl EguiApp {
         ctx: &egui::Context,
         midi_log: &std::collections::VecDeque<String>,
         active_notes: &HashMap<u8, Vec<u8>>,
-    ){
+    ) {
         const LOG_WIDTH: f32 = 300.0;
+        let visuals = ctx.style().visuals.clone();
 
         egui::TopBottomPanel::bottom("bottom_panel")
-        .resizable(true)
-        .default_height(100.0) 
-        .min_height(75.0)
-        .show(ctx, |ui| {
-            
-            let full_rect = ui.available_rect_before_wrap();
-            let split_x = (full_rect.left() + LOG_WIDTH).min(full_rect.right());
-            let (log_rect, indicator_rect) = full_rect.split_left_right_at_x(split_x);
+            .resizable(true)
+            .default_height(100.0)
+            .show(ctx, |ui| {
+                let full_rect = ui.available_rect_before_wrap();
+                let split_x = (full_rect.left() + LOG_WIDTH).min(full_rect.right());
+                let (log_rect, indicator_rect) = full_rect.split_left_right_at_x(split_x);
 
-            // Column 0: Log
-            ui.scope_builder( 
-                UiBuilder{ 
-                    max_rect: Some(log_rect),
-                    layout: Some(egui::Layout::top_down(egui::Align::LEFT)),
-                    ..Default::default()
-                }, |ui| {
-                    
-                egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
-                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap); 
-                    for msg in midi_log {
-                        ui.label(msg);
-                    }
+                // Column 0: Log
+                ui.scope_builder(UiBuilder { max_rect: Some(log_rect), ..Default::default() }, |ui| {
+                    // Use the theme's 'extreme' background for the log area to make it look like a terminal/text box
+                    egui::Frame::canvas(ui.style())
+                        .fill(visuals.extreme_bg_color)
+                        .show(ui, |ui| {
+                            egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                for msg in midi_log {
+                                    // RichText::weak() automatically picks a subtle gray based on light/dark mode
+                                    ui.label(egui::RichText::new(msg).weak());
+                                }
+                            });
+                        });
+                });
+
+                // MIDI Activity Indicator Area
+                ui.scope_builder(UiBuilder { max_rect: Some(indicator_rect), ..Default::default() }, |ui| {
+                    ui.vertical(|ui| {
+                        ui.heading(t!("gui.midi_activity_heading"));
+                        self.draw_midi_indicator(ui, active_notes);
+                    });
                 });
             });
-
-            // MIDI Activity Indicator
-            ui.scope_builder( UiBuilder{ max_rect: Some(indicator_rect), layout: Some(egui::Layout::top_down(egui::Align::LEFT)), ..Default::default()}, |ui| {
-                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                    ui.heading(t!("gui.midi_activity_heading"));
-                    self.draw_midi_indicator( 
-                        ui,
-                        active_notes,
-                    );
-                });
-            });
-        });
-        
     }
 
     #[cfg_attr(feature = "hotpath", hotpath::measure)]

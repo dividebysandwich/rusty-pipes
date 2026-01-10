@@ -210,27 +210,6 @@ impl App for ConfigApp {
                         });
                         ui.end_row();
 
-                        // --- MIDI File ---
-                        ui.label(t!("config.group_midi_file")).on_hover_text(t!("config.tooltip_midi_file"));
-                        ui.horizontal(|ui| {
-                             let midi_text = path_to_str_truncated(self.state.midi_file.as_deref());
-                             let full_path = path_to_str_full(self.state.midi_file.as_deref());
-                             ui.label(midi_text).on_hover_text(full_path);
-
-                            if ui.button(t!("config.btn_browse")).clicked() {
-                                 if let Ok(Some(path)) = gui_filepicker::pick_file(
-                                    &t!("config.picker_midi"),
-                                    &[("MIDI Files", &["mid", "midi"])]
-                                ) {
-                                    self.state.midi_file = Some(path);
-                                }
-                            }
-                            if ui.button(t!("config.btn_clear")).clicked() {
-                                self.state.midi_file = None;
-                            }
-                        });
-                        ui.end_row();
-
                         // --- IR File ---
                         ui.label(t!("config.group_ir_file")).on_hover_text(t!("config.tooltip_ir_file"));
             
@@ -281,9 +260,10 @@ impl App for ConfigApp {
 
                         // --- Polyphony ---
                         ui.label(t!("config.group_polyphony")).on_hover_text(t!("config.tooltip_polyphony"));
-                        ui.add(egui::Slider::new(&mut self.state.settings.polyphony, 1..=1024)
+                        ui.add(egui::Slider::new(&mut self.state.settings.polyphony, 1..=1024*16)
                             .show_value(true)
                             .min_decimals(0)
+                            .logarithmic(true)
                             .text(""));
                         ui.end_row();
 
@@ -299,7 +279,7 @@ impl App for ConfigApp {
                             egui::Slider::new(&mut self.state.settings.max_ram_gb, 0.0..=256.0)
                                 .show_value(true)
                                 .min_decimals(1)
-                                .step_by(1.0)
+                                .step_by(0.1)
                                 .text("")
                         );
                         ui.end_row();
@@ -328,7 +308,6 @@ impl App for ConfigApp {
                 ui.horizontal(|ui| {
 
                     let quit_button_text = egui::RichText::new(t!("config.btn_quit"))
-                        .color(egui::Color32::RED)
                         .text_style(egui::TextStyle::Heading); 
                         
                     let quit_button = ui.add_enabled(
@@ -342,7 +321,6 @@ impl App for ConfigApp {
                     }
 
                     let start_button_text = egui::RichText::new(t!("config.btn_start"))
-                        .color(egui::Color32::GREEN)
                         .text_style(egui::TextStyle::Heading); 
                         
                     let start_button = ui.add_enabled(
