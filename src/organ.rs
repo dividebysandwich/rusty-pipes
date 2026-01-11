@@ -141,7 +141,7 @@ impl Organ {
             organ.run_parallel_precache(target_sample_rate, progress_tx)?;
         } else {
             // Dynamically calculate frame count based on RAM budget
-            organ.preload_attack_samples(target_sample_rate, progress_tx, max_preload_ram_mb)?;
+            organ.preload_attack_samples(target_sample_rate, progress_tx, max_preload_ram_mb, original_tuning)?;
         }
         Ok(organ)
     }
@@ -266,6 +266,7 @@ impl Organ {
         &self, 
         path: &Path, 
         expected_frames: usize,
+        expected_original_tuning: bool,
         progress_tx: &Option<mpsc::Sender<(f32, String)>>
     ) -> Option<HashMap<PathBuf, Arc<Vec<f32>>>> {
         let file = fs::File::open(path).ok()?;
@@ -286,6 +287,16 @@ impl Organ {
         if stored_frames != expected_frames {
             log::info!("[Cache] RAM settings changed (old: {}, new: {}). Invalidating cache.", stored_frames, expected_frames);
             return None; 
+        }
+
+        // Validate Tuning Setting
+        let mut tuning_buf = [0u8; 1];
+        if reader.read_exact(&mut tuning_buf).is_err() { return None; }
+        let stored_tuning = tuning_buf[0] != 0;
+
+        if stored_tuning != expected_original_tuning {
+            log::info!("[Cache] Tuning setting changed (old: {}, new: {}). Invalidating cache.", stored_tuning, expected_original_tuning);
+            return None;
         }
 
         // Read Item Count
@@ -345,12 +356,12 @@ impl Organ {
     }
 
     /// Writes the loaded chunks to a single binary file.
-    /// Optimized for speed using large buffers and zero-copy byte casting (Safe).
     fn save_transient_cache(
         &self, 
         path: &Path, 
         data: &HashMap<PathBuf, Arc<Vec<f32>>>, 
         frames_per_sample: usize,
+        original_tuning: bool, // New parameter
         progress_tx: &Option<mpsc::Sender<(f32, String)>>
     ) -> Result<()> {
         let file = fs::File::create(path)?;
@@ -360,12 +371,14 @@ impl Organ {
         writer.write_all(b"TRNS")?;
         // Write Frames Per Sample
         writer.write_all(&(frames_per_sample as u64).to_le_bytes())?;
-        
+
+        // Config: Tuning (1 byte)
+        writer.write_all(&[if original_tuning { 1u8 } else { 0u8 }])?;
+
         // Write Item Count
         let total_count = data.len();
         writer.write_all(&(total_count as u64).to_le_bytes())?;
 
-        // Write each item
         let mut i = 0;
         for (path_buf, samples) in data {
             let path_str = path_buf.to_string_lossy();
@@ -398,6 +411,7 @@ impl Organ {
         target_sample_rate: u32,
         progress_tx: Option<mpsc::Sender<(f32, String)>>,
         max_preload_ram_mb: usize,
+        original_tuning: bool,
     ) -> Result<()> {
         log::info!("[Cache] Calculating pre-load budget based on {} MB limit...", max_preload_ram_mb);
         
@@ -455,7 +469,7 @@ impl Organ {
 
         if let Ok(cache_path) = &cache_path_result {
             if cache_path.exists() {
-                if let Some(cached_data) = self.load_transient_cache(cache_path, frames_to_preload, &progress_tx) {
+                if let Some(cached_data) = self.load_transient_cache(cache_path, frames_to_preload, original_tuning, &progress_tx) {
                     if let Some(tx) = &progress_tx {
                         let _ = tx.send((1.0, "Loaded from disk cache.".to_string()));
                     }
@@ -494,7 +508,7 @@ impl Organ {
 
             // Save to cache for next time
             if let Ok(cache_path) = &cache_path_result {
-                if let Err(e) = self.save_transient_cache(cache_path, &map, frames_to_preload, &progress_tx) {
+                if let Err(e) = self.save_transient_cache(cache_path, &map, frames_to_preload, original_tuning, &progress_tx) {
                     log::error!("Failed to save transient cache: {}", e);
                 }
             }
