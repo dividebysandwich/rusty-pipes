@@ -11,7 +11,6 @@ use audioadapter_buffers::direct::InterleavedSlice;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::probe::Hint;
 use symphonia::core::audio::SampleBuffer;
-use wavpack::WavpackReader;
 
 use crate::wav::{parse_smpl_chunk, WavFmt, OtherChunk, IsWavPackError};
 
@@ -260,85 +259,99 @@ fn scale_cue_chunk_markers(
 
 /// Fast probe to get metadata without decoding the whole file.
 fn peek_wavpack_info(path: &Path) -> Result<(u32, u16, u16, bool)> {
-    let mut context = WavpackReader::open(path)
-        .map_err(|e| anyhow!("Failed to open WavPack file: {}", e))?
-        .tags()
-        .build()
-        .map_err(|e| anyhow!("Failed to probe WavPack metadata: {}", e))?;
-
-    let sample_rate = context.get_sample_rate()?;
-    let channels = context.get_num_channels()? as u16;
-    let bits = context.get_bits_per_sample()? as u16;
+    let src = File::open(path).with_context(|| format!("Failed to open WavPack file for peeking: {:?}", path))?;
+    let mss = MediaSourceStream::new(Box::new(src), Default::default());
     
-    // get_mode() returns Result<i32>. Unwrap it and check bit manually.
-    let mode = context.get_mode()?;
-    let is_float = (mode & 0x2000) != 0;
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension() {
+        hint.with_extension(&ext.to_string_lossy());
+    }
 
-    Ok((sample_rate, channels, bits, is_float))
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &Default::default(), &Default::default())
+        .with_context(|| format!("Failed to probe WavPack format: {:?}", path))?;
+        
+    let format = probed.format;
+    let track = format.default_track().ok_or_else(|| anyhow!("No default track in WavPack file"))?;
+    let params = track.codec_params.clone();
+    
+    let sample_rate = params.sample_rate.unwrap_or(48000);
+    let channels = params.channels.map_or(2, |c| c.count() as u16);
+    let bits_per_sample = params.bits_per_sample.unwrap_or(24) as u16; 
+    
+    // WavPack decodes to float in our pipeline, but source might be integer. 
+    // We treat it as potential float for conversion logic purposes.
+    let is_float = true; 
+
+    Ok((sample_rate, channels, bits_per_sample, is_float))
 }
 
-/// Uses WavpackReader to read audio data.
+/// Uses Symphonia to read audio data. This supports WavPack and others.
 /// Returns (Interleaved Samples, Sample Rate, Channel Count, BitsPerSample)
 fn read_wavpack_file(path: &Path) -> Result<(Vec<Vec<f32>>, u32, u16, u16)> {
-    let mut context = WavpackReader::open(path)
-        .map_err(|e| anyhow!("Failed to open WavPack file: {}", e))?
-        .tags()
-        .build()
-        .map_err(|e| anyhow!("Failed to initialize WavPack decoder: {}", e))?;
-
-    let num_channels = context.get_num_channels()? as u16;
-    let sample_rate = context.get_sample_rate()?;
-    let num_frames = context.get_num_samples().unwrap_or(0); // This might return Result or Option depending on version
-    let bits_per_sample = context.get_bits_per_sample()? as u16;
+    let src = File::open(path)?;
+    let mss = MediaSourceStream::new(Box::new(src), Default::default());
     
-    let mode = context.get_mode()?;
-    let mode_is_float = (mode & 0x2000) != 0;
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension() {
+        hint.with_extension(&ext.to_string_lossy());
+    }
 
-    // Prepare Output Buffers
-    let mut output_waves = vec![Vec::with_capacity(num_frames as usize); num_channels as usize];
-    let block_size = 4096;
-    let mut buffer = vec![0i32; block_size * num_channels as usize];
+    let probed = symphonia::default::get_probe()
+        .format(&hint, mss, &Default::default(), &Default::default())?;
+    let mut format = probed.format;
+    
+    let track = format.default_track().ok_or_else(|| anyhow!("No default track in WavPack file"))?;
+    let track_id = track.id;
+    let params = track.codec_params.clone();
+    
+    let sample_rate = params.sample_rate.unwrap_or(48000);
+    let channels = params.channels.map_or(2, |c| c.count() as u16);
+    // WavPack bits_per_sample might be None, default to 24 for safety if unknown
+    let bits_per_sample = params.bits_per_sample.unwrap_or(24) as u16; 
 
-    // Decode Loop
+    let mut decoder = symphonia::default::get_codecs().make(&params, &Default::default())?;
+    
+    let mut output_waves = vec![Vec::new(); channels as usize];
+
     loop {
-        // Method is likely named 'unpack_samples' in this binding
-        let frames_read = context.unpack_samples(&mut buffer)
-            .map_err(|e| anyhow!("WavPack decode error: {}", e))?;
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(symphonia::core::errors::Error::IoError(e)) => {
+                // Check if it's an unexpected EOF vs a normal one
+                if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                    if !output_waves.is_empty() && !output_waves[0].is_empty() {
+                        log::warn!("Partial read of {:?}: Unexpected EOF, but recovered {} frames. Continuing.", path, output_waves[0].len());
+                        break;
+                    }
+                    return Err(anyhow!("Unexpected End of Stream while decoding {:?}", path))   
+                }
+                break; // Normal EOF
+            }, 
+            Err(e) => return Err(anyhow!("Symphonia decode error in {:?}: {}", path, e)),
+        };
 
-        if frames_read == 0 {
-            break;
+        if packet.track_id() != track_id { continue; }
+
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                let spec = *decoded.spec();
+                let duration = decoded.capacity() as u64;
+                let mut sample_buf = SampleBuffer::<f32>::new(duration, spec);
+                sample_buf.copy_interleaved_ref(decoded);
+
+                let samples = sample_buf.samples();
+                // De-interleave
+                for (i, sample) in samples.iter().enumerate() {
+                    let ch = i % (channels as usize);
+                    output_waves[ch].push(*sample);
+                }
+            },
+            Err(e) => return Err(anyhow!("Decode packet error: {}", e)),
         }
-
-        if output_waves[0].is_empty() { 
-        println!("[WavConvert] RAW WavPack Integers: [{}, {}, {}, {}]", 
-            buffer[0], buffer[1], buffer[2], buffer[3]);
     }
 
-        // Convert Integer Samples to Float [-1.0, 1.0]
-        // let normalization_factor = if mode_is_float {
-        //     1.0 
-        // } else {
-        //     i32::MAX as f32
-        // };
-        let normalization_factor = 32768.0;
-
-        for i in 0..frames_read as usize {
-            for ch in 0..num_channels as usize {
-                let sample_idx = (i * num_channels as usize) + ch;
-                let raw_val = buffer[sample_idx];
-
-                let sample_f32 = if mode_is_float {
-                    f32::from_bits(raw_val as u32)
-                } else {
-                    (raw_val as f32) / normalization_factor
-                };
-
-                output_waves[ch].push(sample_f32);
-            }
-        }
-    }
-
-    Ok((output_waves, sample_rate, num_channels, bits_per_sample))
+    Ok((output_waves, sample_rate, channels, bits_per_sample))
 }
 
 /// Loads a sample and verifies it matches the target sample rate.

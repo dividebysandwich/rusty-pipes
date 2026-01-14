@@ -32,15 +32,15 @@ serde_json = "1.0.149"
 quick-xml = { version = "0.39", features = ["serde", "serialize"] }
 eframe = "0.33.3"
 egui = "0.33.3"
-rfd = "0.17.1"
+rfd = "0.17.2"
 confy = "2.0"
 dirs = "6.0"
-hotpath = { version = "0.9.2", optional = true }
+hotpath = { version = "0.9.3", optional = true }
 rayon = "1.11"
 symphonia = { version = "0.5", features = ["wav"] }
 sys-locale = "0.3.2"
 open = "5.3.3"
-chrono = "0.4"
+chrono = "0.4.43"
 actix-web = "4"
 utoipa = { version = "5.4", features = ["actix_extras"] }
 utoipa-swagger-ui = { version = "9.0", features = ["actix-web"] }
@@ -48,9 +48,8 @@ rust-i18n = "3"
 audioadapter = "2.0"
 audioadapter-buffers = "2.0"
 bytemuck = "1.24.0"
-zip = "7.0"
+zip = "7.1"
 walkdir = "2.5"
-wavpack = "0.4.0"
 
 [features]
 hotpath = ["dep:hotpath", "hotpath/hotpath"]
