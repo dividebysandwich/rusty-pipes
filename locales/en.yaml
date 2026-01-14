@@ -283,3 +283,10 @@ tui:
   no_stops: "No stops loaded."
   midi_log_title: "MIDI Log"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Organ Manager"
+  button: "Manage Organs"
+  description: "Manage your installed virtual pipe organs and learn SYSEX commands to switch between them."
+  add_organ: "Add Organ"
+  load: "Load Organ"

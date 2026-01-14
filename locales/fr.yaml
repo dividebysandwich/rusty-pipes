@@ -269,3 +269,10 @@ tui:
   no_stops: "Aucun jeu chargé."
   midi_log_title: "Journal MIDI"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Gestionnaire d'Orgues"
+  button: "Gérer les Orgues"
+  description: "Gérez vos orgues virtuels installés et apprenez les commandes SYSEX pour basculer entre eux."
+  add_organ: "Ajouter un Orgue"
+  load: "Charger l'Orgue"

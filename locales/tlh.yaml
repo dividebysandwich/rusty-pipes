@@ -269,3 +269,10 @@ tui:
   no_stops: "Dol lI'be'."
   midi_log_title: "MIDI QIn"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "'o'rghan vu'wI'"
+  button: "'o'rghanmey vu'"
+  description: "'o'rghanmeylIj yIvu' 'ej SYSEX ra'mey yIghoj."
+  add_organ: "'o'rghan chel"
+  load: "'o'rghan lI'"

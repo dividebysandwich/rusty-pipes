@@ -269,3 +269,10 @@ tui:
   no_stops: "Nenhum registro carregado."
   midi_log_title: "Log MIDI"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Gerenciador de Órgãos"
+  button: "Gerenciar Órgãos"
+  description: "Gerencie seus órgãos virtuais instalados e aprenda comandos SYSEX para alternar entre eles."
+  add_organ: "Adicionar Órgão"
+  load: "Carregar Órgão"

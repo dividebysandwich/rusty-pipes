@@ -269,3 +269,10 @@ tui:
   no_stops: "Nu sunt registre încărcate."
   midi_log_title: "Jurnal MIDI"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Manager Orgi"
+  button: "Gestionează Orgile"
+  description: "Gestionați orgile virtuale instalate și învățați comenzi SYSEX pentru a comuta între ele."
+  add_organ: "Adaugă Orgă"
+  load: "Încarcă Orgă"

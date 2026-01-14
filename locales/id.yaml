@@ -269,3 +269,10 @@ tui:
   no_stops: "Tidak ada stop dimuat."
   midi_log_title: "Log MIDI"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Manajer Organ"
+  button: "Kelola Organ"
+  description: "Kelola organ pipa virtual yang terinstal dan pelajari perintah SYSEX untuk beralih di antaranya."
+  add_organ: "Tambah Organ"
+  load: "Muat Organ"

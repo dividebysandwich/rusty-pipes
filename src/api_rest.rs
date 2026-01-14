@@ -1,14 +1,41 @@
 use actix_web::{web, App, HttpResponse, HttpServer, Responder};
+use actix_web::dev::ServerHandle;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Sender};
 use std::path::PathBuf;
+use std::thread;
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::app_state::AppState;
 use crate::app::AppMessage;
 use crate::config;
+
+/// A handle that controls the lifecycle of the API Server.
+/// When this struct is dropped, the server shuts down and the background thread exits.
+pub struct ApiServerHandle {
+    handle: ServerHandle,
+}
+
+impl Drop for ApiServerHandle {
+    fn drop(&mut self) {
+        println!("Stopping API Server...");
+        let handle = self.handle.clone();
+        
+        // Actix's stop() method is async, but Drop is sync.
+        // We spawn a temporary thread with a minimal runtime just to await the stop signal.
+        thread::spawn(move || {
+            let sys = actix_web::rt::System::new();
+            sys.block_on(async {
+                // stop(true) means graceful shutdown (finish processing current requests)
+                log::info!("Shutting down API server...");
+                handle.stop(true).await;
+                log::info!("API server shut down complete.");
+            });
+        });
+    }
+}
 
 // --- Data Models ---
 
@@ -474,8 +501,11 @@ pub fn start_api_server(
     app_state: Arc<Mutex<AppState>>,
     audio_tx: Sender<AppMessage>,
     port: u16
-) {
+) -> ApiServerHandle{
     let reverb_files = Arc::new(config::get_available_ir_files());
+
+    // Create a channel to send the ServerHandle from the background thread back to here
+    let (tx, rx) = mpsc::channel();
 
     std::thread::spawn(move || {
         let sys = actix_web::rt::System::new();
@@ -522,14 +552,21 @@ pub fn start_api_server(
         .bind(("0.0.0.0", port));
 
         match server {
-            Ok(srv) => {
+            Ok(bound_server) => {
                 println!("REST API server listening on http://0.0.0.0:{}", port);
                 println!("Swagger UI available at http://0.0.0.0:{}/swagger-ui/", port);
-                if let Err(e) = sys.block_on(srv.run()) {
+                let server = bound_server.run();
+                let handle = server.handle();
+                let _ = tx.send(handle);
+                if let Err(e) = sys.block_on(server) {
                     eprintln!("API Server Error: {}", e);
                 }
             },
             Err(e) => eprintln!("Failed to bind API server to port {}: {}", port, e),
         }
     });
+    // Wait for the server to start up and give us the handle
+    let handle = rx.recv().expect("Failed to start API server or receive handle");
+
+    ApiServerHandle { handle }
 }

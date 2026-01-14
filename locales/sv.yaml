@@ -269,3 +269,10 @@ tui:
   no_stops: "Inga register laddade."
   midi_log_title: "MIDI Logg"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Orgelhanterare"
+  button: "Hantera Orglar"
+  description: "Hantera dina installerade virtuella orglar och lär dig SYSEX-kommandon för att växla mellan dem."
+  add_organ: "Lägg till Orgel"
+  load: "Ladda Orgel"

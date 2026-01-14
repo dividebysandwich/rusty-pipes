@@ -1,11 +1,13 @@
 use anyhow::Result;
 use midir::{MidiInput, MidiInputPort};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::fs;
 
-use crate::audio::{get_audio_device_names, get_default_audio_device_name, get_supported_sample_rates};
+use crate::audio::{
+    get_audio_device_names, get_default_audio_device_name, get_supported_sample_rates,
+};
 use crate::input::KeyboardLayout;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -35,7 +37,7 @@ impl Default for MidiDeviceConfig {
             mapping_mode: MidiMappingMode::Simple,
             simple_target_channel: 0,
             // Default 1:1 mapping (0->0, 1->1, etc.)
-            complex_mapping: std::array::from_fn(|i| i as u8), 
+            complex_mapping: std::array::from_fn(|i| i as u8),
         }
     }
 }
@@ -57,7 +59,7 @@ pub struct AppSettings {
     pub audio_device_name: Option<String>,
     pub sample_rate: u32,
     pub keyboard_layout: KeyboardLayout,
-    #[serde(default)] 
+    #[serde(default)]
     pub midi_devices: Vec<MidiDeviceConfig>,
 }
 
@@ -74,7 +76,7 @@ impl Default for AppSettings {
             convert_to_16bit: false,
             original_tuning: false,
             tui_mode: false, // Default to GUI
-            gain: 0.4, // Conservative default gain
+            gain: 0.4,       // Conservative default gain
             polyphony: 128,
             audio_device_name: None,
             sample_rate: 48000,
@@ -122,22 +124,49 @@ pub fn save_settings(settings: &AppSettings) -> Result<()> {
 /// Helper to get the Reverb directory, creating it if it doesn't exist.
 pub fn get_reverb_directory() -> Result<PathBuf> {
     let config_path = confy::get_configuration_file_path("rusty-pipes", "settings")?;
-    let parent = config_path.parent().ok_or_else(|| anyhow::anyhow!("No config parent dir"))?;
+    let parent = config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("No config parent dir"))?;
     let reverb_dir = parent.join("reverb");
-    
+
     if !reverb_dir.exists() {
         fs::create_dir_all(&reverb_dir)?;
     }
     Ok(reverb_dir)
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct OrganProfile {
+    pub name: String,
+    pub path: PathBuf,
+    /// MIDI SysEx command bytes that trigger loading this organ.
+    /// We use a hex string for easier JSON editing/viewing, but store as Vec codes in runtime if needed.
+    #[serde(default)]
+    pub sysex_id: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct OrganLibrary {
+    pub organs: Vec<OrganProfile>,
+}
+
+pub fn load_organ_library() -> Result<OrganLibrary> {
+    let lib: OrganLibrary = confy::load("rusty-pipes", "organ_library")?;
+    Ok(lib)
+}
+
+pub fn save_organ_library(lib: &OrganLibrary) -> Result<()> {
+    confy::store("rusty-pipes", "organ_library", lib)?;
+    Ok(())
+}
+
 /// Scans the reverb directory for supported audio files.
 /// Returns a vector of (Display Name, PathBuf).
 pub fn get_available_ir_files() -> Vec<(String, PathBuf)> {
     let mut files = Vec::new();
-    
+
     // Add "None" option logic implicitly, but here we just list files.
-    
+
     if let Ok(dir) = get_reverb_directory() {
         if let Ok(entries) = fs::read_dir(dir) {
             for entry in entries.flatten() {
@@ -146,7 +175,8 @@ pub fn get_available_ir_files() -> Vec<(String, PathBuf)> {
                     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                         match ext.to_lowercase().as_str() {
                             "wav" | "flac" | "mp3" => {
-                                let name = path.file_stem()
+                                let name = path
+                                    .file_stem()
                                     .and_then(|s| s.to_str())
                                     .unwrap_or("Unknown")
                                     .to_string();
@@ -159,7 +189,7 @@ pub fn get_available_ir_files() -> Vec<(String, PathBuf)> {
             }
         }
     }
-    
+
     // Sort alphabetically by name
     files.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
     files
@@ -169,7 +199,7 @@ pub fn get_available_ir_files() -> Vec<(String, PathBuf)> {
 pub struct ConfigState {
     pub settings: AppSettings,
     pub midi_file: Option<PathBuf>,
-    
+
     // List of currently connected system ports: (Port, Name)
     pub system_midi_ports: Vec<(MidiInputPort, String)>,
 
@@ -183,7 +213,10 @@ pub struct ConfigState {
 }
 
 impl ConfigState {
-    pub fn new(mut settings: AppSettings, midi_input_arc: &Arc<Mutex<Option<MidiInput>>>) -> Result<Self> {
+    pub fn new(
+        mut settings: AppSettings,
+        midi_input_arc: &Arc<Mutex<Option<MidiInput>>>,
+    ) -> Result<Self> {
         let mut error_msg = None;
 
         let mut system_midi_ports = Vec::new();
@@ -192,7 +225,7 @@ impl ConfigState {
             for port in midi_in.ports() {
                 if let Ok(name) = midi_in.port_name(&port) {
                     system_midi_ports.push((port, name.clone()));
-                    
+
                     // Sync settings with detected ports.
                     // If a detected port is not in settings, add it (disabled by default).
                     if !settings.midi_devices.iter().any(|d| d.name == name) {
@@ -205,7 +238,7 @@ impl ConfigState {
                 }
             }
         } else {
-             error_msg = Some("Failed to initialize MIDI.".to_string());
+            error_msg = Some("Failed to initialize MIDI.".to_string());
         }
 
         let mut available_audio_devices = Vec::new();
@@ -243,7 +276,8 @@ impl ConfigState {
         // If still None, it will just be "Default" in the UI (which is None)
 
         // Get available sample rates for the selected audio device
-        let available_sample_rates = get_supported_sample_rates(selected_audio_device_name.clone()).unwrap_or_else(|_| vec![44100, 48000]);
+        let available_sample_rates = get_supported_sample_rates(selected_audio_device_name.clone())
+            .unwrap_or_else(|_| vec![44100, 48000]);
 
         // If the current setting (e.g. default 48000) is not supported by the device,
         // auto-select the best available one.

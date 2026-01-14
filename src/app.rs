@@ -1,6 +1,6 @@
-use std::time::Instant;
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
+use std::time::Instant;
 
 /// Messages sent from the TUI and MIDI threads to the Audio thread.
 #[derive(Debug)]
@@ -25,6 +25,14 @@ pub enum AppMessage {
     StopMidiRecording,
     /// TUI quit event.
     Quit,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, PartialEq, Clone)]
+pub enum MainLoopAction {
+    Continue,
+    Exit,
+    ReloadOrgan { file: PathBuf },
 }
 
 /// Messages sent from other threads (like MIDI) to the TUI thread.
@@ -52,6 +60,7 @@ pub enum TuiMessage {
     MidiPlaybackFinished,
     MidiProgress(f32, u32, u32),
     MidiSeekChannel(Sender<i32>),
+    MidiSysEx(Vec<u8>),
 }
 
 /// Holds information about a currently playing note.

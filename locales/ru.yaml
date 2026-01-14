@@ -269,3 +269,10 @@ tui:
   no_stops: "Регистры не загружены."
   midi_log_title: "Журнал MIDI"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Менеджер органов"
+  button: "Управление органами"
+  description: "Управляйте установленными виртуальными органами и изучайте команды SYSEX для переключения между ними."
+  add_organ: "Добавить орган"
+  load: "Загрузить орган"

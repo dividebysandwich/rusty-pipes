@@ -1,14 +1,14 @@
 use anyhow::Result;
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, TryRecvError};
-use std::path::PathBuf;
+use midir::{MidiInput, MidiInputPort};
+use midly::{MetaMessage, MidiMessage as MidlyMidiMessage, Smf, TrackEventKind};
 use std::fs;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
-use midly::{Smf, TrackEventKind, MetaMessage, MidiMessage as MidlyMidiMessage};
-use midir::{MidiInput, MidiInputPort};
 
 use crate::app::TuiMessage;
 use crate::config::{MidiDeviceConfig, MidiMappingMode};
@@ -41,18 +41,25 @@ pub fn connect_to_midi(
     config: MidiDeviceConfig,
     shared_recorder: Arc<Mutex<Option<MidiRecorder>>>,
 ) -> Result<midir::MidiInputConnection<()>> {
-    
     let tx_clone = tui_tx.clone();
     let name_clone = device_name.to_string();
 
-    midi_input.connect(
-        port, 
-        device_name, 
-        move |_, message, _| {
-            process_live_midi_message(message, &tx_clone, &config, &name_clone, &shared_recorder);
-        }, 
-        ()
-    ).map_err(|e| anyhow::anyhow!("Failed to connect to MIDI device {}: {}", device_name, e))
+    midi_input
+        .connect(
+            port,
+            device_name,
+            move |_, message, _| {
+                process_live_midi_message(
+                    message,
+                    &tx_clone,
+                    &config,
+                    &name_clone,
+                    &shared_recorder,
+                );
+            },
+            (),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to connect to MIDI device {}: {}", device_name, e))
 }
 
 /// Processes raw MIDI bytes, applies channel mapping, and sends events to the App.
@@ -64,12 +71,17 @@ fn process_live_midi_message(
     shared_recorder: &Arc<Mutex<Option<MidiRecorder>>>,
 ) {
     if message.len() < 3 {
-        return; 
+        return;
     }
 
     let status = message[0];
-    // Ignore system real-time messages (0xF8-0xFF) and Sysex for now
-    if status >= 0xF0 {
+    // Ignore system real-time messages (0xF8-0xFF)
+    if status >= 0xF8 {
+        return;
+    }
+
+    if status == 0xF0 {
+        let _ = tui_tx.send(TuiMessage::MidiSysEx(message.to_vec()));
         return;
     }
 
@@ -81,7 +93,11 @@ fn process_live_midi_message(
         MidiMappingMode::Simple => config.simple_target_channel,
         MidiMappingMode::Complex => {
             // Safety check for array bounds (0-15)
-            config.complex_mapping.get(raw_channel as usize).cloned().unwrap_or(raw_channel)
+            config
+                .complex_mapping
+                .get(raw_channel as usize)
+                .cloned()
+                .unwrap_or(raw_channel)
         }
     };
 
@@ -94,7 +110,7 @@ fn process_live_midi_message(
 
     // Reconstruct the status byte with the new channel
     let new_status = msg_type | (target_channel & 0x0F);
-    
+
     // Create new message buffer
     let mut mapped_message = Vec::with_capacity(message.len());
     mapped_message.push(new_status);
@@ -108,14 +124,20 @@ fn process_live_midi_message(
 fn parse_and_send(message: &[u8], tui_tx: &Sender<TuiMessage>, channel: u8) {
     let now = Instant::now();
     let status = message[0];
-    
+
     match status & 0xF0 {
-        0x90 => { // Note On
+        0x90 => {
+            // Note On
             let note = message[1];
             let velocity = message[2];
             if velocity > 0 {
                 let note_name = midi_note_to_name(note);
-                let log_msg = format!("Note On: {} (Ch {}, Vel {})", note_name, channel + 1, velocity);
+                let log_msg = format!(
+                    "Note On: {} (Ch {}, Vel {})",
+                    note_name,
+                    channel + 1,
+                    velocity
+                );
                 let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
                 let _ = tui_tx.send(TuiMessage::MidiNoteOn(note, velocity, channel));
                 let _ = tui_tx.send(TuiMessage::TuiNoteOn(note, channel, now));
@@ -127,24 +149,27 @@ fn parse_and_send(message: &[u8], tui_tx: &Sender<TuiMessage>, channel: u8) {
                 let _ = tui_tx.send(TuiMessage::MidiNoteOff(note, channel));
                 let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, channel, now));
             }
-        },
-        0x80 => { // Note Off
+        }
+        0x80 => {
+            // Note Off
             let note = message[1];
             let note_name = midi_note_to_name(note);
             let log_msg = format!("Note Off: {} (Ch {})", note_name, channel + 1);
             let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
             let _ = tui_tx.send(TuiMessage::MidiNoteOff(note, channel));
             let _ = tui_tx.send(TuiMessage::TuiNoteOff(note, channel, now));
-        },
-        0xB0 => { // Control Change
+        }
+        0xB0 => {
+            // Control Change
             let controller = message[1];
-            if controller == 123 { // All Notes Off
+            if controller == 123 {
+                // All Notes Off
                 let log_msg = format!("All Off (Ch {})", channel + 1);
                 let _ = tui_tx.send(TuiMessage::MidiLog(log_msg));
                 let _ = tui_tx.send(TuiMessage::MidiChannelNotesOff(channel));
                 let _ = tui_tx.send(TuiMessage::TuiAllNotesOff);
             }
-        },
+        }
         _ => {}
     }
 }
@@ -153,7 +178,7 @@ fn parse_and_send(message: &[u8], tui_tx: &Sender<TuiMessage>, channel: u8) {
 fn get_midi_duration_seconds(smf: &Smf) -> f64 {
     let mut duration = 0.0;
     let mut micros_per_quarter = 500_000.0;
-    
+
     let tpqn = match smf.header.timing {
         midly::Timing::Metrical(t) => t.as_int() as f64,
         _ => return 0.0,
@@ -185,7 +210,7 @@ fn get_midi_duration_seconds(smf: &Smf) -> f64 {
 
         let event = tracks[idx].next().unwrap();
         track_next_tick[idx] = next_event_tick;
-        
+
         let delta_ticks = next_event_tick - global_ticks;
         global_ticks = next_event_tick;
 

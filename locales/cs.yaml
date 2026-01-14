@@ -269,3 +269,10 @@ tui:
   no_stops: "Žádné rejstříky načteny."
   midi_log_title: "MIDI Log"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Správce varhan"
+  button: "Spravovat varhany"
+  description: "Spravujte své nainstalované virtuální varhany a naučte se SYSEX příkazy pro přepínání mezi nimi."
+  add_organ: "Přidat varhany"
+  load: "Načíst varhany"

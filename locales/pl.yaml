@@ -269,3 +269,10 @@ tui:
   no_stops: "Brak wczytanych rejestrów."
   midi_log_title: "Dziennik MIDI"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Menedżer Organów"
+  button: "Zarządzaj Organami"
+  description: "Zarządzaj zainstalowanymi wirtualnymi organami i poznaj polecenia SYSEX do przełączania między nimi."
+  add_organ: "Dodaj Organy"
+  load: "Wczytaj Organy"

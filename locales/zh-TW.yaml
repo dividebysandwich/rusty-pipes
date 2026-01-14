@@ -269,3 +269,10 @@ tui:
   no_stops: "未載入音栓。"
   midi_log_title: "MIDI 日誌"
   piano_roll_title: "鋼琴捲簾 (Piano Roll)"
+
+organ_manager:
+  title: "管風琴管理器"
+  button: "管理管風琴"
+  description: "管理已安裝的虛擬管風琴，並學習用於切換它們的 SYSEX 命令。"
+  add_organ: "新增管風琴"
+  load: "載入管風琴"

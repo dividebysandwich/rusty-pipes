@@ -1,23 +1,23 @@
+use crate::{
+    app::{AppMessage, TuiMessage},
+    config::{MidiDeviceConfig, load_settings, save_settings},
+    input::KeyboardLayout,
+    midi,
+    midi_control::{MidiControlMap, MidiEventSpec},
+    midi_recorder::MidiRecorder,
+    organ::Organ,
+};
 use anyhow::Result;
-use midir::{MidiInput, MidiInputPort, MidiInputConnection};
+use midir::{MidiInput, MidiInputConnection, MidiInputPort};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     fs::File,
     io::{BufReader, BufWriter},
     path::PathBuf,
-    sync::{mpsc::Sender, Arc, Mutex},
     sync::atomic::{AtomicBool, Ordering},
+    sync::{Arc, Mutex, mpsc::Sender},
     time::{Duration, Instant},
-};
-use crate::{
-    app::{AppMessage, TuiMessage},
-    midi,
-    organ::Organ,
-    config::{load_settings, save_settings, MidiDeviceConfig},
-    input::KeyboardLayout,
-    midi_recorder::MidiRecorder,
-    midi_control::{MidiControlMap, MidiEventSpec},
 };
 
 // --- Shared Constants & Types ---
@@ -102,6 +102,7 @@ pub struct AppState {
     pub midi_current_time_secs: u32,
     pub midi_total_time_secs: u32,
     pub midi_seek_tx: Option<Sender<i32>>, // Sends seconds to skip (+15 or -15)
+    pub last_sysex: Option<Vec<u8>>,
 }
 
 pub fn get_preset_file_path() -> PathBuf {
@@ -159,6 +160,7 @@ impl AppState {
             midi_current_time_secs: 0,
             midi_total_time_secs: 0,
             midi_seek_tx: None,
+            last_sysex: None,
         })
     }
     
@@ -285,7 +287,7 @@ impl AppState {
                 // Check if this triggers any stop changes
                 let actions = self.midi_control_map.check_event(channel, note, true);
                 for (stop_idx, internal_ch, set_active) in actions {
-                     self.set_stop_channel_state(stop_idx, internal_ch, set_active, audio_tx)?;
+                    self.set_stop_channel_state(stop_idx, internal_ch, set_active, audio_tx)?;
                 }
                 
                 // Stop tracking the active note
@@ -343,6 +345,11 @@ impl AppState {
                 self.midi_playback_progress = 0.0;
                 self.handle_tui_all_notes_off();
             }
+            TuiMessage::MidiSysEx(data) => {
+                // Log it? Maybe too verbose.
+                // Store as last received for Learn UI
+                self.last_sysex = Some(data);
+            }
         }
         Ok(())
     }
@@ -353,7 +360,7 @@ impl AppState {
         stop_index: usize,
         channel: u8,
         active: bool,
-        audio_tx: &Sender<AppMessage>
+        audio_tx: &Sender<AppMessage>,
     ) -> Result<()> {
         let stop_set = self.stop_channels.entry(stop_index).or_default();
         let was_active = stop_set.contains(&channel);
@@ -408,12 +415,12 @@ impl AppState {
                     }
                 }
             }
-            } else {
+        } else {
             // --- NOTE OFF ---
             
             // Update Visuals (Piano Roll)
             if let Some(played_note) = self.currently_playing_notes.remove(&note) {
-                 // Move to finished notes for the "trail" effect
+                // Move to finished notes for the "trail" effect
                 let mut finished = played_note;
                 finished.end_time = Some(now);
                 self.finished_notes_display.push_back(finished);
@@ -429,8 +436,8 @@ impl AppState {
                 if let Some(channels) = self.stop_channels.get(&stop_idx) {
                     if channels.contains(&channel) {
                         let _ = audio_tx.send(AppMessage::NoteOff(note, stop.name.clone()));
-        }
-    }
+                    }
+                }
             }
         }
     }
@@ -448,7 +455,7 @@ impl AppState {
             stop_set.remove(&channel);
             
             // --- Send NoteOff for all active notes on this channel for this stop ---
-             if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
+            if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
                 if let Some(stop) = self.organ.stops.get(stop_index) {
                     let stop_name = stop.name.clone();
                     for &note in notes_to_stop {
@@ -584,8 +591,10 @@ impl AppState {
             let new_preset_map = &preset_data.stop_channels;
             let _preset_name = &preset_data.name;
 
-            let is_valid = new_preset_map.keys().all(|&stop_index| stop_index < self.organ.stops.len());
-            
+            let is_valid = new_preset_map
+                .keys()
+                .all(|&stop_index| stop_index < self.organ.stops.len());
+
             if is_valid {
                 // Snapshot the current configuration before we change it
                 let old_map = self.stop_channels.clone();
@@ -610,13 +619,16 @@ impl AppState {
                         // If the channel is no longer mapped to this stop, we must cut the audio
                         // for any notes currently being held on this MIDI channel.
                         if !is_still_mapped {
-                            if let Some(active_notes_on_channel) = self.channel_active_notes.get(&channel) {
+                            if let Some(active_notes_on_channel) =
+                                self.channel_active_notes.get(&channel)
+                            {
                                 if let Some(stop) = self.organ.stops.get(*stop_index) {
                                     let stop_name = stop.name.clone();
                                     
                                     // Send NoteOff for currently active notes on this specific channel/stop combo
                                     for &note in active_notes_on_channel {
-                                        audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
+                                        audio_tx
+                                            .send(AppMessage::NoteOff(note, stop_name.clone()))?;
                                     }
                                 }
                             }
@@ -646,7 +658,8 @@ impl AppState {
         let now = Instant::now();
 
         // Remove notes that are entirely off-screen
-        let oldest_time_to_display = now.checked_sub(self.piano_roll_display_duration)
+        let oldest_time_to_display = now
+            .checked_sub(self.piano_roll_display_duration)
             .unwrap_or(Instant::now()); // Safely get the boundary
 
         while let Some(front_note) = self.finished_notes_display.front() {
@@ -658,9 +671,9 @@ impl AppState {
 
             if is_off_screen {
                 self.finished_notes_display.pop_front();
-        } else {
+            } else {
                 break; // Stop when we find a note that's still on screen
-                    }
-                }
             }
         }
+    }
+}

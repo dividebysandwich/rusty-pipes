@@ -5,7 +5,7 @@ use ringbuf::traits::{Observer, Consumer, Producer, Split};
 use ringbuf::HeapRb;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{mpsc, Arc, Mutex};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Instant, Duration};
 
@@ -19,6 +19,21 @@ use crate::voice::{Voice, SpawnJob, TremulantLfo, CHANNEL_COUNT, MAX_NEW_VOICES_
 use crate::audio_recorder::AudioRecorder;
 use crate::audio_event::{process_message, process_note_on, enforce_voice_limit};
 use crate::audio_loader::run_loader_job;
+
+// Handle struct that manages the lifecycle for the audio thread
+#[allow(dead_code)]
+pub struct AudioHandle {
+    stream: Stream,
+    stop_signal: Arc<AtomicBool>,
+}
+
+// When main.rs drops this handle, we signal the thread to quit
+impl Drop for AudioHandle {
+    fn drop(&mut self) {
+        log::info!("[Audio] Stopping audio processing thread...");
+        self.stop_signal.store(true, Ordering::SeqCst);
+    }
+}
 
 pub fn get_supported_sample_rates(device_name: Option<String>) -> Result<Vec<u32>> {
     let host = get_cpal_host();
@@ -119,6 +134,7 @@ fn spawn_audio_processing_thread<P>(
     mut polyphony: usize,
     tui_tx: mpsc::Sender<TuiMessage>,
     shared_midi_recorder: Arc<Mutex<Option<MidiRecorder>>>,
+    stop_signal: Arc<AtomicBool>,
 ) where
     P: Producer<Item = f32> + Send + 'static,
 {
@@ -172,11 +188,22 @@ fn spawn_audio_processing_thread<P>(
         let mut audio_recorder: Option<AudioRecorder> = None;
 
         loop {
+            
+            // Check for stop signal
+            if stop_signal.load(Ordering::Relaxed) {
+                log::info!("[AudioThread] Stop signal received. Exiting.");
+                break;
+            }
+
             let start_time = Instant::now();
 
             // Drain incoming messages from UI to internal queue
             // We differentiate "Immediate" vs "Deferrable" events
             while let Ok(msg) = rx.try_recv() {
+                if stop_signal.load(Ordering::Relaxed) {
+                    log::info!("[AudioThread] Stop signal received. Exiting.");
+                    break;
+                }
                 match msg {
                     AppMessage::NoteOn(..) => pending_note_queue.push_back(msg),
                     _ => process_message(
@@ -481,6 +508,10 @@ fn spawn_audio_processing_thread<P>(
             let mut offset = 0;
             let needed = mix_buffer.len();
             while offset < needed {
+                if stop_signal.load(Ordering::Relaxed) {
+                    log::info!("[AudioThread] Stop signal received. Exiting.");
+                    break;
+                }
                 let pushed = producer.push_slice(&mix_buffer[offset..needed]);
                 offset += pushed;
                 if offset < needed { thread::sleep(Duration::from_millis(1)); }
@@ -499,7 +530,7 @@ pub fn start_audio_playback(
     sample_rate: u32,
     tui_tx: mpsc::Sender<TuiMessage>,
     shared_midi_recorder: Arc<Mutex<Option<MidiRecorder>>>,
-) -> Result<Stream> {
+) -> Result<AudioHandle> {
     // Boilerplate Cpal setup
     let host = get_cpal_host();
     let device: Device = {
@@ -535,8 +566,9 @@ pub fn start_audio_playback(
     let ring_buf_capacity = buffer_size_frames * mix_channels * 10;
     let ring_buf = HeapRb::<f32>::new(ring_buf_capacity);
     let (producer, consumer) = ring_buf.split();
+    let stop_signal = Arc::new(AtomicBool::new(false));
 
-    spawn_audio_processing_thread(rx, producer, organ, sample_rate, buffer_size_frames, gain, polyphony, tui_tx.clone(), shared_midi_recorder);
+    spawn_audio_processing_thread(rx, producer, organ, sample_rate, buffer_size_frames, gain, polyphony, tui_tx.clone(), shared_midi_recorder, stop_signal.clone());
 
     let err_callback = |err| { log::error!("[CpalCallback] Stream error: {}", err); };
 
@@ -554,7 +586,10 @@ pub fn start_audio_playback(
     };
 
     stream.play()?;
-    Ok(stream)
+    Ok(AudioHandle {
+        stream,
+        stop_signal,
+    })
 }
 
 // Helper to handle different sample formats (F32, I16, U16) in a generic way

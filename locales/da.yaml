@@ -269,3 +269,10 @@ tui:
   no_stops: "Ingen registre indlæst."
   midi_log_title: "MIDI Log"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Orgelstyring"
+  button: "Administrer Orgler"
+  description: "Administrer dine installerede virtuelle orgler og lær SYSEX-kommandoer til at skifte mellem dem."
+  add_organ: "Tilføj Orgel"
+  load: "Indlæs Orgel"

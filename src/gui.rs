@@ -19,6 +19,8 @@ use crate::{
     organ::Organ,
     input::MusicCommand,
     gui_midi_learn::{MidiLearnState, draw_midi_learn_modal},
+    app::MainLoopAction,
+    gui_organ_manager::OrganManagerUi,
 };
 
 #[allow(dead_code)]
@@ -43,6 +45,10 @@ pub struct EguiApp {
     reverb_files: Vec<(String, PathBuf)>,
     selected_reverb_index: Option<usize>,
     midi_learn_state: MidiLearnState,
+    
+    // Organ Manager
+    organ_manager: OrganManagerUi,
+    exit_action: Arc<Mutex<MainLoopAction>>,
 }
 
 /// Runs the main GUI loop.
@@ -56,7 +62,7 @@ pub fn run_gui_loop(
     reverb_files: Vec<(String, PathBuf)>,
     initial_ir_file: Option<PathBuf>,
     initial_mix: f32,
-) -> Result<()> {
+) -> Result<MainLoopAction> {
 
     let selected_stop_index = if !organ.stops.is_empty() { Some(0) } else { None };
 
@@ -70,6 +76,8 @@ pub fn run_gui_loop(
         state.reverb_mix = initial_mix;
         state.selected_reverb_index = selected_reverb_index;
     }
+
+    let exit_action = Arc::new(Mutex::new(MainLoopAction::Exit));
 
     let egui_app = EguiApp {
         app_state,
@@ -86,6 +94,8 @@ pub fn run_gui_loop(
         reverb_files,
         selected_reverb_index,
         midi_learn_state: MidiLearnState::default(),
+        organ_manager: OrganManagerUi::new(),
+        exit_action: exit_action.clone(),
     };
 
     let native_options = eframe::NativeOptions {
@@ -109,7 +119,8 @@ pub fn run_gui_loop(
     )
     .map_err(|e| anyhow::anyhow!("Eframe error: {}", e))?;
 
-    Ok(())
+    let action = exit_action.lock().unwrap().clone();
+    Ok(action)
 }
 
 const MOUSE_DEBOUNCE_DELAY: Duration = Duration::from_millis(100);
@@ -323,7 +334,21 @@ impl App for EguiApp {
         // Draw modals if needed
         self.draw_preset_save_modal(ctx);
         draw_midi_learn_modal(ctx, self.app_state.clone(), &mut self.midi_learn_state);
-
+        
+        self.organ_manager.show(ctx, &self.exit_action, self.app_state.clone());
+        
+        // Check for SysEx to handle auto-switching or learning
+        let last_sysex_opt = self.app_state.lock().unwrap().last_sysex.take();
+        if let Some(sysex) = last_sysex_opt {
+             if self.organ_manager.is_learning() {
+                  self.organ_manager.handle_learning(sysex);
+             } else {
+                  if let Some(path) = self.organ_manager.find_organ_by_sysex(&sysex) {
+                       *self.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan { file: path };
+                       ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                  }
+             }
+        }
     }
 
     // Handle quit request (e.g., pressing 'X' on window)
@@ -406,7 +431,13 @@ impl EguiApp {
                 }
 
                 ui.separator();
+                ui.separator();
                 ui.label(t!("gui.footer_tip"));
+                
+                ui.separator();
+                if ui.button(t!("organ_manager.button")).clicked() {
+                    self.organ_manager.visible = true;
+                }
 
                 // Right-aligned controls
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

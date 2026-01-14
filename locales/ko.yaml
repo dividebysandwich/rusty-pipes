@@ -269,3 +269,10 @@ tui:
   no_stops: "로드된 스톱이 없습니다."
   midi_log_title: "MIDI 로그"
   piano_roll_title: "피아노 롤"
+
+organ_manager:
+  title: "오르간 관리자"
+  button: "오르간 관리"
+  description: "설치된 가상 오르간을 관리하고 오르간 간 전환을 위한 SYSEX 명령을 학습합니다."
+  add_organ: "오르간 추가"
+  load: "오르간 로드"

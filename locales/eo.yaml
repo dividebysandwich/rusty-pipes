@@ -269,3 +269,10 @@ tui:
   no_stops: "Neniu registro ŝarĝita."
   midi_log_title: "MIDI-Loglibro"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Orgen-Administrilo"
+  button: "Administri Orgenojn"
+  description: "Administru viajn instalitajn virtualajn orgenojn kaj lernu SYSEX-komandojn por baskuli inter ili."
+  add_organ: "Aldoni Orgenon"
+  load: "Ŝarĝi Orgenon"

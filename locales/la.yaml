@@ -269,3 +269,10 @@ tui:
   no_stops: "Nulla registra onerata sunt."
   midi_log_title: "Acta MIDI"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Procurator Organorum"
+  button: "Curare Organa"
+  description: "Cura organa tua virtualia et disce imperia SYSEX ad commutandum inter ea."
+  add_organ: "Addere Organum"
+  load: "Onerare Organum"

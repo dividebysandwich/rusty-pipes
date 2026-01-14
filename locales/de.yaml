@@ -269,3 +269,10 @@ tui:
   no_stops: "Keine Register geladen."
   midi_log_title: "MIDI-Protokoll"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Orgel-Manager"
+  button: "Orgeln verwalten"
+  description: "Verwalten Sie Ihre installierten virtuellen Orgeln und lernen Sie SYSEX-Befehle zum Umschalten."
+  add_organ: "Orgel hinzufügen"
+  load: "Orgel laden"

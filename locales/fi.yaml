@@ -269,3 +269,10 @@ tui:
   no_stops: "Äänikertoja ei ole ladattu."
   midi_log_title: "MIDI-loki"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Urkujen hallinta"
+  button: "Hallitse urkuja"
+  description: "Hallitse asennettuja virtuaaliurkuja ja opi SYSEX-komennot niiden vaihtamiseen."
+  add_organ: "Lisää urut"
+  load: "Lataa urut"

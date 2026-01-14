@@ -269,3 +269,10 @@ tui:
   no_stops: "Geen registers geladen."
   midi_log_title: "MIDI Log"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Orgelbeheer"
+  button: "Orgels Beheren"
+  description: "Beheer uw geïnstalleerde virtuele orgels en leer SYSEX-commando's om tussen ze te schakelen."
+  add_organ: "Orgel Toevoegen"
+  load: "Orgel Laden"

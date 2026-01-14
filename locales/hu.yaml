@@ -269,3 +269,10 @@ tui:
   no_stops: "Nincs betöltött regiszter."
   midi_log_title: "MIDI Napló"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Orgonakezelő"
+  button: "Orgonák Kezelése"
+  description: "Kezelje telepített virtuális orgonáit, és tanulja meg a váltáshoz szükséges SYSEX parancsokat."
+  add_organ: "Orgona Hozzáadása"
+  load: "Orgona Betöltése"

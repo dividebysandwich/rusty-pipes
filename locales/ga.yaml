@@ -269,3 +269,10 @@ tui:
   no_stops: "Níl aon stop luchtaithe."
   midi_log_title: "Loga MIDI"
   piano_roll_title: "Piano Roll"
+
+organ_manager:
+  title: "Bainisteoir Orgán"
+  button: "Bainistigh Orgáin"
+  description: "Bainistigh d'orgáin phíopa fhíorúla suiteáilte agus foghlaim orduithe SYSEX chun aistriú eatarthu."
+  add_organ: "Cuir Orgán Leis"
+  load: "Lucht Orgán"

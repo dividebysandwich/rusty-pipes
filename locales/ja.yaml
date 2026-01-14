@@ -269,3 +269,10 @@ tui:
   no_stops: "ストップが読み込まれていません。"
   midi_log_title: "MIDIログ"
   piano_roll_title: "ピアノロール"
+
+organ_manager:
+  title: "オルガンマネージャー"
+  button: "オルガン管理"
+  description: "インストールされた仮想オルガンを管理し、切り替えるためのSYSEXコマンドを学習します。"
+  add_organ: "オルガンを追加"
+  load: "オルガンをロード"
