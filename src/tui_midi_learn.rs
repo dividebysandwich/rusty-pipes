@@ -92,13 +92,15 @@ impl MidiLearnTuiState {
             let mut state = app_state.lock().unwrap();
             
             // Check if a new event arrived since we pressed Enter
-            if let Some((event, time)) = state.last_midi_event_received {
-                if time > self.last_interaction {
+            if let Some((event, time)) = &state.last_midi_event_received {
+                if *time > self.last_interaction {
                     // Map it
+                    let event_clone = event.clone();
+                    
                     state.midi_control_map.learn(
                         self.target_stop_index,
                         target_internal,
-                        event,
+                        event_clone.clone(),
                         is_enable
                     );
                     let _ = state.midi_control_map.save(&state.organ.name);
@@ -111,8 +113,9 @@ impl MidiLearnTuiState {
                     } else { 
                         t!("midi_learn.action_disable") 
                     };
+                    
                     state.add_midi_log(
-                        t!("midi_learn.log_mapped_fmt", event = event, action = action_text).to_string()
+                        t!("midi_learn.log_mapped_fmt", event = event_clone, action = action_text).to_string()
                     );
                 }
             }
@@ -138,8 +141,10 @@ pub fn draw_midi_learn_modal(frame: &mut Frame, tui_state: &MidiLearnTuiState, a
     // Prepare Rows
     let rows: Vec<Row> = (0..16u8).map(|channel| {
         let config = control_map.get(&channel);
-        let enable_evt = config.and_then(|c| c.enable_event);
-        let disable_evt = config.and_then(|c| c.disable_event);
+        
+        // Clone inner values because MidiEventSpec is not Copy
+        let enable_evt = config.and_then(|c| c.enable_event.clone());
+        let disable_evt = config.and_then(|c| c.disable_event.clone());
 
         // Determine styling for cells based on selection
         let is_row_selected = channel as usize == tui_state.row_idx;

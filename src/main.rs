@@ -628,6 +628,7 @@ fn main() -> Result<()> {
                 reverb_files,
                 config.ir_file.clone(),
                 config.reverb_mix,
+                gui_is_running.clone(),
             )?
         };
 

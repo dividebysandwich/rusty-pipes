@@ -1,6 +1,7 @@
 use anyhow::Result;
 use midir::{MidiInput, MidiInputPort};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -9,6 +10,37 @@ use crate::audio::{
     get_audio_device_names, get_default_audio_device_name, get_supported_sample_rates,
 };
 use crate::input::KeyboardLayout;
+
+/// Represents a specific MIDI trigger (Note or SysEx)
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum MidiEventSpec {
+    Note {
+        channel: u8, // 0-15
+        note: u8,
+        is_note_off: bool,
+    },
+    SysEx(Vec<u8>),
+}
+
+impl fmt::Display for MidiEventSpec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MidiEventSpec::Note { channel, note, is_note_off } => {
+                let status = if *is_note_off { "Off" } else { "On" };
+                write!(f, "Ch{} Note {} ({})", channel + 1, note, status)
+            }
+            MidiEventSpec::SysEx(bytes) => {
+                let hex: Vec<String> = bytes.iter().map(|b| format!("{:02X}", b)).collect();
+                // Truncate if too long for display
+                if hex.len() > 8 {
+                    write!(f, "SysEx: {}...", hex[0..8].join(" "))
+                } else {
+                    write!(f, "SysEx: {}", hex.join(" "))
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum MidiMappingMode {
@@ -142,7 +174,7 @@ pub struct OrganProfile {
     /// MIDI SysEx command bytes that trigger loading this organ.
     /// We use a hex string for easier JSON editing/viewing, but store as Vec codes in runtime if needed.
     #[serde(default)]
-    pub sysex_id: Option<Vec<u8>>,
+    pub activation_trigger: Option<MidiEventSpec>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]

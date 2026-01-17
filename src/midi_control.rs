@@ -5,21 +5,7 @@ use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 use anyhow::Result;
 
-// Represents a specific MIDI signal (Channel + Note + On/Off type)
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct MidiEventSpec {
-    pub channel: u8, // MIDI Channel (0-15)
-    pub note: u8,
-    pub is_note_off: bool, // If true, this triggers on NoteOff, else NoteOn
-}
-
-impl std::fmt::Display for MidiEventSpec {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let status = if self.is_note_off { "Off" } else { "On" };
-        let note_name = crate::midi::midi_note_to_name(self.note);
-        write!(f, "Ch{} {} ({})", self.channel + 1, note_name, status)
-    }
-}
+use crate::config::MidiEventSpec;
 
 // Defines how a specific internal organ channel (0-15) is controlled for a specific stop
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -98,21 +84,20 @@ impl MidiControlMap {
 
     /// Checks incoming MIDI against the map and returns a list of actions to take.
     /// Returns: Vec<(StopIndex, InternalChannel, SetActive)>
-    pub fn check_event(&self, channel: u8, note: u8, is_note_off: bool) -> Vec<(usize, u8, bool)> {
-        let incoming = MidiEventSpec { channel, note, is_note_off };
+    pub fn check_event(&self, incoming: &MidiEventSpec) -> Vec<(usize, u8, bool)> {
         let mut actions = Vec::new();
 
         for (stop_idx, channel_map) in &self.stops {
             for (internal_channel, control) in channel_map {
                 // Check Enable Trigger
                 if let Some(trigger) = &control.enable_event {
-                    if *trigger == incoming {
+                    if trigger == incoming {
                         actions.push((*stop_idx, *internal_channel, true));
                     }
                 }
                 // Check Disable Trigger
                 if let Some(trigger) = &control.disable_event {
-                    if *trigger == incoming {
+                    if trigger == incoming {
                         actions.push((*stop_idx, *internal_channel, false));
                     }
                 }

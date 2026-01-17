@@ -1,9 +1,9 @@
 use crate::{
     app::{AppMessage, TuiMessage},
-    config::{MidiDeviceConfig, load_settings, save_settings},
+    config::{MidiDeviceConfig, MidiEventSpec, load_settings, save_settings},
     input::KeyboardLayout,
     midi,
-    midi_control::{MidiControlMap, MidiEventSpec},
+    midi_control::MidiControlMap,
     midi_recorder::MidiRecorder,
     organ::Organ,
 };
@@ -102,7 +102,7 @@ pub struct AppState {
     pub midi_current_time_secs: u32,
     pub midi_total_time_secs: u32,
     pub midi_seek_tx: Option<Sender<i32>>, // Sends seconds to skip (+15 or -15)
-    pub last_sysex: Option<Vec<u8>>,
+    pub last_sysex: Option<Vec<u8>>, // Kept for legacy compatibility if needed, but MidiEventSpec::SysEx covers this
 }
 
 pub fn get_preset_file_path() -> PathBuf {
@@ -248,25 +248,23 @@ impl AppState {
          match msg {
             // --- Raw MIDI events ---
             TuiMessage::MidiNoteOn(note, vel, channel) => {
-                // MIDI control learning
-                self.last_midi_event_received = Some((
-                    MidiEventSpec { channel, note, is_note_off: false },
-                    Instant::now()
-                ));
+                // Create Spec
+                let spec = MidiEventSpec::Note { channel, note, is_note_off: false };
+
+                // MIDI control learning / Organ switching detection
+                self.last_midi_event_received = Some((spec.clone(), Instant::now()));
                 
                 // Check if this triggers any stop changes
-                let actions = self.midi_control_map.check_event(channel, note, false);
+                let actions = self.midi_control_map.check_event(&spec);
                 for (stop_idx, internal_ch, set_active) in actions {
                     if set_active {
-                        let _ = self.toggle_stop_channel(stop_idx, internal_ch, audio_tx); // Reuse logic, though toggle logic needs care
-                        // Actually, toggle_stop_channel toggles. We want explicit Set.
                         self.set_stop_channel_state(stop_idx, internal_ch, true, audio_tx)?;
                     } else {
                         self.set_stop_channel_state(stop_idx, internal_ch, false, audio_tx)?;
                     }
                 }
 
-                // Track the active note
+                // Track the active note (for visuals/logic)
                 self.channel_active_notes.entry(channel).or_default().insert(note);
                 // Find all stops mapped to this channel and send AppMessage
                 for (stop_index, active_channels) in &self.stop_channels {
@@ -279,13 +277,14 @@ impl AppState {
                 }
             },
             TuiMessage::MidiNoteOff(note, channel) => {
-                // MIDI control learning
-                self.last_midi_event_received = Some((
-                    MidiEventSpec { channel, note, is_note_off: true },
-                    Instant::now()
-                ));
+                // Create Spec
+                let spec = MidiEventSpec::Note { channel, note, is_note_off: true };
+
+                // MIDI control learning / Organ switching detection
+                self.last_midi_event_received = Some((spec.clone(), Instant::now()));
+
                 // Check if this triggers any stop changes
-                let actions = self.midi_control_map.check_event(channel, note, true);
+                let actions = self.midi_control_map.check_event(&spec);
                 for (stop_idx, internal_ch, set_active) in actions {
                     self.set_stop_channel_state(stop_idx, internal_ch, set_active, audio_tx)?;
                 }
@@ -301,6 +300,24 @@ impl AppState {
                             let stop_name = stop.name.clone();
                             audio_tx.send(AppMessage::NoteOff(note, stop_name))?;
                         }
+                    }
+                }
+            },
+            TuiMessage::MidiSysEx(data) => {
+                // Create Spec
+                let spec = MidiEventSpec::SysEx(data.clone());
+                
+                // Store for "Learn" UI and Organ Switching
+                self.last_midi_event_received = Some((spec.clone(), Instant::now()));
+                self.last_sysex = Some(data); // Kept for legacy if needed
+
+                // Check if this SysEx triggers any stop changes (e.g. Stop Toggle via SysEx)
+                let actions = self.midi_control_map.check_event(&spec);
+                for (stop_idx, internal_ch, set_active) in actions {
+                    if set_active {
+                        self.set_stop_channel_state(stop_idx, internal_ch, true, audio_tx)?;
+                    } else {
+                        self.set_stop_channel_state(stop_idx, internal_ch, false, audio_tx)?;
                     }
                 }
             },
@@ -344,11 +361,6 @@ impl AppState {
                 self.midi_file_stop_signal.store(false, Ordering::Relaxed);
                 self.midi_playback_progress = 0.0;
                 self.handle_tui_all_notes_off();
-            }
-            TuiMessage::MidiSysEx(data) => {
-                // Log it? Maybe too verbose.
-                // Store as last received for Learn UI
-                self.last_sysex = Some(data);
             }
         }
         Ok(())

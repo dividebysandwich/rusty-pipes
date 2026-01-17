@@ -3,6 +3,7 @@ use eframe::{egui, App, Frame};
 use egui::{Stroke, UiBuilder};
 use midir::MidiInputConnection;
 use std::time::{Instant, Duration};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     sync::{
         mpsc::Sender,
@@ -21,6 +22,7 @@ use crate::{
     gui_midi_learn::{MidiLearnState, draw_midi_learn_modal},
     app::MainLoopAction,
     gui_organ_manager::OrganManagerUi,
+    config::MidiEventSpec, // Import the new Enum
 };
 
 #[allow(dead_code)]
@@ -49,6 +51,7 @@ pub struct EguiApp {
     // Organ Manager
     organ_manager: OrganManagerUi,
     exit_action: Arc<Mutex<MainLoopAction>>,
+    gui_is_running: Arc<AtomicBool>,
 }
 
 /// Runs the main GUI loop.
@@ -62,6 +65,7 @@ pub fn run_gui_loop(
     reverb_files: Vec<(String, PathBuf)>,
     initial_ir_file: Option<PathBuf>,
     initial_mix: f32,
+    gui_is_running: Arc<AtomicBool>,
 ) -> Result<MainLoopAction> {
 
     let selected_stop_index = if !organ.stops.is_empty() { Some(0) } else { None };
@@ -96,6 +100,7 @@ pub fn run_gui_loop(
         midi_learn_state: MidiLearnState::default(),
         organ_manager: OrganManagerUi::new(),
         exit_action: exit_action.clone(),
+        gui_is_running,
     };
 
     let native_options = eframe::NativeOptions {
@@ -337,22 +342,40 @@ impl App for EguiApp {
         
         self.organ_manager.show(ctx, &self.exit_action, self.app_state.clone());
         
-        // Check for SysEx to handle auto-switching or learning
-        let last_sysex_opt = self.app_state.lock().unwrap().last_sysex.take();
-        if let Some(sysex) = last_sysex_opt {
-             if self.organ_manager.is_learning() {
-                  self.organ_manager.handle_learning(sysex);
-             } else {
-                  if let Some(path) = self.organ_manager.find_organ_by_sysex(&sysex) {
-                       *self.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan { file: path };
-                       ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                  }
+        // Organ Switching via Trigger
+        // Check for any recent MIDI event (SysEx or Note) that matches a known organ trigger
+        let event_opt = {
+            let mut state = self.app_state.lock().unwrap();
+            let evt = state.last_midi_event_received.take();
+            // Also check for legacy SysEx field just in case
+            let legacy_sysex = state.last_sysex.take();
+            (evt, legacy_sysex)
+        };
+
+        if let (Some((event, _time)), _) = event_opt {
+            if self.organ_manager.is_learning() {
+                // We are learning inside the organ manager UI
+            } else {
+                // Not learning, check if this triggers an organ load
+                if let Some(path) = self.organ_manager.find_organ_by_trigger(&event) {
+                    *self.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan { file: path };
+                    self.gui_is_running.store(false, Ordering::SeqCst);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        } else if let (_, Some(sysex)) = event_opt {
+             // Fallback for SysEx if it came through the old path (unlikely with new code, but safe)
+             let event = MidiEventSpec::SysEx(sysex);
+             if let Some(path) = self.organ_manager.find_organ_by_trigger(&event) {
+                 *self.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan { file: path };
+                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
              }
         }
     }
 
-    // Handle quit request (e.g., pressing 'X' on window)
+    // Handle quit request
     fn on_exit(&mut self, _glow_ctx: Option<&eframe::glow::Context>) {
+        self.gui_is_running.store(false, Ordering::SeqCst);
         if let Err(e) = self.audio_tx.send(AppMessage::Quit) {
             eprintln!("Failed to send Quit message on close: {}", e);
         }
@@ -384,7 +407,7 @@ impl EguiApp {
         // Determine background based on theme
         let is_dark = ctx.style().visuals.dark_mode;
         let panel_fill = if is_dark {
-            egui::Color32::from_rgb(30, 30, 30) // Your preferred dark gray
+            egui::Color32::from_rgb(30, 30, 30) // Dark gray
         } else {
             ctx.style().visuals.panel_fill // Standard light mode background
         };

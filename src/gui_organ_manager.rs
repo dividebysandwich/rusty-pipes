@@ -1,10 +1,11 @@
 use crate::app::MainLoopAction;
 use crate::app_state::AppState;
-use crate::config::{OrganLibrary, OrganProfile, load_organ_library, save_organ_library};
+use crate::config::{OrganLibrary, OrganProfile, load_organ_library, save_organ_library, MidiEventSpec};
 use eframe::egui;
 use rust_i18n::t;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 #[allow(dead_code)]
 pub struct OrganManagerUi {
@@ -15,6 +16,7 @@ pub struct OrganManagerUi {
 
     // For MIDI learning
     learning_index: Option<usize>,
+    last_learn_interaction: Instant,
 }
 
 impl OrganManagerUi {
@@ -25,6 +27,7 @@ impl OrganManagerUi {
             library,
             new_organ_path: None,
             learning_index: None,
+            last_learn_interaction: Instant::now(),
         }
     }
 
@@ -32,9 +35,23 @@ impl OrganManagerUi {
         &mut self,
         ctx: &egui::Context,
         exit_action: &Arc<Mutex<MainLoopAction>>,
-        _app_state: Arc<Mutex<AppState>>,
+        app_state: Arc<Mutex<AppState>>,
     ) {
         let mut open = self.visible;
+
+        // Check if we learned something recently
+        if self.learning_index.is_some() {
+            let state = app_state.lock().unwrap();
+            if let Some((event, time)) = &state.last_midi_event_received {
+                if *time > self.last_learn_interaction {
+                    // We found a trigger!
+                    // We can't mutate self inside the lock, so we clone the event and drop lock
+                    let event_clone = event.clone();
+                    drop(state);
+                    self.handle_learning(event_clone);
+                }
+            }
+        }
 
         egui::Window::new(t!("organ_manager.title"))
             .open(&mut open)
@@ -82,21 +99,15 @@ impl OrganManagerUi {
                                     });
                                     ui.end_row();
 
-                                    // Row 2: MIDI SysEx info
+                                    // Row 2: MIDI/SysEx Trigger info
                                     ui.horizontal(|ui| {
-                                        let sysex_str = organ
-                                            .sysex_id
+                                        let trigger_str = organ
+                                            .activation_trigger
                                             .as_ref()
-                                            .map(|bytes| {
-                                                let hex: Vec<String> = bytes
-                                                    .iter()
-                                                    .map(|b| format!("{:02X}", b))
-                                                    .collect();
-                                                hex.join(" ")
-                                            })
+                                            .map(|t| t.to_string())
                                             .unwrap_or_else(|| "-".to_string());
 
-                                        ui.label(format!("SysEx: {}", sysex_str));
+                                        ui.label(format!("Trigger: {}", trigger_str));
 
                                         if let Some(learn_idx) = self.learning_index {
                                             if learn_idx == i {
@@ -110,12 +121,13 @@ impl OrganManagerUi {
                                         } else {
                                             if ui.button(t!("midi_learn.btn_learn")).clicked() {
                                                 self.learning_index = Some(i);
+                                                self.last_learn_interaction = Instant::now();
                                             }
                                         }
 
-                                        if organ.sysex_id.is_some() {
+                                        if organ.activation_trigger.is_some() {
                                             if ui.button(t!("midi_learn.btn_clear")).clicked() {
-                                                organ.sysex_id = None;
+                                                organ.activation_trigger = None;
                                                 dirty = true;
                                             }
                                         }
@@ -156,7 +168,7 @@ impl OrganManagerUi {
                         self.library.organs.push(OrganProfile {
                             name,
                             path,
-                            sysex_id: None,
+                            activation_trigger: None,
                         });
                         if let Err(e) = save_organ_library(&self.library) {
                             log::error!("Failed to save organ library: {}", e);
@@ -172,21 +184,21 @@ impl OrganManagerUi {
         self.learning_index.is_some()
     }
 
-    pub fn handle_learning(&mut self, sysex: Vec<u8>) {
+    pub fn handle_learning(&mut self, event: MidiEventSpec) {
         if let Some(idx) = self.learning_index {
             if let Some(organ) = self.library.organs.get_mut(idx) {
-                organ.sysex_id = Some(sysex);
+                organ.activation_trigger = Some(event);
                 let _ = save_organ_library(&self.library);
             }
             self.learning_index = None;
         }
     }
 
-    pub fn find_organ_by_sysex(&self, sysex: &[u8]) -> Option<PathBuf> {
+    pub fn find_organ_by_trigger(&self, event: &MidiEventSpec) -> Option<PathBuf> {
         self.library
             .organs
             .iter()
-            .find(|o| o.sysex_id.as_ref().map_or(false, |id| id == sysex))
+            .find(|o| o.activation_trigger.as_ref().map_or(false, |trig| trig == event))
             .map(|o| o.path.clone())
     }
 }

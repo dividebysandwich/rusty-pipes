@@ -41,13 +41,14 @@ pub fn draw_midi_learn_modal(
     if let Some((target_internal, is_enable)) = learn_state.learning_slot {
         let mut state = app_state.lock().unwrap();
         // Check if a new MIDI event arrived since we opened the dialog/clicked learn
-        if let Some((event, time)) = state.last_midi_event_received {
-            if time > learn_state.last_interaction {
+        if let Some((event, time)) = &state.last_midi_event_received {
+            if *time > learn_state.last_interaction {
                 // We caught a midi event!
+                let event_clone = event.clone();
                 state.midi_control_map.learn(
                     learn_state.target_stop_index, 
                     target_internal, 
-                    event, 
+                    event_clone.clone(), 
                     is_enable
                 );
                 // Save immediately
@@ -62,7 +63,7 @@ pub fn draw_midi_learn_modal(
                 };
                 
                 state.add_midi_log(
-                    t!("midi_learn.log_mapped_fmt", event = event, action = action_text).to_string()
+                    t!("midi_learn.log_mapped_fmt", event = event_clone, action = action_text).to_string()
                 );
             }
         }
@@ -104,8 +105,8 @@ pub fn draw_midi_learn_modal(
                             ui.label(t!("midi_learn.channel_fmt", num = channel + 1));
 
                             let config = control_map.get(&channel);
-                            let enable_evt = config.and_then(|c| c.enable_event);
-                            let disable_evt = config.and_then(|c| c.disable_event);
+                            let enable_evt = config.and_then(|c| c.enable_event.as_ref());
+                            let disable_evt = config.and_then(|c| c.disable_event.as_ref());
 
                             // --- Enable Column ---
                             let enable_btn_text = if learn_state.learning_slot == Some((channel, true)) {
