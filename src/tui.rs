@@ -13,14 +13,16 @@ use std::{
     thread,
     io::{stdout, Stdout},
     sync::{mpsc::Sender, Arc, Mutex},
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 use rust_i18n::t;
 
-use crate::app::{AppMessage};
+use crate::app::{AppMessage, MainLoopAction};
 use crate::app_state::AppState;
 use crate::input::MusicCommand;
 use crate::tui_midi_learn::{MidiLearnTuiState, draw_midi_learn_modal};
+use crate::config::{load_organ_library, MidiEventSpec};
 
 const NUM_COLUMNS: usize = 3; // Number of columns for the stop list
 
@@ -131,16 +133,55 @@ impl TuiState {
 pub fn run_tui_loop(
     audio_tx: Sender<AppMessage>,
     app_state: Arc<Mutex<AppState>>,
-) -> Result<()> {
+    is_running: Arc<AtomicBool>,
+    exit_action: Arc<Mutex<MainLoopAction>>,
+) -> Result<MainLoopAction> {
     let mut terminal = setup_terminal()?;
     let mut tui_state = TuiState::new(app_state)?;
+    let organ_library = load_organ_library().unwrap_or_default();
 
     loop {
+        
+        if !is_running.load(Ordering::Relaxed) {
+            break;
+        }
+
         thread::sleep(Duration::from_millis(10));
 
         // Check for incoming MIDI if in Learn Mode
         if tui_state.mode == AppMode::MidiLearn {
             tui_state.midi_learn_state.check_for_midi_input(&tui_state.app_state);
+        }
+
+        let switch_target = {
+            let mut state = tui_state.app_state.lock().unwrap();
+            
+            // Take the event to consume it (preventing double processing)
+            if let Some((event, _time)) = state.last_midi_event_received.take() {
+                 // Check against library
+                 organ_library.organs.iter()
+                    .find(|o| o.activation_trigger.as_ref().map_or(false, |t| t == &event))
+                    .map(|o| o.path.clone())
+            } else if let Some(sysex) = state.last_sysex.take() {
+                 // Legacy SysEx check
+                 let event = MidiEventSpec::SysEx(sysex);
+                 organ_library.organs.iter()
+                    .find(|o| o.activation_trigger.as_ref().map_or(false, |t| t == &event))
+                    .map(|o| o.path.clone())
+            } else {
+                None
+            }
+        };
+
+        if let Some(path) = switch_target {
+            // Found a trigger! Set reload action
+            *exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan { file: path };
+            
+            // Signal application to quit (shuts down audio/logic threads)
+            audio_tx.send(AppMessage::Quit)?;
+            
+            // Break TUI loop immediately
+            break; 
         }
 
         // Update piano roll state before drawing
@@ -209,6 +250,7 @@ pub fn run_tui_loop(
                                         match key.code {
                                             KeyCode::Char('q') | KeyCode::Esc => {
                                                 audio_tx.send(AppMessage::Quit)?;
+                                                *exit_action.lock().unwrap() = MainLoopAction::Exit;
                                                 break; // Exit TUI loop
                                             }
                                             KeyCode::Down => {
@@ -329,7 +371,8 @@ pub fn run_tui_loop(
     }
 
     cleanup_terminal()?;
-    Ok(())
+    let action = exit_action.lock().unwrap().clone();
+    Ok(action)
 }
 
 // Main App UI function

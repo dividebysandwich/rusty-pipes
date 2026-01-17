@@ -508,6 +508,7 @@ fn main() -> Result<()> {
                         if let TuiMessage::ForceClose = msg {
                             log::info!("Received ForceClose request. Closing GUI viewport.");
                             if let Some(ctx) = &egui_ctx {
+                                gui_running_clone.store(false, Ordering::SeqCst);
                                 // This closes the window, causing run_gui_loop to return in the main thread
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             }
@@ -626,8 +627,11 @@ fn main() -> Result<()> {
 
         // --- Run the TUI or GUI on the main thread ---
         let loop_action = if tui_mode {
-            tui::run_tui_loop(audio_tx, Arc::clone(&app_state))?;
-            app::MainLoopAction::Exit
+            tui::run_tui_loop(
+                audio_tx,
+                Arc::clone(&app_state),
+                gui_is_running.clone(),
+                exit_action.clone())?
         } else {
             log::info!("Starting GUI...");
             gui::run_gui_loop(
