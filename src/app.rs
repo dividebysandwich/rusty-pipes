@@ -61,6 +61,7 @@ pub enum TuiMessage {
     MidiProgress(f32, u32, u32),
     MidiSeekChannel(Sender<i32>),
     MidiSysEx(Vec<u8>),
+    ForceClose,
 }
 
 /// Holds information about a currently playing note.

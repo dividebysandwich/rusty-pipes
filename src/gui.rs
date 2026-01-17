@@ -66,6 +66,7 @@ pub fn run_gui_loop(
     initial_ir_file: Option<PathBuf>,
     initial_mix: f32,
     gui_is_running: Arc<AtomicBool>,
+    exit_action: Arc<Mutex<MainLoopAction>>
 ) -> Result<MainLoopAction> {
 
     let selected_stop_index = if !organ.stops.is_empty() { Some(0) } else { None };
@@ -80,8 +81,6 @@ pub fn run_gui_loop(
         state.reverb_mix = initial_mix;
         state.selected_reverb_index = selected_reverb_index;
     }
-
-    let exit_action = Arc::new(Mutex::new(MainLoopAction::Exit));
 
     let egui_app = EguiApp {
         app_state,

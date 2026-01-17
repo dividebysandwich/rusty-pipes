@@ -246,6 +246,8 @@ impl AppState {
     /// This is the core message-handling logic for both UIs.
     pub fn handle_tui_message(&mut self, msg: TuiMessage, audio_tx: &Sender<AppMessage>) -> Result<()> {
          match msg {
+            TuiMessage::ForceClose => {
+            },
             // --- Raw MIDI events ---
             TuiMessage::MidiNoteOn(note, vel, channel) => {
                 // Create Spec

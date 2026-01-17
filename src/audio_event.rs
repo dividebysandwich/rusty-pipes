@@ -286,7 +286,11 @@ pub fn process_message(
         AppMessage::SetReverbIr(p) => { let tx = ir_loader_tx.clone(); thread::spawn(move || { let _ = tx.send(StereoConvolver::from_file(&p, sample_rate, buffer_size_frames)); }); },
         AppMessage::SetGain(g) => *system_gain = g,
         AppMessage::SetPolyphony(p) => *polyphony = p,
-        AppMessage::Quit => { std::process::exit(0); }
+        AppMessage::Quit => { 
+            // tell the Logic Thread to close the Window.
+            // This allows main.rs to finish the loop and handle the respawn.
+            let _ = tui_tx.send(TuiMessage::ForceClose);
+        }
         _ => {}
     }
 }

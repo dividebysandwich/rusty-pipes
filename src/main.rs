@@ -474,8 +474,10 @@ fn main() -> Result<()> {
             active_layout,
         )?));
 
+        let exit_action = Arc::new(Mutex::new(app::MainLoopAction::Exit));
+
         // --- REST API SERVER ---
-        let _api_server_handle = api_rest::start_api_server(app_state.clone(), audio_tx.clone(), args.api_server_port);
+        let _api_server_handle = api_rest::start_api_server(app_state.clone(), audio_tx.clone(), args.api_server_port, exit_action.clone());
 
         // --- Spawn the dedicated MIDI logic thread ---
         let logic_app_state = Arc::clone(&app_state);
@@ -502,6 +504,16 @@ fn main() -> Result<()> {
                             log::info!("MIDI logic thread stop signal received. Exiting.");
                             break;
                         }
+
+                        if let TuiMessage::ForceClose = msg {
+                            log::info!("Received ForceClose request. Closing GUI viewport.");
+                            if let Some(ctx) = &egui_ctx {
+                                // This closes the window, causing run_gui_loop to return in the main thread
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                            continue; // Skip passing this to app_state
+                        }   
+
                         if egui_ctx.is_none() {
                             if let Ok(ctx) = gui_ctx_rx.try_recv() {
                                 egui_ctx = Some(ctx);
@@ -629,6 +641,7 @@ fn main() -> Result<()> {
                 config.ir_file.clone(),
                 config.reverb_mix,
                 gui_is_running.clone(),
+                exit_action.clone(),
             )?
         };
 

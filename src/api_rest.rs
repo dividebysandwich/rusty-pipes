@@ -9,8 +9,9 @@ use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::app_state::AppState;
+use crate::app::MainLoopAction;
 use crate::app::AppMessage;
-use crate::config;
+use crate::config::{self, load_organ_library};
 
 /// A handle that controls the lifecycle of the API Server.
 /// When this struct is dropped, the server shuts down and the background thread exits.
@@ -59,6 +60,20 @@ pub struct ChannelUpdateRequest {
 pub struct OrganInfoResponse {
     /// The name of the loaded organ definition
     name: String,
+}
+
+#[derive(Serialize, Clone, ToSchema)]
+pub struct OrganEntryResponse {
+    /// Name of the organ
+    name: String,
+    /// Path relative to library or absolute path
+    path: String,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct LoadOrganRequest {
+    /// The path of the organ to load (must match an entry in the library)
+    path: String,
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -114,6 +129,8 @@ pub struct TremulantSetRequest {
 struct ApiData {
     app_state: Arc<Mutex<AppState>>,
     audio_tx: Sender<AppMessage>,
+    // We need access to the exit action mutex to trigger organ reload
+    exit_action: Arc<Mutex<MainLoopAction>>,
     reverb_files: Arc<Vec<(String, PathBuf)>>,
 }
 
@@ -123,6 +140,8 @@ struct ApiData {
 #[openapi(
     paths(
         get_organ_info,
+        get_organ_library,
+        load_organ,
         get_stops, 
         panic,
         update_stop_channel,
@@ -144,6 +163,8 @@ struct ApiData {
             StopStatusResponse, 
             ChannelUpdateRequest, 
             OrganInfoResponse,
+            OrganEntryResponse,
+            LoadOrganRequest,
             PresetSaveRequest,
             ValueRequest,
             ReverbRequest,
@@ -176,6 +197,60 @@ async fn index() -> impl Responder {
 async fn get_organ_info(data: web::Data<ApiData>) -> impl Responder {
     let state = data.app_state.lock().unwrap();
     HttpResponse::Ok().json(OrganInfoResponse { name: state.organ.name.clone() })
+}
+
+/// Returns a list of all organs available in the library.
+#[utoipa::path(
+    get, path = "/organs", tag = "General",
+    responses((status = 200, body = Vec<OrganEntryResponse>))
+)]
+async fn get_organ_library() -> impl Responder {
+    match load_organ_library() {
+        Ok(lib) => {
+            let response: Vec<OrganEntryResponse> = lib.organs.iter().map(|p| OrganEntryResponse {
+                name: p.name.clone(),
+                path: p.path.to_string_lossy().to_string(),
+            }).collect();
+            HttpResponse::Ok().json(response)
+        },
+        Err(e) => HttpResponse::InternalServerError().body(format!("Failed to load library: {}", e))
+    }
+}
+
+/// Triggers the application to load a different organ.
+/// Note: This will cause the API server to restart shortly after the response is sent.
+#[utoipa::path(
+    post, path = "/organs/load", tag = "General",
+    request_body = LoadOrganRequest,
+    responses(
+        (status = 200, description = "Reload initiated"),
+        (status = 404, description = "Organ not found in library")
+    )
+)]
+async fn load_organ(body: web::Json<LoadOrganRequest>, data: web::Data<ApiData>) -> impl Responder {
+    let target_path_str = &body.path;
+    let lib = match load_organ_library() {
+        Ok(l) => l,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    // Verify the path exists in the library (security + validation)
+    let found = lib.organs.iter().find(|o| o.path.to_string_lossy() == *target_path_str);
+
+    if let Some(profile) = found {
+        log::info!("API: Requesting reload of organ: {}", profile.name);
+        
+        // Signal the main loop to reload
+        *data.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan { 
+            file: profile.path.clone() 
+        };
+
+        let _ = data.audio_tx.send(AppMessage::Quit); 
+
+        HttpResponse::Ok().json(serde_json::json!({"status": "reloading", "organ": profile.name}))
+    } else {
+        HttpResponse::NotFound().body("Organ path not found in library")
+    }
 }
 
 /// Executes the MIDI Panic function (All Notes Off).
@@ -500,7 +575,8 @@ async fn set_tremulant(
 pub fn start_api_server(
     app_state: Arc<Mutex<AppState>>,
     audio_tx: Sender<AppMessage>,
-    port: u16
+    port: u16,
+    exit_action: Arc<Mutex<MainLoopAction>>,
 ) -> ApiServerHandle{
     let reverb_files = Arc::new(config::get_available_ir_files());
 
@@ -513,6 +589,7 @@ pub fn start_api_server(
         let server_data = web::Data::new(ApiData {
             app_state,
             audio_tx,
+            exit_action,
             reverb_files,
         });
 
@@ -528,6 +605,8 @@ pub fn start_api_server(
                 .route("/", web::get().to(index))
                 // General
                 .route("/organ", web::get().to(get_organ_info))
+                .route("/organs", web::get().to(get_organ_library))
+                .route("/organs/load", web::post().to(load_organ)) 
                 .route("/panic", web::post().to(panic))
                 // Stops
                 .route("/stops", web::get().to(get_stops))
