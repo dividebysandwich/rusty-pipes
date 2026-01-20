@@ -352,12 +352,14 @@ impl App for EguiApp {
                 (evt, legacy_sysex)
             };
 
+            let current_name = &self.app_state.lock().unwrap().organ.name;
+
             if let (Some((event, _time)), _) = event_opt {
                 if self.organ_manager.is_learning() {
                     // We are learning inside the organ manager UI
                 } else {
                     // Not learning, check if this triggers an organ load
-                    if let Some(path) = self.organ_manager.find_organ_by_trigger(&event) {
+                    if let Some(path) = self.organ_manager.find_organ_by_trigger(&event, current_name) {
                         *self.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan { file: path };
                         self.gui_is_running.store(false, Ordering::SeqCst);
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -366,7 +368,7 @@ impl App for EguiApp {
             } else if let (_, Some(sysex)) = event_opt {
                 // Fallback for SysEx if it came through the old path (unlikely with new code, but safe)
                 let event = MidiEventSpec::SysEx(sysex);
-                if let Some(path) = self.organ_manager.find_organ_by_trigger(&event) {
+                if let Some(path) = self.organ_manager.find_organ_by_trigger(&event, current_name) {
                     *self.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan { file: path };
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }

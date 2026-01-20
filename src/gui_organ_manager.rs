@@ -194,11 +194,14 @@ impl OrganManagerUi {
         }
     }
 
-    pub fn find_organ_by_trigger(&self, event: &MidiEventSpec) -> Option<PathBuf> {
+    pub fn find_organ_by_trigger(&self, event: &crate::config::MidiEventSpec, ignore_name: &str) -> Option<PathBuf> {
         self.library
             .organs
             .iter()
-            .find(|o| o.activation_trigger.as_ref().map_or(false, |trig| trig == event))
+            .find(|o| {
+                o.name != ignore_name && 
+                o.activation_trigger.as_ref().map_or(false, |trig| trig == event)
+            })
             .map(|o| o.path.clone())
     }
 }

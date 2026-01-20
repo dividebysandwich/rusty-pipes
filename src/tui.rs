@@ -156,22 +156,22 @@ pub fn run_tui_loop(
         if tui_state.mode == AppMode::MainApp {
             let switch_target = {
                 let mut state = tui_state.app_state.lock().unwrap();
-            
+                let current_name = state.organ.name.clone();
                 // Take the event to consume it (preventing double processing)
                 if let Some((event, _time)) = state.last_midi_event_received.take() {
                     // Check against library
                     organ_library.organs.iter()
-                        .find(|o| o.activation_trigger.as_ref().map_or(false, |t| t == &event))
-                        .map(|o| o.path.clone())
-                } else if let Some(sysex) = state.last_sysex.take() {
-                    // Legacy SysEx check
+                       .find(|o| o.name != current_name && o.activation_trigger.as_ref().map_or(false, |t| t == &event)) // Check Name
+                       .map(|o| o.path.clone())
+               } else if let Some(sysex) = state.last_sysex.take() {
+                    // SysEx check
                     let event = MidiEventSpec::SysEx(sysex);
                     organ_library.organs.iter()
-                        .find(|o| o.activation_trigger.as_ref().map_or(false, |t| t == &event))
-                        .map(|o| o.path.clone())
-                } else {
-                    None
-                }
+                       .find(|o| o.name != current_name && o.activation_trigger.as_ref().map_or(false, |t| t == &event)) // Check Name
+                       .map(|o| o.path.clone())
+               } else {
+                   None
+               }
             };
 
             if let Some(path) = switch_target {
