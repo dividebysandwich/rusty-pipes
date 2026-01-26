@@ -5,9 +5,9 @@ use std::path::PathBuf;
 /// Shows a native file picker dialog.
 pub fn pick_file(title: &str, filters: &[(&str, &[&str])]) -> Result<Option<PathBuf>> {
     log::info!("Opening file picker with title: {}", title);
-    
+
     let mut dialog = FileDialog::new().set_title(title).set_directory("/");
-    
+
     for (name, extensions) in filters {
         dialog = dialog.add_filter(*name, *extensions);
     }

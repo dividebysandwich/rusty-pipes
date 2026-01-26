@@ -2,15 +2,15 @@ use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Clear},
-};
-use std::{
-    time::Duration,
-    fs,
-    path::{Path, PathBuf},
-    io::Stdout,
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 use rust_i18n::t;
+use std::{
+    fs,
+    io::Stdout,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 // Define the terminal type alias for convenience
 type TuiTerminal = Terminal<CrosstermBackend<Stdout>>;
@@ -37,11 +37,15 @@ impl<'a> TuiFilePickerState<'a> {
         state.load_entries()?;
         Ok(state)
     }
-    
+
     fn is_allowed_file(&self, path: &Path) -> bool {
-        if !path.is_file() { return false; }
-        if self.allowed_extensions.is_empty() { return true; } 
-        
+        if !path.is_file() {
+            return false;
+        }
+        if self.allowed_extensions.is_empty() {
+            return true;
+        }
+
         let ext = path.extension().and_then(|s| s.to_str());
         if let Some(ext) = ext {
             return self.allowed_extensions.contains(&ext);
@@ -71,7 +75,7 @@ impl<'a> TuiFilePickerState<'a> {
                         a.file_name().cmp(&b.file_name())
                     }
                 });
-                
+
                 self.entries = paths;
 
                 if !self.entries.is_empty() {
@@ -90,18 +94,28 @@ impl<'a> TuiFilePickerState<'a> {
     }
 
     fn next_item(&mut self) {
-        if self.entries.is_empty() { return; }
-        let i = self.list_state.selected().map_or(0, |i| (i + 1) % self.entries.len());
+        if self.entries.is_empty() {
+            return;
+        }
+        let i = self
+            .list_state
+            .selected()
+            .map_or(0, |i| (i + 1) % self.entries.len());
         self.list_state.select(Some(i));
     }
 
     fn prev_item(&mut self) {
-        if self.entries.is_empty() { return; }
+        if self.entries.is_empty() {
+            return;
+        }
         let len = self.entries.len();
-        let i = self.list_state.selected().map_or(0, |i| (i + len - 1) % len);
+        let i = self
+            .list_state
+            .selected()
+            .map_or(0, |i| (i + len - 1) % len);
         self.list_state.select(Some(i));
     }
-    
+
     fn activate_selected(&mut self) -> Result<Option<PathBuf>> {
         if let Some(path) = self.get_selected_path().cloned() {
             if path.is_dir() {
@@ -113,7 +127,7 @@ impl<'a> TuiFilePickerState<'a> {
         }
         Ok(None)
     }
-    
+
     fn go_up(&mut self) -> Result<()> {
         if let Some(parent) = self.current_path.parent() {
             self.current_path = parent.to_path_buf();
@@ -123,7 +137,6 @@ impl<'a> TuiFilePickerState<'a> {
     }
 }
 
-
 /// Runs a TUI loop to browse for a file.
 /// Returns the path if selected, or None if the user quits.
 pub fn run_file_picker(
@@ -132,9 +145,9 @@ pub fn run_file_picker(
     allowed_extensions: &[&str],
 ) -> Result<Option<PathBuf>> {
     let mut state = TuiFilePickerState::new(allowed_extensions)?;
-    
+
     let result: Option<PathBuf> = loop {
-        terminal.draw(|f| draw_file_picker_ui(f, &mut state, title))?; 
+        terminal.draw(|f| draw_file_picker_ui(f, &mut state, title))?;
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
@@ -143,18 +156,30 @@ pub fn run_file_picker(
                         KeyCode::Char('q') | KeyCode::Esc => break None,
                         KeyCode::Down | KeyCode::Char('j') => state.next_item(),
                         KeyCode::Up | KeyCode::Char('k') => state.prev_item(),
-                        KeyCode::PageDown => for _ in 0..5 { state.next_item(); },
-                        KeyCode::PageUp => for _ in 0..5 { state.prev_item(); },
+                        KeyCode::PageDown => {
+                            for _ in 0..5 {
+                                state.next_item();
+                            }
+                        }
+                        KeyCode::PageUp => {
+                            for _ in 0..5 {
+                                state.prev_item();
+                            }
+                        }
                         KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h') => {
                             if let Err(e) = state.go_up() {
-                                state.error_msg = Some(t!("tui_picker.err_generic", err = e).to_string());
+                                state.error_msg =
+                                    Some(t!("tui_picker.err_generic", err = e).to_string());
                             }
-                        },
+                        }
                         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
                             match state.activate_selected() {
                                 Ok(Some(file_path)) => break Some(file_path),
-                                Ok(None) => {},
-                                Err(e) => state.error_msg = Some(t!("tui_picker.err_generic", err = e).to_string()),
+                                Ok(None) => {}
+                                Err(e) => {
+                                    state.error_msg =
+                                        Some(t!("tui_picker.err_generic", err = e).to_string())
+                                }
                             }
                         }
                         _ => {}
@@ -183,18 +208,30 @@ fn draw_file_picker_ui(frame: &mut Frame, state: &mut TuiFilePickerState, title:
         .split(frame.area());
 
     // Header
-    let header_block = Block::default().borders(Borders::ALL)
+    let header_block = Block::default()
+        .borders(Borders::ALL)
         .title(t!("tui_picker.header_title_fmt", title = title).to_string());
-    let header_text = Paragraph::new(t!("tui_picker.current_path_fmt", path = state.current_path.display()).to_string())
-        .block(header_block);
+    let header_text = Paragraph::new(
+        t!(
+            "tui_picker.current_path_fmt",
+            path = state.current_path.display()
+        )
+        .to_string(),
+    )
+    .block(header_block);
     frame.render_widget(header_text, layout[0]);
 
     // File List
-    let items: Vec<ListItem> = state.entries.iter()
+    let items: Vec<ListItem> = state
+        .entries
+        .iter()
         .map(|path| {
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
             let line = if path.is_dir() {
-                Line::styled(format!("[{}/]", file_name), Style::default().fg(Color::Cyan))
+                Line::styled(
+                    format!("[{}/]", file_name),
+                    Style::default().fg(Color::Cyan),
+                )
             } else {
                 Line::from(file_name.into_owned())
             };
@@ -203,21 +240,28 @@ fn draw_file_picker_ui(frame: &mut Frame, state: &mut TuiFilePickerState, title:
         .collect();
 
     let list_widget = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(t!("tui_picker.entries_title")))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(t!("tui_picker.entries_title")),
+        )
         .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
         .highlight_symbol("» ");
-    
+
     frame.render_stateful_widget(list_widget, layout[1], &mut state.list_state);
 
     // Footer
     let footer_text = t!("tui_picker.footer_nav").to_string();
-    frame.render_widget(Paragraph::new(footer_text).alignment(Alignment::Center), layout[2]);
+    frame.render_widget(
+        Paragraph::new(footer_text).alignment(Alignment::Center),
+        layout[2],
+    );
 
     // Error
     if let Some(err) = &state.error_msg {
         frame.render_widget(
             Paragraph::new(err.as_str()).style(Style::default().fg(Color::Red)),
-            layout[3]
+            layout[3],
         );
     }
 }

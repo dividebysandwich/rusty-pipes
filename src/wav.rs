@@ -1,16 +1,16 @@
-use anyhow::{anyhow, Result, Error};
-use std::io::{Seek, SeekFrom, Read, Cursor};
+use anyhow::{anyhow, Error, Result};
+use byteorder::{LittleEndian, ReadBytesExt as OtherReadBytesExt};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
-use byteorder::{ReadBytesExt as OtherReadBytesExt, LittleEndian};
 
-const I16_MAX_F: f32 = 32768.0;  // 2^15
+const I16_MAX_F: f32 = 32768.0; // 2^15
 const I24_MAX_F: f32 = 8388608.0; // 2^23
 const I32_MAX_F: f32 = 2147483648.0; // 2^31
 
 /// Holds format information from the 'fmt ' chunk.
 #[derive(Debug, Clone, Copy)]
 pub struct WavFmt {
-    pub audio_format: u16,   // 1 = PCM, 3 = IEEE Float
+    pub audio_format: u16, // 1 = PCM, 3 = IEEE Float
     pub num_channels: u16,
     pub sample_rate: u32,
     pub bits_per_sample: u16,
@@ -39,21 +39,27 @@ pub fn parse_wav_metadata<R: Read + Seek>(
 ) -> Result<(WavFmt, Vec<OtherChunk>, u64, u32)> {
     let mut header = [0; 4];
     reader.read_exact(&mut header)?;
-    
+
     // --- Check for WavPack Signature ---
     if &header == b"wvpk" {
         return Err(Error::new(IsWavPackError));
     }
 
     // --- Standard RIFF Check ---
-    if &header != b"RIFF" { 
-        return Err(anyhow!("Not a RIFF file (found {:?}): {:?}", header, full_path_for_logs)); 
+    if &header != b"RIFF" {
+        return Err(anyhow!(
+            "Not a RIFF file (found {:?}): {:?}",
+            header,
+            full_path_for_logs
+        ));
     }
 
     let _file_size = reader.read_u32::<LittleEndian>()?;
     let mut wave_header = [0; 4];
     reader.read_exact(&mut wave_header)?;
-    if &wave_header != b"WAVE" { return Err(anyhow!("Not a WAVE file: {:?}", full_path_for_logs)); }
+    if &wave_header != b"WAVE" {
+        return Err(anyhow!("Not a WAVE file: {:?}", full_path_for_logs));
+    }
 
     let mut format_chunk: Option<WavFmt> = None;
     let mut data_chunk_info: Option<(u64, u32)> = None; // (offset, size)
@@ -86,20 +92,27 @@ pub fn parse_wav_metadata<R: Read + Seek>(
             _ => {
                 let mut chunk_data = vec![0; chunk_size as usize];
                 reader.read_exact(&mut chunk_data)?;
-                other_chunks.push(OtherChunk { id: chunk_id, data: chunk_data });
+                other_chunks.push(OtherChunk {
+                    id: chunk_id,
+                    data: chunk_data,
+                });
             }
         }
-        if reader.seek(SeekFrom::Start(next_chunk_aligned_pos)).is_err() {
+        if reader
+            .seek(SeekFrom::Start(next_chunk_aligned_pos))
+            .is_err()
+        {
             break; // Reached end of file
         }
     }
-    
-    let format = format_chunk.ok_or_else(|| anyhow!("File has no 'fmt ' chunk: {:?}", full_path_for_logs))?;
-    let (data_offset, data_size) = data_chunk_info.ok_or_else(|| anyhow!("File has no 'data' chunk: {:?}", full_path_for_logs))?;
+
+    let format = format_chunk
+        .ok_or_else(|| anyhow!("File has no 'fmt ' chunk: {:?}", full_path_for_logs))?;
+    let (data_offset, data_size) = data_chunk_info
+        .ok_or_else(|| anyhow!("File has no 'data' chunk: {:?}", full_path_for_logs))?;
 
     Ok((format, other_chunks, data_offset, data_size))
 }
-
 
 /// An iterator that reads samples from a WAV file's data chunk
 /// and converts them to f32.
@@ -122,7 +135,7 @@ impl<R: Read + Seek> WavSampleReader<R> {
             bytes_read: 0,
         })
     }
-    
+
     #[allow(dead_code)]
     pub fn sample_rate(&self) -> u32 {
         self.fmt.sample_rate
@@ -166,11 +179,13 @@ impl<R: Read + Seek> Iterator for WavSampleReader<R> {
                 Some((sample as f32) / I24_MAX_F)
             }
             32 => {
-                if self.fmt.audio_format == 1 { // 32-bit PCM
+                if self.fmt.audio_format == 1 {
+                    // 32-bit PCM
                     let sample = self.reader.read_i32::<LittleEndian>().ok()?;
                     self.bytes_read += 4;
                     Some((sample as f32) / I32_MAX_F)
-                } else { // 32-bit Float
+                } else {
+                    // 32-bit Float
                     let sample = self.reader.read_f32::<LittleEndian>().ok()?;
                     self.bytes_read += 4;
                     Some(sample)
@@ -189,11 +204,14 @@ pub fn parse_smpl_chunk(data: &[u8]) -> Option<(u32, u32)> {
     // A 'smpl' chunk has a 36-byte header, followed by an array of loops.
     // Each loop entry is 24 bytes.
     if data.len() < 36 {
-        log::warn!("[parse_smpl_chunk] 'smpl' data is too short for header: {} bytes", data.len());
+        log::warn!(
+            "[parse_smpl_chunk] 'smpl' data is too short for header: {} bytes",
+            data.len()
+        );
         return None;
     }
     let mut cursor = Cursor::new(data);
-    
+
     // Seek to num_sample_loops (offset 28)
     if cursor.seek(SeekFrom::Start(28)).is_err() {
         return None; // Should not happen
@@ -215,9 +233,12 @@ pub fn parse_smpl_chunk(data: &[u8]) -> Option<(u32, u32)> {
     if cursor.seek(SeekFrom::Start(36)).is_err() {
         return None;
     }
-    
+
     if data.len() < 36 + 24 {
-        log::warn!("[parse_smpl_chunk] 'smpl' data is too short for one loop entry: {} bytes", data.len());
+        log::warn!(
+            "[parse_smpl_chunk] 'smpl' data is too short for one loop entry: {} bytes",
+            data.len()
+        );
         return None;
     }
 
@@ -228,8 +249,12 @@ pub fn parse_smpl_chunk(data: &[u8]) -> Option<(u32, u32)> {
     let loop_end = cursor.read_u32::<LittleEndian>().ok()?; // This is the *sample after* the loop
     let _fraction = cursor.read_u32::<LittleEndian>().ok()?;
     let _play_count = cursor.read_u32::<LittleEndian>().ok()?; // 0 = infinite
-    
-    log::debug!("[parse_smpl_chunk] Found loop: {} -> {}", loop_start, loop_end);
+
+    log::debug!(
+        "[parse_smpl_chunk] Found loop: {} -> {}",
+        loop_start,
+        loop_end
+    );
 
     // The 'end' sample is exclusive, so `loop_end - 1` is the last sample.
     // We'll use a check `current_frame >= loop_end`
@@ -239,8 +264,10 @@ pub fn parse_smpl_chunk(data: &[u8]) -> Option<(u32, u32)> {
 /// Parses a 'cue ' chunk's data and returns a list of sample offsets.
 pub fn parse_cue_chunk(data: &[u8]) -> Vec<u32> {
     let mut positions = Vec::new();
-    
-    if data.len() < 4 { return positions; }
+
+    if data.len() < 4 {
+        return positions;
+    }
     let mut cursor = Cursor::new(data);
 
     // Read num_points
@@ -250,26 +277,32 @@ pub fn parse_cue_chunk(data: &[u8]) -> Vec<u32> {
     };
 
     // Each CuePoint is 24 bytes.
-    // Offset 4 (dwPosition) and 20 (dwSampleOffset) are relevant. 
+    // Offset 4 (dwPosition) and 20 (dwSampleOffset) are relevant.
     // Usually dwSampleOffset is the most reliable for PCM.
-    
+
     for _ in 0..num_points {
         // Safe check for remaining data
         let current_pos = cursor.position();
-        if (data.len() as u64 - current_pos) < 24 { break; }
+        if (data.len() as u64 - current_pos) < 24 {
+            break;
+        }
 
         // Skip Name (4)
-        if cursor.seek(SeekFrom::Current(4)).is_err() { break; }
-        
+        if cursor.seek(SeekFrom::Current(4)).is_err() {
+            break;
+        }
+
         // Read dwPosition (4) - roughly the sample index
         let _dw_position = match cursor.read_u32::<LittleEndian>() {
             Ok(n) => n,
             Err(_) => break,
         };
-        
+
         // Skip fccChunk(4), dwChunkStart(4), dwBlockStart(4) -> 12 bytes
-        if cursor.seek(SeekFrom::Current(12)).is_err() { break; }
-        
+        if cursor.seek(SeekFrom::Current(12)).is_err() {
+            break;
+        }
+
         // Read dwSampleOffset (4)
         let sample_offset = match cursor.read_u32::<LittleEndian>() {
             Ok(n) => n,
@@ -278,7 +311,7 @@ pub fn parse_cue_chunk(data: &[u8]) -> Vec<u32> {
 
         positions.push(sample_offset);
     }
-    
+
     positions.sort();
     positions
 }

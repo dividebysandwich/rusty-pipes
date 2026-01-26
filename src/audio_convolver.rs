@@ -7,7 +7,12 @@ use std::path::Path;
 use crate::wav::{parse_wav_metadata, WavSampleReader};
 
 /// Simple Linear Interpolation Resampler.
-pub fn resample_interleaved(input: &[f32], channels: usize, from_rate: u32, to_rate: u32) -> Vec<f32> {
+pub fn resample_interleaved(
+    input: &[f32],
+    channels: usize,
+    from_rate: u32,
+    to_rate: u32,
+) -> Vec<f32> {
     if from_rate == to_rate || input.is_empty() {
         return input.to_vec();
     }
@@ -30,9 +35,14 @@ pub fn resample_interleaved(input: &[f32], channels: usize, from_rate: u32, to_r
             output.push(interpolated);
         }
     }
-    
-    log::info!("[Resampler] Resampled IR from {}Hz to {}Hz. ({} -> {} frames)", 
-        from_rate, to_rate, input_frames, output_frames);
+
+    log::info!(
+        "[Resampler] Resampled IR from {}Hz to {}Hz. ({} -> {} frames)",
+        from_rate,
+        to_rate,
+        input_frames,
+        output_frames
+    );
 
     output
 }
@@ -62,25 +72,42 @@ impl StereoConvolver {
             .map_err(|e| anyhow!("[Convolver] Failed to open IR {:?}: {}", path, e))?;
         let mut reader = BufReader::new(file);
 
-        let (fmt, _chunks, data_start, data_size) = 
-            parse_wav_metadata(&mut reader, path)
-            .map_err(|e| anyhow!("[Convolver] Failed to parse IR metadata for {:?}: {}", path, e))?;
+        let (fmt, _chunks, data_start, data_size) =
+            parse_wav_metadata(&mut reader, path).map_err(|e| {
+                anyhow!(
+                    "[Convolver] Failed to parse IR metadata for {:?}: {}",
+                    path,
+                    e
+                )
+            })?;
 
-        let decoder = WavSampleReader::new(reader, fmt, data_start, data_size)
-            .map_err(|e| anyhow!("[Convolver] Failed to create IR reader for {:?}: {}", path, e))?;
-        
+        let decoder = WavSampleReader::new(reader, fmt, data_start, data_size).map_err(|e| {
+            anyhow!(
+                "[Convolver] Failed to create IR reader for {:?}: {}",
+                path,
+                e
+            )
+        })?;
+
         let mut ir_samples_interleaved: Vec<f32> = decoder.collect();
         if ir_samples_interleaved.is_empty() {
-            return Err(anyhow!("[Convolver] IR file {:?} contains no samples.", path));
+            return Err(anyhow!(
+                "[Convolver] IR file {:?} contains no samples.",
+                path
+            ));
         }
 
         if fmt.sample_rate != sample_rate {
-            log::warn!("[Convolver] IR Rate Mismatch (File: {}, Engine: {}). Resampling...", fmt.sample_rate, sample_rate);
-            ir_samples_interleaved = resample_interleaved(
-                &ir_samples_interleaved, 
-                fmt.num_channels as usize, 
-                fmt.sample_rate, 
+            log::warn!(
+                "[Convolver] IR Rate Mismatch (File: {}, Engine: {}). Resampling...",
+                fmt.sample_rate,
                 sample_rate
+            );
+            ir_samples_interleaved = resample_interleaved(
+                &ir_samples_interleaved,
+                fmt.num_channels as usize,
+                fmt.sample_rate,
+                sample_rate,
             );
         }
 
@@ -92,12 +119,12 @@ impl StereoConvolver {
             ir_l = ir_samples_interleaved;
             ir_r = ir_l.clone();
         } else {
-             let num_frames = ir_samples_interleaved.len() / ir_channels;
+            let num_frames = ir_samples_interleaved.len() / ir_channels;
             ir_l.reserve(num_frames);
             ir_r.reserve(num_frames);
             for i in 0..num_frames {
-                ir_l.push(ir_samples_interleaved[i * ir_channels]); 
-                ir_r.push(ir_samples_interleaved[i * ir_channels + 1]); 
+                ir_l.push(ir_samples_interleaved[i * ir_channels]);
+                ir_r.push(ir_samples_interleaved[i * ir_channels + 1]);
             }
         }
 
@@ -107,13 +134,21 @@ impl StereoConvolver {
         let global_peak = max_l.max(max_r);
 
         if global_peak > 0.0 {
-            let target_peak = 0.015; 
+            let target_peak = 0.015;
             let scale = target_peak / global_peak;
-            
-            log::debug!("[Convolver] Normalizing IR. Input Peak: {:.4}, Scale Factor: {:.4}", global_peak, scale);
 
-            for x in ir_l.iter_mut() { *x *= scale; }
-            for x in ir_r.iter_mut() { *x *= scale; }
+            log::debug!(
+                "[Convolver] Normalizing IR. Input Peak: {:.4}, Scale Factor: {:.4}",
+                global_peak,
+                scale
+            );
+
+            for x in ir_l.iter_mut() {
+                *x *= scale;
+            }
+            for x in ir_r.iter_mut() {
+                *x *= scale;
+            }
         } else {
             log::warn!("[Convolver] IR appears to be silent.");
         }
@@ -123,14 +158,14 @@ impl StereoConvolver {
 
         let _ = convolver_l.init(block_size, &ir_l);
         let _ = convolver_r.init(block_size, &ir_r);
-        
+
         log::info!("[Convolver] Successfully prepared IR.");
-        
+
         Ok(Self {
             convolver_l,
             convolver_r,
             is_loaded: true,
-            block_size
+            block_size,
         })
     }
 
@@ -140,7 +175,7 @@ impl StereoConvolver {
             wet_r.fill(0.0);
             return;
         }
-        
+
         if dry_l.len() != self.block_size || dry_r.len() != self.block_size {
             log::error!("[Convolver] Block size mismatch!");
             wet_l.fill(0.0);

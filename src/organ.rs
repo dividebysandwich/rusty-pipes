@@ -1,19 +1,19 @@
 use anyhow::{anyhow, Context, Result};
+use bytemuck::{cast_slice, cast_slice_mut};
+use rayon::prelude::*;
+use rust_i18n::t;
 use std::collections::{HashMap, HashSet};
+use std::fs;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::fs;
-use rayon::prelude::*;
-use bytemuck::{cast_slice, cast_slice_mut};
-use rust_i18n::t;
+use std::sync::{mpsc, Arc};
 
 use crate::wav_converter;
 use crate::wav_converter::SampleMetadata;
 
-use crate::organ_hauptwerk; 
 use crate::organ_grandorgue;
+use crate::organ_hauptwerk;
 
 /// Top-level structure for the entire organ definition.
 #[derive(Debug, Default)]
@@ -23,8 +23,8 @@ pub struct Organ {
     pub ranks: HashMap<String, Rank>, // Keyed by rank ID (e.g., "013")
     pub windchest_groups: HashMap<String, WindchestGroup>, // Keyed by group ID (e.g. "001")
     pub tremulants: HashMap<String, Tremulant>, // Keyed by tremulant ID (e.g. "001")
-    pub base_path: PathBuf, // The directory containing the .organ file
-    pub cache_path: PathBuf, // The directory for cached converted samples
+    pub base_path: PathBuf,           // The directory containing the .organ file
+    pub cache_path: PathBuf,          // The directory for cached converted samples
     pub sample_cache: Option<HashMap<PathBuf, Arc<Vec<f32>>>>, // Cache for loaded samples
     pub metadata_cache: Option<HashMap<PathBuf, Arc<SampleMetadata>>>, // Cache for loop points etc.
 }
@@ -33,7 +33,7 @@ pub struct Organ {
 #[derive(Debug, Clone)]
 pub struct Stop {
     pub name: String,
-    pub id_str: String, // e.g., "013"
+    pub id_str: String,        // e.g., "013"
     pub rank_ids: Vec<String>, // IDs of ranks it triggers
 }
 
@@ -42,7 +42,7 @@ pub struct Stop {
 #[derive(Debug)]
 pub struct Rank {
     pub name: String,
-    pub id_str: String, // e.g., "013"
+    pub id_str: String,      // e.g., "013"
     pub division_id: String, // e.g., "SW"
     pub first_midi_note: u8,
     pub pipe_count: usize,
@@ -69,10 +69,10 @@ pub struct WindchestGroup {
 pub struct Tremulant {
     pub name: String,
     pub id_str: String,
-    pub period: f32,        // Period in ms
-    pub start_rate: f32,     
+    pub period: f32, // Period in ms
+    pub start_rate: f32,
     pub stop_rate: f32,
-    pub amp_mod_depth: f32, // Amplitude modulation depth
+    pub amp_mod_depth: f32,      // Amplitude modulation depth
     pub switch_ids: Vec<String>, // Switches that activate this tremulant
 }
 
@@ -101,7 +101,7 @@ pub struct ReleaseSample {
 pub struct ConversionTask {
     pub relative_path: PathBuf,
     // We store cents as an integer (x100) to allow hashing/equality checks
-    pub tuning_cents_int: i32, 
+    pub tuning_cents_int: i32,
     pub to_16bit: bool,
 }
 
@@ -111,9 +111,9 @@ impl Organ {
     ///
     /// `max_preload_ram_mb`: The maximum amount of RAM (in MB) to dedicate to preloading attack transients.
     pub fn load(
-        path: &Path, 
-        convert_to_16_bit: bool, 
-        pre_cache: bool, 
+        path: &Path,
+        convert_to_16_bit: bool,
+        pre_cache: bool,
         original_tuning: bool,
         target_sample_rate: u32,
         progress_tx: Option<mpsc::Sender<(f32, String)>>,
@@ -121,30 +121,55 @@ impl Organ {
     ) -> Result<Self> {
         let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
         let loader_tx = progress_tx.clone();
-        
+
         // Dispatch to specific loader modules
         let mut organ = if extension == "organ" {
-            organ_grandorgue::load_grandorgue_dir(path, convert_to_16_bit, original_tuning, target_sample_rate, &loader_tx)?
+            organ_grandorgue::load_grandorgue_dir(
+                path,
+                convert_to_16_bit,
+                original_tuning,
+                target_sample_rate,
+                &loader_tx,
+            )?
         } else if extension == "orgue" {
-            organ_grandorgue::load_grandorgue_zip(path, convert_to_16_bit, original_tuning, target_sample_rate, &loader_tx)?
+            organ_grandorgue::load_grandorgue_zip(
+                path,
+                convert_to_16_bit,
+                original_tuning,
+                target_sample_rate,
+                &loader_tx,
+            )?
         } else if extension == "Organ_Hauptwerk_xml" || extension == "xml" {
-            organ_hauptwerk::load_hauptwerk(path, convert_to_16_bit, false, original_tuning, target_sample_rate, &loader_tx)?
+            organ_hauptwerk::load_hauptwerk(
+                path,
+                convert_to_16_bit,
+                false,
+                original_tuning,
+                target_sample_rate,
+                &loader_tx,
+            )?
         } else {
             return Err(anyhow!("Unsupported organ file format: {:?}", path));
         };
 
         if pre_cache {
             log::info!("[Organ] Pre-caching mode enabled. This may take a moment...");
-            
+
             // Initialize the caches
             organ.sample_cache = Some(HashMap::new());
             organ.metadata_cache = Some(HashMap::new());
-            
+
             // Run the parallel loader
             organ.run_parallel_precache(target_sample_rate, progress_tx)?;
         } else {
             // Dynamically calculate frame count based on RAM budget
-            organ.preload_attack_samples(target_sample_rate, progress_tx, max_preload_ram_mb, original_tuning, convert_to_16_bit)?;
+            organ.preload_attack_samples(
+                target_sample_rate,
+                progress_tx,
+                max_preload_ram_mb,
+                original_tuning,
+                convert_to_16_bit,
+            )?;
         }
         Ok(organ)
     }
@@ -161,13 +186,15 @@ impl Organ {
 
     /// Reads a file to a String, falling back to Latin-1 (ISO-8859-1) if UTF-8 fails.
     pub fn read_file_tolerant(path: &Path) -> Result<String> {
-        let bytes = fs::read(path)
-            .with_context(|| format!("Failed to read file {:?}", path))?;
+        let bytes = fs::read(path).with_context(|| format!("Failed to read file {:?}", path))?;
 
         match String::from_utf8(bytes) {
             Ok(s) => Ok(s),
             Err(e) => {
-                log::warn!("File {:?} is not valid UTF-8. Falling back to Latin-1 decoding.", path);
+                log::warn!(
+                    "File {:?} is not valid UTF-8. Falling back to Latin-1 decoding.",
+                    path
+                );
                 // Recover the bytes from the error
                 let bytes = e.into_bytes();
                 // Manual ISO-8859-1 decoding: bytes map 1:1 to chars
@@ -181,7 +208,9 @@ impl Organ {
         let settings_path = confy::get_configuration_file_path("rusty-pipes", "settings")?;
 
         // Get the parent directory (e.g., .../Application Support/rusty-pipes/)
-        let config_dir = settings_path.parent().ok_or_else(|| anyhow::anyhow!("Could not get cache directory"))?;
+        let config_dir = settings_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Could not get cache directory"))?;
         // Append "cache/<OrganName>"
         let organ_cache = config_dir.join("cache").join(organ_name);
         if !organ_cache.exists() {
@@ -196,7 +225,7 @@ impl Organ {
         let note_str = stem.split('-').next()?;
         match note_str.parse::<u8>() {
             Ok(midi_note) => Some(midi_note as f32),
-            Err(_) => None
+            Err(_) => None,
         }
     }
 
@@ -210,25 +239,31 @@ impl Organ {
     ) -> Result<()> {
         let task_list: Vec<ConversionTask> = tasks.into_iter().collect();
         let total = task_list.len();
-        if total == 0 { return Ok(()); }
+        if total == 0 {
+            return Ok(());
+        }
 
         log::info!("Processing {} unique audio samples in parallel...", total);
         let completed = AtomicUsize::new(0);
 
         task_list.par_iter().for_each(|task| {
             let cents = task.tuning_cents_int as f32 / 100.0;
-            
+
             match wav_converter::process_sample_file(
                 &task.relative_path,
                 base_path,
                 cache_path,
                 cents,
                 task.to_16bit,
-                target_sample_rate
+                target_sample_rate,
             ) {
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
-                    log::error!("Failed to process audio file {:?}: {}", task.relative_path, e);
+                    log::error!(
+                        "Failed to process audio file {:?}: {}",
+                        task.relative_path,
+                        e
+                    );
                 }
             }
 
@@ -247,32 +282,41 @@ impl Organ {
     /// Helper to get the transient cache directory (~/.config/transientcache/)
     fn get_transient_cache_path(&self) -> Result<PathBuf> {
         let settings_path = confy::get_configuration_file_path("rusty-pipes", "settings")?;
-        let config_dir = settings_path.parent()
+        let config_dir = settings_path
+            .parent()
             .ok_or_else(|| anyhow!("Could not determine config directory"))?;
-        
+
         let cache_dir = config_dir.join("transientcache");
         if !cache_dir.exists() {
             fs::create_dir_all(&cache_dir)?;
         }
 
         // Sanitize organ name for filename
-        let safe_name: String = self.name.chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        let safe_name: String = self
+            .name
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
-        
+
         Ok(cache_dir.join(format!("{}.bin", safe_name)))
     }
 
     /// Tries to load the consolidated cache from disk.
     /// Returns None if file doesn't exist, has invalid header, or frame count mismatches.
     fn load_transient_cache(
-        &self, 
-        path: &Path, 
+        &self,
+        path: &Path,
         expected_frames: usize,
         expected_original_tuning: bool,
         expected_sample_rate: u32,
         expected_16bit: bool,
-        progress_tx: &Option<mpsc::Sender<(f32, String)>>
+        progress_tx: &Option<mpsc::Sender<(f32, String)>>,
     ) -> Option<HashMap<PathBuf, Arc<Vec<f32>>>> {
         let file = fs::File::open(path).ok()?;
         let mut reader = BufReader::with_capacity(1_024 * 1_024, file);
@@ -290,13 +334,19 @@ impl Organ {
         let stored_frames = u64::from_le_bytes(frames_buf) as usize;
 
         if stored_frames != expected_frames {
-            log::info!("[Cache] RAM settings changed (old: {}, new: {}). Invalidating cache.", stored_frames, expected_frames);
-            return None; 
+            log::info!(
+                "[Cache] RAM settings changed (old: {}, new: {}). Invalidating cache.",
+                stored_frames,
+                expected_frames
+            );
+            return None;
         }
 
         // Validate Tuning Setting
         let mut bool_buf = [0u8; 1];
-        if reader.read_exact(&mut bool_buf).is_err() { return None; }
+        if reader.read_exact(&mut bool_buf).is_err() {
+            return None;
+        }
         let stored_tuning = bool_buf[0] != 0;
 
         if stored_tuning != expected_original_tuning {
@@ -306,16 +356,24 @@ impl Organ {
 
         // Validate Sample Rate (New)
         let mut sr_buf = [0u8; 4];
-        if reader.read_exact(&mut sr_buf).is_err() { return None; }
+        if reader.read_exact(&mut sr_buf).is_err() {
+            return None;
+        }
         let stored_sr = u32::from_le_bytes(sr_buf);
 
         if stored_sr != expected_sample_rate {
-            log::info!("[Cache] Sample rate changed (old: {}, new: {}). Invalidating.", stored_sr, expected_sample_rate);
+            log::info!(
+                "[Cache] Sample rate changed (old: {}, new: {}). Invalidating.",
+                stored_sr,
+                expected_sample_rate
+            );
             return None;
         }
 
         // Validate 16-bit Setting (New)
-        if reader.read_exact(&mut bool_buf).is_err() { return None; }
+        if reader.read_exact(&mut bool_buf).is_err() {
+            return None;
+        }
         let stored_16bit = bool_buf[0] != 0;
 
         if stored_16bit != expected_16bit {
@@ -328,7 +386,10 @@ impl Organ {
         reader.read_exact(&mut count_buf).ok()?;
         let total_count = u64::from_le_bytes(count_buf) as usize;
 
-        log::info!("[Cache] Fast-loading {} samples from cache file...", total_count);
+        log::info!(
+            "[Cache] Fast-loading {} samples from cache file...",
+            total_count
+        );
 
         let mut map = HashMap::with_capacity(total_count);
         let mut path_buffer = Vec::new();
@@ -336,19 +397,25 @@ impl Organ {
         for i in 0..total_count {
             // Read Path Length
             let mut len_buf = [0u8; 8];
-            if reader.read_exact(&mut len_buf).is_err() { break; }
+            if reader.read_exact(&mut len_buf).is_err() {
+                break;
+            }
             let path_len = u64::from_le_bytes(len_buf) as usize;
 
             // Read Path String
             path_buffer.resize(path_len, 0);
-            if reader.read_exact(&mut path_buffer).is_err() { break; }
-            
+            if reader.read_exact(&mut path_buffer).is_err() {
+                break;
+            }
+
             // Use lossy utf8 conversion to avoid crashing on random bytes
             let path_str = String::from_utf8_lossy(&path_buffer).to_string();
             let path = PathBuf::from(path_str);
 
             // Read Data Length (number of f32s)
-            if reader.read_exact(&mut len_buf).is_err() { break; }
+            if reader.read_exact(&mut len_buf).is_err() {
+                break;
+            }
             let data_len = u64::from_le_bytes(len_buf) as usize;
 
             // Allocate the memory as f32s (ensures correct alignment)
@@ -359,7 +426,9 @@ impl Organ {
             let byte_slice: &mut [u8] = cast_slice_mut(&mut samples);
 
             // Read directly from file into the vector's memory
-            if reader.read_exact(byte_slice).is_err() { break; }
+            if reader.read_exact(byte_slice).is_err() {
+                break;
+            }
 
             map.insert(path, Arc::new(samples));
 
@@ -381,14 +450,14 @@ impl Organ {
 
     /// Writes the loaded chunks to a single binary file.
     fn save_transient_cache(
-        &self, 
-        path: &Path, 
-        data: &HashMap<PathBuf, Arc<Vec<f32>>>, 
+        &self,
+        path: &Path,
+        data: &HashMap<PathBuf, Arc<Vec<f32>>>,
         frames_per_sample: usize,
         original_tuning: bool,
         sample_rate: u32,
         to_16bit: bool,
-        progress_tx: &Option<mpsc::Sender<(f32, String)>>
+        progress_tx: &Option<mpsc::Sender<(f32, String)>>,
     ) -> Result<()> {
         let file = fs::File::create(path)?;
         let mut writer = BufWriter::with_capacity(1_024 * 1_024, file);
@@ -432,9 +501,13 @@ impl Organ {
                 }
             }
         }
-        
+
         writer.flush()?;
-        log::info!("[Cache] Wrote {} samples to transient cache at {:?}", total_count, path);
+        log::info!(
+            "[Cache] Wrote {} samples to transient cache at {:?}",
+            total_count,
+            path
+        );
         Ok(())
     }
 
@@ -446,8 +519,11 @@ impl Organ {
         original_tuning: bool,
         convert_to_16bit: bool,
     ) -> Result<()> {
-        log::info!("[Cache] Calculating pre-load budget based on {} MB limit...", max_preload_ram_mb);
-        
+        log::info!(
+            "[Cache] Calculating pre-load budget based on {} MB limit...",
+            max_preload_ram_mb
+        );
+
         // Collect all paths that need loading
         let mut paths = HashSet::new();
         for rank in self.ranks.values() {
@@ -460,23 +536,23 @@ impl Organ {
         }
         let unique_paths: Vec<PathBuf> = paths.into_iter().collect();
         let total_files = unique_paths.len();
-        
-        if total_files == 0 { 
+
+        if total_files == 0 {
             log::debug!("[Cache] No samples found to preload.");
-            return Ok(()); 
+            return Ok(());
         }
 
         // Calculate frames per file based on RAM budget
         // Total bytes available
         let total_bytes_budget = max_preload_ram_mb as usize * 1024 * 1024;
-        
+
         // Bytes available per unique file
         let bytes_per_file = total_bytes_budget / total_files;
 
         // Size of one f32 sample
         let bytes_per_float = std::mem::size_of::<f32>();
 
-        // Heuristic: Assume Stereo (2 channels) to be safe. 
+        // Heuristic: Assume Stereo (2 channels) to be safe.
         // If files are mono, we simply load less duration than we could have, but we won't crash RAM.
         // If files are stereo, we hit the target exactly.
         let assumed_channels = 2;
@@ -487,9 +563,17 @@ impl Organ {
         // Convert to milliseconds for logging (just for user info)
         let ms_preload = (frames_to_preload as f32 / target_sample_rate as f32) * 1000.0;
 
-        log::info!("[Cache] Found {} unique samples. RAM Budget: {} MB.", total_files, max_preload_ram_mb);
-        log::info!("[Cache] Allocation: ~{} bytes/file -> Preloading {} frames (~{:.1} ms) per sample.", 
-            bytes_per_file, frames_to_preload, ms_preload);
+        log::info!(
+            "[Cache] Found {} unique samples. RAM Budget: {} MB.",
+            total_files,
+            max_preload_ram_mb
+        );
+        log::info!(
+            "[Cache] Allocation: ~{} bytes/file -> Preloading {} frames (~{:.1} ms) per sample.",
+            bytes_per_file,
+            frames_to_preload,
+            ms_preload
+        );
 
         if frames_to_preload == 0 {
             log::warn!("[Cache] RAM budget is too low to preload any meaningful data per file.");
@@ -502,7 +586,14 @@ impl Organ {
 
         if let Ok(cache_path) = &cache_path_result {
             if cache_path.exists() {
-                if let Some(cached_data) = self.load_transient_cache(cache_path, frames_to_preload, original_tuning, target_sample_rate, convert_to_16bit, &progress_tx) {
+                if let Some(cached_data) = self.load_transient_cache(
+                    cache_path,
+                    frames_to_preload,
+                    original_tuning,
+                    target_sample_rate,
+                    convert_to_16bit,
+                    &progress_tx,
+                ) {
                     if let Some(tx) = &progress_tx {
                         let _ = tx.send((1.0, t!("gui.progress_cache_done").to_string()));
                     }
@@ -520,28 +611,43 @@ impl Organ {
             let map: HashMap<PathBuf, Arc<Vec<f32>>> = unique_paths
                 .par_iter()
                 .filter_map(|path| {
-                     // Load just the start using a helper from wav_converter
-                     match wav_converter::load_sample_head(path, target_sample_rate, frames_to_preload) {
-                         Ok(data) => {
-                             let current = loaded_count.fetch_add(1, Ordering::Relaxed);
-                             if let Some(tx) = &progress_tx {
-                                 if current % 50 == 0 {
-                                     let _ = tx.send((current as f32 / total_files as f32, t!("gui.progress_load_transients").to_string()));
-                                 }
-                             }
-                             Some((path.clone(), Arc::new(data)))
-                         },
-                         Err(e) => {
-                             log::warn!("Failed to preload {:?}: {}", path, e);
-                             None
-                         }
-                     }
+                    // Load just the start using a helper from wav_converter
+                    match wav_converter::load_sample_head(
+                        path,
+                        target_sample_rate,
+                        frames_to_preload,
+                    ) {
+                        Ok(data) => {
+                            let current = loaded_count.fetch_add(1, Ordering::Relaxed);
+                            if let Some(tx) = &progress_tx {
+                                if current % 50 == 0 {
+                                    let _ = tx.send((
+                                        current as f32 / total_files as f32,
+                                        t!("gui.progress_load_transients").to_string(),
+                                    ));
+                                }
+                            }
+                            Some((path.clone(), Arc::new(data)))
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to preload {:?}: {}", path, e);
+                            None
+                        }
+                    }
                 })
                 .collect();
 
             // Save to cache for next time
             if let Ok(cache_path) = &cache_path_result {
-                if let Err(e) = self.save_transient_cache(cache_path, &map, frames_to_preload, original_tuning, target_sample_rate, convert_to_16bit, &progress_tx) {
+                if let Err(e) = self.save_transient_cache(
+                    cache_path,
+                    &map,
+                    frames_to_preload,
+                    original_tuning,
+                    target_sample_rate,
+                    convert_to_16bit,
+                    &progress_tx,
+                ) {
                     log::error!("Failed to save transient cache: {}", e);
                 }
             }
@@ -562,8 +668,11 @@ impl Organ {
                 }
             }
         }
-        
-        log::info!("[Cache] Successfully pre-loaded {} attack headers.", chunks_map.len());
+
+        log::info!(
+            "[Cache] Successfully pre-loaded {} attack headers.",
+            chunks_map.len()
+        );
         Ok(())
     }
 
@@ -582,11 +691,10 @@ impl Organ {
 
     /// Runs the pre-caching in parallel after the organ struct is built.
     fn run_parallel_precache(
-        &mut self, 
+        &mut self,
         target_sample_rate: u32,
-        progress_tx: Option<mpsc::Sender<(f32, String)>>
+        progress_tx: Option<mpsc::Sender<(f32, String)>>,
     ) -> Result<()> {
-        
         let paths_to_load: Vec<PathBuf> = self.get_all_unique_sample_paths().into_iter().collect();
         let total_samples = paths_to_load.len();
         if total_samples == 0 {
@@ -601,8 +709,9 @@ impl Organ {
             .par_iter()
             .map(|path| {
                 // This closure runs on a different thread
-                let (samples, metadata) = wav_converter::load_sample_as_f32(path, target_sample_rate)
-                    .with_context(|| format!("Failed to load sample {:?}", path))?;
+                let (samples, metadata) =
+                    wav_converter::load_sample_as_f32(path, target_sample_rate)
+                        .with_context(|| format!("Failed to load sample {:?}", path))?;
 
                 // Report progress atomically
                 let count = loaded_sample_count.fetch_add(1, Ordering::SeqCst) + 1;

@@ -1,15 +1,14 @@
 use anyhow::Result;
+use chrono::Local;
+use midly::{
+    num::*, Format, Header, MidiMessage as MidlyMidiMessage, Smf, Timing, TrackEvent,
+    TrackEventKind,
+};
 use std::fs;
 use std::time::Instant;
-use midly::{
-    Format, Header, Smf, TrackEvent, TrackEventKind, 
-    MidiMessage as MidlyMidiMessage, Timing, num::*
-};
-use chrono::Local;
-
 
 pub struct MidiRecorder {
-    track: Vec<TrackEvent<'static>>, 
+    track: Vec<TrackEvent<'static>>,
     last_event_time: Instant,
     organ_name: String,
 }
@@ -39,17 +38,26 @@ impl MidiRecorder {
         let u7_p2 = u7::from(param2 & 0x7F);
 
         let kind = match status_byte & 0xF0 {
-            0x90 => Some(TrackEventKind::Midi { 
-                channel: u4_channel, 
-                message: MidlyMidiMessage::NoteOn { key: u7_p1, vel: u7_p2 } 
+            0x90 => Some(TrackEventKind::Midi {
+                channel: u4_channel,
+                message: MidlyMidiMessage::NoteOn {
+                    key: u7_p1,
+                    vel: u7_p2,
+                },
             }),
-            0x80 => Some(TrackEventKind::Midi { 
-                channel: u4_channel, 
-                message: MidlyMidiMessage::NoteOff { key: u7_p1, vel: u7_p2 } 
+            0x80 => Some(TrackEventKind::Midi {
+                channel: u4_channel,
+                message: MidlyMidiMessage::NoteOff {
+                    key: u7_p1,
+                    vel: u7_p2,
+                },
             }),
-            0xB0 => Some(TrackEventKind::Midi { 
-                channel: u4_channel, 
-                message: MidlyMidiMessage::Controller { controller: u7_p1, value: u7_p2 } 
+            0xB0 => Some(TrackEventKind::Midi {
+                channel: u4_channel,
+                message: MidlyMidiMessage::Controller {
+                    controller: u7_p1,
+                    value: u7_p2,
+                },
             }),
             _ => None,
         };
@@ -64,7 +72,9 @@ impl MidiRecorder {
 
     pub fn save(&self) -> Result<String> {
         let config_path = confy::get_configuration_file_path("rusty-pipes", "settings")?;
-        let parent = config_path.parent().ok_or_else(|| anyhow::anyhow!("No config parent dir"))?;
+        let parent = config_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("No config parent dir"))?;
         let recording_dir = parent.join("recordings");
         if !recording_dir.exists() {
             fs::create_dir_all(&recording_dir)?;
@@ -76,18 +86,15 @@ impl MidiRecorder {
 
         // Use Format::SingleTrack (Type 0 MIDI file)
         // Wrap timing (480) in u15
-        let header = Header::new(
-            Format::SingleTrack, 
-            Timing::Metrical(u15::from(480))
-        );
-        
+        let header = Header::new(Format::SingleTrack, Timing::Metrical(u15::from(480)));
+
         let mut smf = Smf::new(header);
-        
+
         // Smf expects a Vec of tracks. Since Format is SingleTrack, we push one track.
         smf.tracks.push(self.track.clone());
 
         smf.save(&path)?;
-        
+
         log::info!("Saved MIDI file to {:?}", path);
         Ok(path.to_string_lossy().to_string())
     }

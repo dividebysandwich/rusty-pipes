@@ -1,9 +1,9 @@
+use crate::config::{MidiDeviceConfig, MidiMappingMode};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, List, ListItem, ListState},
 };
-use crossterm::event::{KeyCode, KeyEvent};
-use crate::config::{MidiDeviceConfig, MidiMappingMode};
 use rust_i18n::t;
 
 /// Result of a keypress handling event.
@@ -19,7 +19,7 @@ pub struct TuiMidiState {
     pub list_state: ListState,
     /// If `Some(index)`, the user is currently "editing" the value at that row index
     /// using Up/Down keys. If `None`, Up/Down keys navigate the list.
-    pub editing_row: Option<usize>, 
+    pub editing_row: Option<usize>,
 }
 
 impl TuiMidiState {
@@ -36,13 +36,12 @@ impl TuiMidiState {
 /// Handles keyboard input for the MIDI mapping screen.
 /// Directly modifies the `MidiDeviceConfig`.
 pub fn handle_input(
-    event: KeyEvent, 
-    state: &mut TuiMidiState, 
-    device: &mut MidiDeviceConfig
+    event: KeyEvent,
+    state: &mut TuiMidiState,
+    device: &mut MidiDeviceConfig,
 ) -> MappingAction {
-    
     let is_simple = matches!(device.mapping_mode, MidiMappingMode::Simple);
-    
+
     // Calculate total rows for navigation wrapping
     // Row 0 is always "Mode Selection"
     // If Simple: Row 1 is "Target Channel" -> Total 2
@@ -69,7 +68,7 @@ pub fn handle_input(
                 // --- Editing Mode ---
                 // Which row are we editing?
                 let idx = state.list_state.selected().unwrap_or(0);
-                
+
                 if idx == 1 && is_simple {
                     // Decrement Simple Target (wrap 0-15)
                     device.simple_target_channel = (device.simple_target_channel + 16 - 1) % 16;
@@ -136,7 +135,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TuiMidiState, device: &Mi
         .borders(Borders::ALL)
         .title(t!("tui_midi.title_fmt", name = device.name).to_string())
         .title_bottom(t!("tui_midi.footer").to_string());
-    
+
     let inner_area = block.inner(area);
     frame.render_widget(block, area);
 
@@ -147,14 +146,17 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TuiMidiState, device: &Mi
         MidiMappingMode::Simple => t!("tui_midi.mode_simple"),
         MidiMappingMode::Complex => t!("tui_midi.mode_complex"),
     };
-    items.push(ListItem::new(t!("tui_midi.lbl_mode", val = mode_str).to_string()));
+    items.push(ListItem::new(
+        t!("tui_midi.lbl_mode", val = mode_str).to_string(),
+    ));
 
     // -- Dynamic Rows --
     match device.mapping_mode {
         MidiMappingMode::Simple => {
             // Row 1: Target
             let is_editing = state.editing_row == Some(1);
-            let val_str = t!("tui_midi.lbl_target", ch = device.simple_target_channel + 1).to_string();
+            let val_str =
+                t!("tui_midi.lbl_target", ch = device.simple_target_channel + 1).to_string();
             items.push(create_list_item(val_str, is_editing));
         }
         MidiMappingMode::Complex => {
@@ -165,7 +167,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TuiMidiState, device: &Mi
                 let in_ch = format!("{:02}", i + 1);
                 let out_ch = format!("{:02}", target + 1);
                 let val_str = t!("tui_midi.lbl_complex", input = in_ch, out = out_ch).to_string();
-                
+
                 items.push(create_list_item(val_str, is_editing));
             }
         }
@@ -174,9 +176,13 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TuiMidiState, device: &Mi
     // Highlighting logic
     // If we are editing, we usually want the background to look different or the text to be yellow
     let list = List::new(items)
-        .highlight_style(Style::default().bg(Color::DarkGray).add_modifier(Modifier::BOLD))
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol(">> ");
-    
+
     frame.render_stateful_widget(list, inner_area, &mut state.list_state);
 }
 
@@ -184,8 +190,7 @@ pub fn draw(frame: &mut Frame, area: Rect, state: &mut TuiMidiState, device: &Mi
 fn create_list_item(text: String, is_editing: bool) -> ListItem<'static> {
     if is_editing {
         let edit_text = t!("tui_midi.suffix_editing", val = text).to_string();
-        ListItem::new(edit_text)
-            .style(Style::default().fg(Color::Yellow))
+        ListItem::new(edit_text).style(Style::default().fg(Color::Yellow))
     } else {
         ListItem::new(text)
     }

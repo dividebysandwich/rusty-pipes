@@ -1,6 +1,8 @@
 use crate::app::MainLoopAction;
 use crate::app_state::AppState;
-use crate::config::{OrganLibrary, OrganProfile, load_organ_library, save_organ_library, MidiEventSpec};
+use crate::config::{
+    load_organ_library, save_organ_library, MidiEventSpec, OrganLibrary, OrganProfile,
+};
 use eframe::egui;
 use rust_i18n::t;
 use std::path::PathBuf;
@@ -112,11 +114,16 @@ impl OrganManagerUi {
                                         if let Some(learn_idx) = self.learning_index {
                                             if learn_idx == i {
                                                 ui.add(
-                                                    egui::Button::new(t!("midi_learn.status_listening"))
-                                                        .fill(egui::Color32::ORANGE),
+                                                    egui::Button::new(t!(
+                                                        "midi_learn.status_listening"
+                                                    ))
+                                                    .fill(egui::Color32::ORANGE),
                                                 );
                                             } else {
-                                                ui.add_enabled(false, egui::Button::new(t!("midi_learn.btn_learn")));
+                                                ui.add_enabled(
+                                                    false,
+                                                    egui::Button::new(t!("midi_learn.btn_learn")),
+                                                );
                                             }
                                         } else {
                                             if ui.button(t!("midi_learn.btn_learn")).clicked() {
@@ -194,13 +201,19 @@ impl OrganManagerUi {
         }
     }
 
-    pub fn find_organ_by_trigger(&self, event: &crate::config::MidiEventSpec, ignore_name: &str) -> Option<PathBuf> {
+    pub fn find_organ_by_trigger(
+        &self,
+        event: &crate::config::MidiEventSpec,
+        ignore_name: &str,
+    ) -> Option<PathBuf> {
         self.library
             .organs
             .iter()
             .find(|o| {
-                o.name != ignore_name && 
-                o.activation_trigger.as_ref().map_or(false, |trig| trig == event)
+                o.name != ignore_name
+                    && o.activation_trigger
+                        .as_ref()
+                        .map_or(false, |trig| trig == event)
             })
             .map(|o| o.path.clone())
     }

@@ -1,8 +1,8 @@
 use anyhow::Result;
+use chrono::Local;
 use std::fs;
 use std::sync::mpsc;
 use std::thread;
-use chrono::Local;
 
 pub struct AudioRecorder {
     sender: mpsc::Sender<Vec<f32>>,
@@ -12,7 +12,9 @@ pub struct AudioRecorder {
 impl AudioRecorder {
     pub fn start(organ_name: String, sample_rate: u32) -> Result<Self> {
         let config_path = confy::get_configuration_file_path("rusty-pipes", "settings")?;
-        let parent = config_path.parent().ok_or_else(|| anyhow::anyhow!("No config parent dir"))?;
+        let parent = config_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("No config parent dir"))?;
         let recording_dir = parent.join("recordings");
         if !recording_dir.exists() {
             fs::create_dir_all(&recording_dir)?;
@@ -50,7 +52,7 @@ impl AudioRecorder {
             }
             log::info!("WAV recording saved.");
         });
-        
+
         log::info!("Started recording audio to {:?}", path);
 
         Ok(Self {
@@ -64,7 +66,7 @@ impl AudioRecorder {
     }
 
     pub fn stop(self) {
-        drop(self.sender); 
+        drop(self.sender);
         if let Some(h) = self.thread_handle {
             let _ = h.join();
         }

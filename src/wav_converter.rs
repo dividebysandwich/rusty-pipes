@@ -1,20 +1,20 @@
-use anyhow::{anyhow, Result, Context};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write, Cursor};
-use std::path::{Path, PathBuf};
-use rubato::{
-    Resampler, SincInterpolationType, SincInterpolationParameters, 
-    WindowFunction, Async, FixedAsync, Indexing
-};
+use anyhow::{anyhow, Context, Result};
 use audioadapter_buffers::direct::InterleavedSlice;
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use rubato::{
+    Async, FixedAsync, Indexing, Resampler, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
+};
+use std::fs::{self, File};
+use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use symphonia::core::audio::SampleBuffer;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::probe::Hint;
-use symphonia::core::audio::SampleBuffer;
 
-use crate::wav::{parse_smpl_chunk, WavFmt, OtherChunk, IsWavPackError};
+use crate::wav::{parse_smpl_chunk, IsWavPackError, OtherChunk, WavFmt};
 
-const I16_MAX_F: f32 = 32768.0;  // 2^15
+const I16_MAX_F: f32 = 32768.0; // 2^15
 const I24_MAX_F: f32 = 8388608.0; // 2^23
 const I32_MAX_F: f32 = 2147483648.0; // 2^31
 
@@ -35,16 +35,12 @@ fn read_i24<R: Read>(reader: &mut R) -> std::io::Result<i32> {
 }
 
 /// Helper to read all audio data from a reader into f32 waves
-fn read_f32_waves<R: Read>(
-    mut reader: R, 
-    format: WavFmt,
-    data_size: u32
-) -> Result<Vec<Vec<f32>>> {
+fn read_f32_waves<R: Read>(mut reader: R, format: WavFmt, data_size: u32) -> Result<Vec<Vec<f32>>> {
     let bytes_per_sample = (format.bits_per_sample / 8) as u32;
     let num_frames = data_size / (bytes_per_sample * format.num_channels as u32);
     let num_channels = format.num_channels as usize;
     let mut output_waves = vec![Vec::with_capacity(num_frames as usize); num_channels];
-    
+
     for _ in 0..num_frames {
         for ch in 0..num_channels {
             let sample_f32 = match (format.audio_format, format.bits_per_sample) {
@@ -52,7 +48,13 @@ fn read_f32_waves<R: Read>(
                 (1, 24) => (read_i24(&mut reader)? as f32) / I24_MAX_F,
                 (1, 32) => (reader.read_i32::<LittleEndian>()? as f32) / I32_MAX_F,
                 (3, 32) => reader.read_f32::<LittleEndian>()?,
-                _ => return Err(anyhow!("Unsupported read format: {}/{}", format.audio_format, format.bits_per_sample)),
+                _ => {
+                    return Err(anyhow!(
+                        "Unsupported read format: {}/{}",
+                        format.audio_format,
+                        format.bits_per_sample
+                    ))
+                }
             };
             output_waves[ch].push(sample_f32);
         }
@@ -64,12 +66,12 @@ fn read_f32_waves<R: Read>(
 fn write_f32_waves_to_bytes(
     waves: &[Vec<f32>],
     target_bits: u16,
-    target_is_float: bool
+    target_is_float: bool,
 ) -> Result<Vec<u8>> {
     if waves.is_empty() || waves[0].is_empty() {
         return Ok(Vec::new());
     }
-    
+
     let num_channels = waves.len();
     let num_frames = waves[0].len();
     let bytes_per_sample = (target_bits / 8) as usize;
@@ -78,24 +80,30 @@ fn write_f32_waves_to_bytes(
     for i in 0..num_frames {
         for ch in 0..num_channels {
             let sample_f32 = waves[ch][i];
-            
+
             match (target_is_float, target_bits) {
                 (true, 32) => {
                     output_bytes.write_f32::<LittleEndian>(sample_f32)?;
-                },
+                }
                 (false, 16) => {
                     let sample_i16 = (sample_f32.clamp(-1.0, 1.0) * (I16_MAX_F - 1.0)) as i16;
                     output_bytes.write_i16::<LittleEndian>(sample_i16)?;
-                },
+                }
                 (false, 24) => {
-                      let sample_i32 = (sample_f32.clamp(-1.0, 1.0) * (I24_MAX_F - 1.0)) as i32;
-                      output_bytes.write_i24::<LittleEndian>(sample_i32)?;
-                },
+                    let sample_i32 = (sample_f32.clamp(-1.0, 1.0) * (I24_MAX_F - 1.0)) as i32;
+                    output_bytes.write_i24::<LittleEndian>(sample_i32)?;
+                }
                 (false, 32) => {
                     let sample_i32 = (sample_f32.clamp(-1.0, 1.0) * (I32_MAX_F - 1.0)) as i32;
                     output_bytes.write_i32::<LittleEndian>(sample_i32)?;
-                },
-                _ => return Err(anyhow!("Invalid target format combination: float={} bits={}", target_is_float, target_bits)),
+                }
+                _ => {
+                    return Err(anyhow!(
+                        "Invalid target format combination: float={} bits={}",
+                        target_is_float,
+                        target_bits
+                    ))
+                }
             }
         }
     }
@@ -104,11 +112,7 @@ fn write_f32_waves_to_bytes(
 
 /// Helper function to scale loop points within a 'smpl' chunk's binary data.
 /// This modifies the `smpl_data` buffer in place.
-fn scale_smpl_chunk_loops(
-    smpl_data: &mut Vec<u8>,
-    ratio: f64,
-    new_sample_rate: u32
-) -> Result<()> {
+fn scale_smpl_chunk_loops(smpl_data: &mut Vec<u8>, ratio: f64, new_sample_rate: u32) -> Result<()> {
     // smpl chunk data is complex. We need to parse it carefully.
     // We'll use a cursor to read and write in place.
     if smpl_data.len() < 36 {
@@ -121,7 +125,7 @@ fn scale_smpl_chunk_loops(
     // --- Read and Write Header Fields ---
     // We just seek past the first 8 bytes (Manufacturer, Product)
     cursor.seek(SeekFrom::Start(8))?;
-    
+
     // dwSamplePeriod (offset 8)
     // This is nanoseconds per sample: (1_000_000_000 / sample_rate)
     let new_sample_period = (1_000_000_000.0 / new_sample_rate as f64).round() as u32;
@@ -133,12 +137,12 @@ fn scale_smpl_chunk_loops(
 
     // cSampleLoops (offset 28)
     let num_loops = cursor.read_u32::<LittleEndian>()?;
-    
+
     // cbSamplerData (offset 32)
     let _sampler_data_size = cursor.read_u32::<LittleEndian>()?;
-    
+
     // Cursor is now at byte 36, the start of the loop array.
-    
+
     if num_loops == 0 {
         return Ok(()); // No loops to modify
     }
@@ -150,8 +154,10 @@ fn scale_smpl_chunk_loops(
 
     if (cursor.get_ref().len() as u64) < expected_min_size {
         return Err(anyhow!(
-            "Invalid 'smpl' chunk: header reports {} loops, but data is too small ({} < {})", 
-            num_loops, cursor.get_ref().len(), expected_min_size
+            "Invalid 'smpl' chunk: header reports {} loops, but data is too small ({} < {})",
+            num_loops,
+            cursor.get_ref().len(),
+            expected_min_size
         ));
     }
 
@@ -173,7 +179,11 @@ fn scale_smpl_chunk_loops(
 
         log::debug!(
             "  Loop {}: Start {} -> {}, End {} -> {}",
-            i, start_frame, new_start_frame, end_frame, new_end_frame
+            i,
+            start_frame,
+            new_start_frame,
+            end_frame,
+            new_end_frame
         );
 
         // We need to write the new values back.
@@ -191,14 +201,11 @@ fn scale_smpl_chunk_loops(
 }
 
 /// Helper function to scale markers within a 'cue ' chunk's binary data.
-fn scale_cue_chunk_markers(
-    cue_data: &mut Vec<u8>,
-    ratio: f64
-) -> Result<()> {
+fn scale_cue_chunk_markers(cue_data: &mut Vec<u8>, ratio: f64) -> Result<()> {
     // A 'cue ' chunk structure:
     // dwCuePoints (4 bytes)
     // CuePoints array (24 bytes each)
-    
+
     if cue_data.len() < 4 {
         return Err(anyhow!("'cue ' chunk too small (< 4 bytes)"));
     }
@@ -207,7 +214,7 @@ fn scale_cue_chunk_markers(
 
     // Read number of cue points
     let num_points = cursor.read_u32::<LittleEndian>()?;
-    
+
     // Validate size
     let expected_size = 4 + (num_points as u64 * 24);
     if (cursor.get_ref().len() as u64) < expected_size {
@@ -216,7 +223,7 @@ fn scale_cue_chunk_markers(
 
     for i in 0..num_points {
         let _point_start_pos = cursor.position();
-        
+
         // Structure of a CuePoint (24 bytes):
         // 0: dwName (ID) - u32
         // 4: dwPosition (Play Order Position) - u32 <-- NEEDS SCALING
@@ -226,12 +233,12 @@ fn scale_cue_chunk_markers(
         // 20: dwSampleOffset (Sample Offset) - u32 <-- NEEDS SCALING
 
         // Skip dwName (4 bytes)
-        cursor.seek(SeekFrom::Current(4))?; 
+        cursor.seek(SeekFrom::Current(4))?;
 
         // Read & Scale dwPosition
         let pos = cursor.read_u32::<LittleEndian>()?;
         let new_pos = (pos as f64 * ratio).round() as u32;
-        
+
         // Write back dwPosition
         cursor.seek(SeekFrom::Current(-4))?;
         cursor.write_u32::<LittleEndian>(new_pos)?;
@@ -249,7 +256,12 @@ fn scale_cue_chunk_markers(
         cursor.write_u32::<LittleEndian>(new_offset)?;
 
         // Loop is done, cursor is naturally at the start of the next point
-        log::debug!("[WavConvert] Scaled Cue Point {}: {} -> {}", i, pos, new_pos);
+        log::debug!(
+            "[WavConvert] Scaled Cue Point {}: {} -> {}",
+            i,
+            pos,
+            new_pos
+        );
     }
 
     Ok(())
@@ -259,9 +271,10 @@ fn scale_cue_chunk_markers(
 
 /// Fast probe to get metadata without decoding the whole file.
 fn peek_wavpack_info(path: &Path) -> Result<(u32, u16, u16, bool)> {
-    let src = File::open(path).with_context(|| format!("Failed to open WavPack file for peeking: {:?}", path))?;
+    let src = File::open(path)
+        .with_context(|| format!("Failed to open WavPack file for peeking: {:?}", path))?;
     let mss = MediaSourceStream::new(Box::new(src), Default::default());
-    
+
     let mut hint = Hint::new();
     if let Some(ext) = path.extension() {
         hint.with_extension(&ext.to_string_lossy());
@@ -270,18 +283,20 @@ fn peek_wavpack_info(path: &Path) -> Result<(u32, u16, u16, bool)> {
     let probed = symphonia::default::get_probe()
         .format(&hint, mss, &Default::default(), &Default::default())
         .with_context(|| format!("Failed to probe WavPack format: {:?}", path))?;
-        
+
     let format = probed.format;
-    let track = format.default_track().ok_or_else(|| anyhow!("No default track in WavPack file"))?;
+    let track = format
+        .default_track()
+        .ok_or_else(|| anyhow!("No default track in WavPack file"))?;
     let params = track.codec_params.clone();
-    
+
     let sample_rate = params.sample_rate.unwrap_or(48000);
     let channels = params.channels.map_or(2, |c| c.count() as u16);
-    let bits_per_sample = params.bits_per_sample.unwrap_or(24) as u16; 
-    
-    // WavPack decodes to float in our pipeline, but source might be integer. 
+    let bits_per_sample = params.bits_per_sample.unwrap_or(24) as u16;
+
+    // WavPack decodes to float in our pipeline, but source might be integer.
     // We treat it as potential float for conversion logic purposes.
-    let is_float = true; 
+    let is_float = true;
 
     Ok((sample_rate, channels, bits_per_sample, is_float))
 }
@@ -291,27 +306,33 @@ fn peek_wavpack_info(path: &Path) -> Result<(u32, u16, u16, bool)> {
 fn read_wavpack_file(path: &Path) -> Result<(Vec<Vec<f32>>, u32, u16, u16)> {
     let src = File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(src), Default::default());
-    
+
     let mut hint = Hint::new();
     if let Some(ext) = path.extension() {
         hint.with_extension(&ext.to_string_lossy());
     }
 
-    let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &Default::default(), &Default::default())?;
+    let probed = symphonia::default::get_probe().format(
+        &hint,
+        mss,
+        &Default::default(),
+        &Default::default(),
+    )?;
     let mut format = probed.format;
-    
-    let track = format.default_track().ok_or_else(|| anyhow!("No default track in WavPack file"))?;
+
+    let track = format
+        .default_track()
+        .ok_or_else(|| anyhow!("No default track in WavPack file"))?;
     let track_id = track.id;
     let params = track.codec_params.clone();
-    
+
     let sample_rate = params.sample_rate.unwrap_or(48000);
     let channels = params.channels.map_or(2, |c| c.count() as u16);
     // WavPack bits_per_sample might be None, default to 24 for safety if unknown
-    let bits_per_sample = params.bits_per_sample.unwrap_or(24) as u16; 
+    let bits_per_sample = params.bits_per_sample.unwrap_or(24) as u16;
 
     let mut decoder = symphonia::default::get_codecs().make(&params, &Default::default())?;
-    
+
     let mut output_waves = vec![Vec::new(); channels as usize];
 
     loop {
@@ -324,14 +345,19 @@ fn read_wavpack_file(path: &Path) -> Result<(Vec<Vec<f32>>, u32, u16, u16)> {
                         log::warn!("Partial read of {:?}: Unexpected EOF, but recovered {} frames. Continuing.", path, output_waves[0].len());
                         break;
                     }
-                    return Err(anyhow!("Unexpected End of Stream while decoding {:?}", path))   
+                    return Err(anyhow!(
+                        "Unexpected End of Stream while decoding {:?}",
+                        path
+                    ));
                 }
                 break; // Normal EOF
-            }, 
+            }
             Err(e) => return Err(anyhow!("Symphonia decode error in {:?}: {}", path, e)),
         };
 
-        if packet.track_id() != track_id { continue; }
+        if packet.track_id() != track_id {
+            continue;
+        }
 
         match decoder.decode(&packet) {
             Ok(decoded) => {
@@ -346,7 +372,7 @@ fn read_wavpack_file(path: &Path) -> Result<(Vec<Vec<f32>>, u32, u16, u16)> {
                     let ch = i % (channels as usize);
                     output_waves[ch].push(*sample);
                 }
-            },
+            }
             Err(e) => return Err(anyhow!("Decode packet error: {}", e)),
         }
     }
@@ -355,18 +381,25 @@ fn read_wavpack_file(path: &Path) -> Result<(Vec<Vec<f32>>, u32, u16, u16)> {
 }
 
 /// Loads a sample and verifies it matches the target sample rate.
-pub fn load_sample_as_f32(path: &Path, target_sample_rate: u32) -> Result<(Vec<f32>, SampleMetadata)> {
+pub fn load_sample_as_f32(
+    path: &Path,
+    target_sample_rate: u32,
+) -> Result<(Vec<f32>, SampleMetadata)> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
 
     // Try parsing as standard WAV
     let parse_result = crate::wav::parse_wav_metadata(&mut reader, path);
-    
+
     match parse_result {
         Ok((format, other_chunks, data_offset, data_size)) => {
             // --- WAV PATH ---
             if format.sample_rate != target_sample_rate {
-                return Err(anyhow!("Sample rate mismatch in cache: {} != {}", format.sample_rate, target_sample_rate));
+                return Err(anyhow!(
+                    "Sample rate mismatch in cache: {} != {}",
+                    format.sample_rate,
+                    target_sample_rate
+                ));
             }
 
             let mut loop_info = None;
@@ -388,7 +421,7 @@ pub fn load_sample_as_f32(path: &Path, target_sample_rate: u32) -> Result<(Vec<f
             if waves.is_empty() || waves[0].is_empty() {
                 return Ok((Vec::new(), metadata));
             }
-            
+
             // Interleave
             let num_channels = waves.len();
             let num_frames = waves[0].len();
@@ -399,24 +432,28 @@ pub fn load_sample_as_f32(path: &Path, target_sample_rate: u32) -> Result<(Vec<f
                 }
             }
             Ok((interleaved, metadata))
-        },
+        }
         Err(e) => {
             // If it's a WavPack file, load using Symphonia
             if e.is::<IsWavPackError>() {
                 log::debug!("Detected WavPack file: {:?}", path);
                 let (waves, rate, channels, _) = read_wavpack_file(path)?;
-                
+
                 if rate != target_sample_rate {
-                     return Err(anyhow!("Sample rate mismatch in cache (WV): {} != {}", rate, target_sample_rate));
+                    return Err(anyhow!(
+                        "Sample rate mismatch in cache (WV): {} != {}",
+                        rate,
+                        target_sample_rate
+                    ));
                 }
 
                 // TODO: extracting loop points from WavPack is complex via Symphonia.
                 // For now, we assume 0 loops or rely on ODF override.
                 let metadata = SampleMetadata {
-                    loop_info: None, 
+                    loop_info: None,
                     channel_count: channels,
                 };
-                
+
                 if waves.is_empty() || waves[0].is_empty() {
                     return Ok((Vec::new(), metadata));
                 }
@@ -430,7 +467,6 @@ pub fn load_sample_as_f32(path: &Path, target_sample_rate: u32) -> Result<(Vec<f
                     }
                 }
                 Ok((interleaved, metadata))
-
             } else {
                 // Real error
                 Err(e)
@@ -448,7 +484,6 @@ pub fn process_sample_file(
     convert_to_16_bit: bool,
     target_sample_rate: u32,
 ) -> Result<PathBuf> {
-    
     let full_source_path = base_dir.join(relative_path);
     if !full_source_path.exists() {
         return Err(anyhow!("Sample file not found: {:?}", full_source_path));
@@ -475,49 +510,67 @@ pub fn process_sample_file(
             channels = fmt.num_channels;
             is_float = fmt.audio_format == 3;
             other_chunks = chunks;
-            input_waves = Vec::new(); 
-        },
+            input_waves = Vec::new();
+        }
         Err(e) if e.is::<IsWavPackError>() => {
             let (rate, ch, bits, float) = peek_wavpack_info(&full_source_path)?;
             sample_rate = rate;
             channels = ch;
             bits_per_sample = bits;
             is_float = float;
-        },
-        Err(e) => return Err(e).with_context(|| format!("Failed to parse metadata for {:?}", full_source_path)),
+        }
+        Err(e) => {
+            return Err(e)
+                .with_context(|| format!("Failed to parse metadata for {:?}", full_source_path))
+        }
     }
 
-    let mut target_bits = if convert_to_16_bit { 16 } else { bits_per_sample };
-    let target_is_float = is_float && !convert_to_16_bit; 
-    if target_is_float { target_bits = 32; }
+    let mut target_bits = if convert_to_16_bit {
+        16
+    } else {
+        bits_per_sample
+    };
+    let target_is_float = is_float && !convert_to_16_bit;
+    if target_is_float {
+        target_bits = 32;
+    }
 
     let needs_resample = sample_rate != target_sample_rate || pitch_tuning_cents != 0.0;
     let needs_bit_change = target_bits != bits_per_sample || (is_float && !target_is_float);
-    let is_source_wavpack = other_chunks.is_empty() && input_waves.is_empty(); 
+    let is_source_wavpack = other_chunks.is_empty() && input_waves.is_empty();
 
     if !needs_resample && !needs_bit_change && !is_source_wavpack {
         return Ok(full_source_path);
     }
-    
+
     // --- Generate Cache Filename ---
-    let original_stem = relative_path.file_stem().unwrap_or_default().to_string_lossy();
+    let original_stem = relative_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
     // Always use .wav extension for cache
-    let new_file_name = format!("{}.{}hz.p{:+0.1}.{}b.wav", original_stem, target_sample_rate, pitch_tuning_cents, target_bits);
-    
+    let new_file_name = format!(
+        "{}.{}hz.p{:+0.1}.{}b.wav",
+        original_stem, target_sample_rate, pitch_tuning_cents, target_bits
+    );
+
     let parent_in_cache = if let Some(parent) = relative_path.parent() {
         cache_dir.join(parent)
     } else {
         cache_dir.to_path_buf()
     };
-    
+
     let cache_full_path = parent_in_cache.join(new_file_name);
 
     if cache_full_path.exists() {
         return Ok(cache_full_path);
     }
-    
+
     fs::create_dir_all(&parent_in_cache)?;
-    log::info!("[WavConvert] Processing -> {:?}", cache_full_path.file_name().unwrap_or_default());
+    log::info!(
+        "[WavConvert] Processing -> {:?}",
+        cache_full_path.file_name().unwrap_or_default()
+    );
 
     // Now we actually read the data
     if is_source_wavpack {
@@ -527,8 +580,14 @@ pub fn process_sample_file(
     } else {
         let file = File::open(&full_source_path)?;
         let mut reader = BufReader::new(file);
-        let (_, _, data_offset, data_size) = crate::wav::parse_wav_metadata(&mut reader, &full_source_path)?;
-        let fmt = WavFmt { audio_format: if is_float { 3 } else { 1 }, num_channels: channels, sample_rate, bits_per_sample };
+        let (_, _, data_offset, data_size) =
+            crate::wav::parse_wav_metadata(&mut reader, &full_source_path)?;
+        let fmt = WavFmt {
+            audio_format: if is_float { 3 } else { 1 },
+            num_channels: channels,
+            sample_rate,
+            bits_per_sample,
+        };
         reader.seek(SeekFrom::Start(data_offset))?;
         input_waves = read_f32_waves(reader, fmt, data_size)
             .with_context(|| format!("Failed to read PCM data from {:?}", full_source_path))?;
@@ -572,17 +631,24 @@ pub fn process_sample_file(
             chunk_size,
             num_channels,
             FixedAsync::Input,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Prepare Output Buffer
-        let expected_output_frames = (num_input_frames as f64 * resample_ratio).ceil() as usize + chunk_size * 2;
+        let expected_output_frames =
+            (num_input_frames as f64 * resample_ratio).ceil() as usize + chunk_size * 2;
         let mut output_interleaved = vec![0.0f32; expected_output_frames * num_channels];
 
         // Create Adapters
-        let input_adapter = InterleavedSlice::new(&input_interleaved, num_channels, num_input_frames)
-            .map_err(|e| anyhow!("Failed to create input adapter: {:?}", e))?;
-        let mut output_adapter = InterleavedSlice::new_mut(&mut output_interleaved, num_channels, expected_output_frames)
-            .map_err(|e| anyhow!("Failed to create output adapter: {:?}", e))?;
+        let input_adapter =
+            InterleavedSlice::new(&input_interleaved, num_channels, num_input_frames)
+                .map_err(|e| anyhow!("Failed to create input adapter: {:?}", e))?;
+        let mut output_adapter = InterleavedSlice::new_mut(
+            &mut output_interleaved,
+            num_channels,
+            expected_output_frames,
+        )
+        .map_err(|e| anyhow!("Failed to create output adapter: {:?}", e))?;
 
         // Process Loop
         let mut indexing = Indexing {
@@ -591,7 +657,7 @@ pub fn process_sample_file(
             active_channels_mask: None,
             partial_len: None,
         };
-        
+
         let mut input_frames_next = resampler.input_frames_next();
         let mut input_frames_left = num_input_frames;
 
@@ -624,10 +690,10 @@ pub fn process_sample_file(
                 result_waves[ch].push(output_interleaved[i * num_channels + ch]);
             }
         }
-        
+
         result_waves
     } else {
-        input_waves 
+        input_waves
     };
 
     // If we have 'smpl' chunks from a WAV source, scale them.
@@ -638,7 +704,7 @@ pub fn process_sample_file(
                 let _ = scale_smpl_chunk_loops(&mut chunk.data, resample_ratio, target_sample_rate);
             } else if &chunk.id == b"cue " {
                 if let Err(e) = scale_cue_chunk_markers(&mut chunk.data, resample_ratio) {
-                     log::warn!("Failed to scale cue markers: {}", e);
+                    log::warn!("Failed to scale cue markers: {}", e);
                 }
             }
         }
@@ -654,11 +720,11 @@ pub fn process_sample_file(
     let new_bits_per_sample: u16 = target_bits;
     let new_audio_format = if target_is_float { 3 } else { 1 };
     let new_block_align = channels * (new_bits_per_sample / 8);
-    let new_byte_rate = target_sample_rate * new_block_align as u32; 
-    
+    let new_byte_rate = target_sample_rate * new_block_align as u32;
+
     let mut other_chunks_total_size: u32 = 0;
     for chunk in &other_chunks {
-        other_chunks_total_size += 8 + chunk.data.len() as u32 + (chunk.data.len() % 2) as u32; 
+        other_chunks_total_size += 8 + chunk.data.len() as u32 + (chunk.data.len() % 2) as u32;
     }
 
     let new_riff_file_size = 4 + (8 + 16) + other_chunks_total_size + (8 + new_data_size);
@@ -668,19 +734,21 @@ pub fn process_sample_file(
     writer.write_all(b"WAVE")?;
 
     writer.write_all(b"fmt ")?;
-    writer.write_u32::<LittleEndian>(16)?; 
+    writer.write_u32::<LittleEndian>(16)?;
     writer.write_u16::<LittleEndian>(new_audio_format)?;
     writer.write_u16::<LittleEndian>(channels)?;
-    writer.write_u32::<LittleEndian>(target_sample_rate)?; 
+    writer.write_u32::<LittleEndian>(target_sample_rate)?;
     writer.write_u32::<LittleEndian>(new_byte_rate)?;
     writer.write_u16::<LittleEndian>(new_block_align)?;
     writer.write_u16::<LittleEndian>(new_bits_per_sample)?;
-    
+
     for chunk in &other_chunks {
         writer.write_all(&chunk.id)?;
         writer.write_u32::<LittleEndian>(chunk.data.len() as u32)?;
         writer.write_all(&chunk.data)?;
-        if chunk.data.len() % 2 != 0 { writer.write_u8(0)?; }
+        if chunk.data.len() % 2 != 0 {
+            writer.write_u8(0)?;
+        }
     }
 
     writer.write_all(b"data")?;
@@ -691,8 +759,13 @@ pub fn process_sample_file(
     Ok(cache_full_path)
 }
 
-pub fn load_sample_head(path: &Path, target_sample_rate: u32, max_frames: usize) -> Result<Vec<f32>> {
-    let file = File::open(path).with_context(|| format!("Failed to open sample head: {:?}", path))?;
+pub fn load_sample_head(
+    path: &Path,
+    target_sample_rate: u32,
+    max_frames: usize,
+) -> Result<Vec<f32>> {
+    let file =
+        File::open(path).with_context(|| format!("Failed to open sample head: {:?}", path))?;
     let mut reader = BufReader::new(file);
     log::debug!("Preloading {} frames from {:?}", max_frames, path);
 
@@ -701,7 +774,11 @@ pub fn load_sample_head(path: &Path, target_sample_rate: u32, max_frames: usize)
         Ok((fmt, _chunks, data_offset, data_size)) => {
             // --- WAV PATH ---
             if fmt.sample_rate != target_sample_rate {
-                return Err(anyhow!("Sample rate mismatch in head load: {} != {}", fmt.sample_rate, target_sample_rate));
+                return Err(anyhow!(
+                    "Sample rate mismatch in head load: {} != {}",
+                    fmt.sample_rate,
+                    target_sample_rate
+                ));
             }
 
             let bytes_per_frame = (fmt.bits_per_sample / 8) as u32 * fmt.num_channels as u32;
@@ -717,7 +794,7 @@ pub fn load_sample_head(path: &Path, target_sample_rate: u32, max_frames: usize)
             for _ in 0..frames_to_read {
                 // Read all channels for this frame
                 let mut frame_samples = Vec::with_capacity(fmt.num_channels as usize);
-                
+
                 for _ in 0..fmt.num_channels {
                     let sample_f32 = match (fmt.audio_format, fmt.bits_per_sample) {
                         (1, 16) => (reader.read_i16::<LittleEndian>()? as f32) / I16_MAX_F,
@@ -742,17 +819,23 @@ pub fn load_sample_head(path: &Path, target_sample_rate: u32, max_frames: usize)
             }
 
             Ok(interleaved_stereo)
-        },
+        }
         Err(e) if e.is::<IsWavPackError>() => {
             // --- WAVPACK PATH ---
             // Use Symphonia, but stop early
             let src = File::open(path)?;
             let mss = MediaSourceStream::new(Box::new(src), Default::default());
             let mut hint = Hint::new();
-            if let Some(ext) = path.extension() { hint.with_extension(&ext.to_string_lossy()); }
+            if let Some(ext) = path.extension() {
+                hint.with_extension(&ext.to_string_lossy());
+            }
 
-            let probed = symphonia::default::get_probe()
-                .format(&hint, mss, &Default::default(), &Default::default())?;
+            let probed = symphonia::default::get_probe().format(
+                &hint,
+                mss,
+                &Default::default(),
+                &Default::default(),
+            )?;
             let mut format = probed.format;
             let track = format.default_track().ok_or_else(|| anyhow!("No track"))?;
             let track_id = track.id;
@@ -760,10 +843,15 @@ pub fn load_sample_head(path: &Path, target_sample_rate: u32, max_frames: usize)
 
             let sample_rate = params.sample_rate.unwrap_or(48000);
             if sample_rate != target_sample_rate {
-                 return Err(anyhow!("Sample rate mismatch in head load (WV): {} != {}", sample_rate, target_sample_rate));
+                return Err(anyhow!(
+                    "Sample rate mismatch in head load (WV): {} != {}",
+                    sample_rate,
+                    target_sample_rate
+                ));
             }
 
-            let mut decoder = symphonia::default::get_codecs().make(&params, &Default::default())?;
+            let mut decoder =
+                symphonia::default::get_codecs().make(&params, &Default::default())?;
             let mut interleaved_stereo = Vec::with_capacity(max_frames * 2);
             let source_channels = params.channels.map_or(2, |c| c.count());
 
@@ -773,7 +861,9 @@ pub fn load_sample_head(path: &Path, target_sample_rate: u32, max_frames: usize)
                     Ok(p) => p,
                     Err(_) => break, // EOF
                 };
-                if packet.track_id() != track_id { continue; }
+                if packet.track_id() != track_id {
+                    continue;
+                }
 
                 if let Ok(decoded) = decoder.decode(&packet) {
                     let spec = *decoded.spec();
@@ -785,8 +875,10 @@ pub fn load_sample_head(path: &Path, target_sample_rate: u32, max_frames: usize)
                     // Process these samples into our output
                     // samples is interleaved source data
                     for frame in samples.chunks(source_channels) {
-                        if interleaved_stereo.len() >= max_frames * 2 { break; }
-                        
+                        if interleaved_stereo.len() >= max_frames * 2 {
+                            break;
+                        }
+
                         if source_channels == 1 {
                             interleaved_stereo.push(frame[0]); // L
                             interleaved_stereo.push(frame[0]); // R
@@ -797,10 +889,12 @@ pub fn load_sample_head(path: &Path, target_sample_rate: u32, max_frames: usize)
                     }
                 }
             }
-            
+
             Ok(interleaved_stereo)
-        },
-        Err(e) => Err(e).with_context(|| format!("Failed to parse metadata for head load: {:?}", path)),
+        }
+        Err(e) => {
+            Err(e).with_context(|| format!("Failed to parse metadata for head load: {:?}", path))
+        }
     }
 }
 
@@ -814,19 +908,21 @@ pub fn try_extract_release_sample(
     convert_to_16_bit: bool,
     target_sample_rate: u32,
 ) -> Result<Option<PathBuf>> {
-    
     let full_source_path = base_dir.join(relative_path);
-    if !full_source_path.exists() { return Ok(None); }
+    if !full_source_path.exists() {
+        return Ok(None);
+    }
 
     // Parse Metadata to find Loops and Cues
     let file = File::open(&full_source_path)?;
     let mut reader = BufReader::new(file);
-    
+
     // We only support this for standard WAV files (legacy sets are usually WAV)
-    let (fmt, chunks, data_offset, data_size) = match crate::wav::parse_wav_metadata(&mut reader, &full_source_path) {
-        Ok(res) => res,
-        Err(_) => return Ok(None), // Skip if not a valid WAV or is WavPack
-    };
+    let (fmt, chunks, data_offset, data_size) =
+        match crate::wav::parse_wav_metadata(&mut reader, &full_source_path) {
+            Ok(res) => res,
+            Err(_) => return Ok(None), // Skip if not a valid WAV or is WavPack
+        };
 
     // Find Loop End
     let mut loop_end = 0;
@@ -839,7 +935,9 @@ pub fn try_extract_release_sample(
     }
 
     // If no loop, we probably shouldn't try to split it (it might be a one-shot percussive)
-    if loop_end == 0 { return Ok(None); }
+    if loop_end == 0 {
+        return Ok(None);
+    }
 
     // Find a valid Split Point (Cue)
     let mut split_point = None;
@@ -857,14 +955,26 @@ pub fn try_extract_release_sample(
         }
     }
 
-    let Some(split_frame) = split_point else { return Ok(None); };
+    let Some(split_frame) = split_point else {
+        return Ok(None);
+    };
 
     // Generate Cache Filename (Distinct from the attack)
-    let original_stem = relative_path.file_stem().unwrap_or_default().to_string_lossy();
+    let original_stem = relative_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
     // We add ".rel" to the filename
-    let target_bits = if convert_to_16_bit { 16 } else { fmt.bits_per_sample };
-    let new_file_name = format!("{}.rel.{}hz.p{:+0.1}.{}b.wav", original_stem, target_sample_rate, pitch_tuning_cents, target_bits);
-    
+    let target_bits = if convert_to_16_bit {
+        16
+    } else {
+        fmt.bits_per_sample
+    };
+    let new_file_name = format!(
+        "{}.rel.{}hz.p{:+0.1}.{}b.wav",
+        original_stem, target_sample_rate, pitch_tuning_cents, target_bits
+    );
+
     let parent_in_cache = if let Some(parent) = relative_path.parent() {
         cache_dir.join(parent)
     } else {
@@ -876,7 +986,10 @@ pub fn try_extract_release_sample(
         return Ok(Some(cache_full_path));
     }
 
-    log::info!("[WavConvert] Extracting legacy release -> {:?}", cache_full_path.file_name().unwrap_or_default());
+    log::info!(
+        "[WavConvert] Extracting legacy release -> {:?}",
+        cache_full_path.file_name().unwrap_or_default()
+    );
 
     // Read and Slice Audio
     reader.seek(SeekFrom::Start(data_offset))?;
@@ -918,35 +1031,53 @@ pub fn try_extract_release_sample(
 
         // Setup Async Resampler
         let params = SincInterpolationParameters {
-            sinc_len: 64, f_cutoff: 0.95, interpolation: SincInterpolationType::Linear,
-            oversampling_factor: 160, window: WindowFunction::BlackmanHarris,
+            sinc_len: 64,
+            f_cutoff: 0.95,
+            interpolation: SincInterpolationType::Linear,
+            oversampling_factor: 160,
+            window: WindowFunction::BlackmanHarris,
         };
 
         let chunk_size = 1024;
         let mut resampler = Async::<f32>::new_sinc(
-            resample_ratio, 
-            1.1, 
-            &params, 
-            chunk_size, 
-            num_channels, 
-            FixedAsync::Input
-        ).unwrap();
-        
+            resample_ratio,
+            1.1,
+            &params,
+            chunk_size,
+            num_channels,
+            FixedAsync::Input,
+        )
+        .unwrap();
+
         // Output Buffer
-        let expected_output_frames = (num_input_frames as f64 * resample_ratio).ceil() as usize + chunk_size * 2;
+        let expected_output_frames =
+            (num_input_frames as f64 * resample_ratio).ceil() as usize + chunk_size * 2;
         let mut output_interleaved = vec![0.0f32; expected_output_frames * num_channels];
 
         // Adapters
-        let input_adapter = InterleavedSlice::new(&input_interleaved, num_channels, num_input_frames).unwrap();
-        let mut output_adapter = InterleavedSlice::new_mut(&mut output_interleaved, num_channels, expected_output_frames).unwrap();
+        let input_adapter =
+            InterleavedSlice::new(&input_interleaved, num_channels, num_input_frames).unwrap();
+        let mut output_adapter = InterleavedSlice::new_mut(
+            &mut output_interleaved,
+            num_channels,
+            expected_output_frames,
+        )
+        .unwrap();
 
         // Process
-        let mut indexing = Indexing { input_offset: 0, output_offset: 0, active_channels_mask: None, partial_len: None };
+        let mut indexing = Indexing {
+            input_offset: 0,
+            output_offset: 0,
+            active_channels_mask: None,
+            partial_len: None,
+        };
         let mut frames_left = num_input_frames;
         let mut frames_next = resampler.input_frames_next();
 
         while frames_left >= frames_next {
-            let (nin, nout) = resampler.process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing)).unwrap();
+            let (nin, nout) = resampler
+                .process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing))
+                .unwrap();
             indexing.input_offset += nin;
             indexing.output_offset += nout;
             frames_left -= nin;
@@ -955,7 +1086,9 @@ pub fn try_extract_release_sample(
 
         if frames_left > 0 {
             indexing.partial_len = Some(frames_left);
-            let (_, nout) = resampler.process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing)).unwrap();
+            let (_, nout) = resampler
+                .process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing))
+                .unwrap();
             indexing.output_offset += nout;
         }
 
@@ -979,10 +1112,10 @@ pub fn try_extract_release_sample(
     let target_bits = if target_is_float { 32 } else { target_bits }; // Ensure 32 for float
 
     let final_data = write_f32_waves_to_bytes(&output_waves, target_bits, target_is_float)?;
-    
+
     let out_file = File::create(&cache_full_path)?;
     let mut writer = BufWriter::new(out_file);
-    
+
     // Write minimal WAV header (no extra chunks needed for release tail)
     let channels = fmt.num_channels;
     let block_align = channels * (target_bits / 8);

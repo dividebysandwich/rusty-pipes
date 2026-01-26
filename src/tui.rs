@@ -1,28 +1,34 @@
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, PushKeyboardEnhancementFlags, PopKeyboardEnhancementFlags, KeyboardEnhancementFlags},
+    event::{
+        self, Event, KeyCode, KeyEventKind, KeyModifiers, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     prelude::*,
     symbols::Marker,
-    widgets::{Block, Borders, canvas::{Canvas, Line as CanvasLine}, Clear, List, ListItem, ListState, Paragraph},
-};
-use std::{
-    thread,
-    io::{stdout, Stdout},
-    sync::{mpsc::Sender, Arc, Mutex},
-    sync::atomic::{AtomicBool, Ordering},
-    time::{Duration, Instant},
+    widgets::{
+        canvas::{Canvas, Line as CanvasLine},
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph,
+    },
 };
 use rust_i18n::t;
+use std::{
+    io::{stdout, Stdout},
+    sync::atomic::{AtomicBool, Ordering},
+    sync::{mpsc::Sender, Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
+};
 
 use crate::app::{AppMessage, MainLoopAction};
 use crate::app_state::AppState;
-use crate::input::MusicCommand;
-use crate::tui_midi_learn::{MidiLearnTuiState, draw_midi_learn_modal};
 use crate::config::{load_organ_library, MidiEventSpec};
+use crate::input::MusicCommand;
+use crate::tui_midi_learn::{draw_midi_learn_modal, MidiLearnTuiState};
 
 const NUM_COLUMNS: usize = 3; // Number of columns for the stop list
 
@@ -65,11 +71,13 @@ impl TuiState {
             midi_learn_state: MidiLearnTuiState::default(),
         })
     }
-    
+
     // --- TUI-specific navigation ---
 
     fn next_item(&mut self) {
-        if self.stops_count == 0 { return; }
+        if self.stops_count == 0 {
+            return;
+        }
         let i = match self.list_state.selected() {
             Some(i) => (i + 1) % self.stops_count,
             None => 0,
@@ -78,7 +86,9 @@ impl TuiState {
     }
 
     fn prev_item(&mut self) {
-        if self.stops_count == 0 { return; }
+        if self.stops_count == 0 {
+            return;
+        }
         let i = match self.list_state.selected() {
             Some(i) => {
                 if i == 0 {
@@ -92,7 +102,9 @@ impl TuiState {
         self.list_state.select(Some(i));
     }
     fn next_col(&mut self) {
-        if self.stops_count == 0 { return; }
+        if self.stops_count == 0 {
+            return;
+        }
         let i = match self.list_state.selected() {
             Some(i) => (i + self.items_per_column).min(self.stops_count - 1),
             None => 0,
@@ -107,23 +119,33 @@ impl TuiState {
         };
         self.list_state.select(Some(i));
     }
-    
+
     fn toggle_stop_channel(&mut self, channel: u8, audio_tx: &Sender<AppMessage>) -> Result<()> {
         if let Some(selected_index) = self.list_state.selected() {
-            self.app_state.lock().unwrap().toggle_stop_channel(selected_index, channel, audio_tx)?;
+            self.app_state.lock().unwrap().toggle_stop_channel(
+                selected_index,
+                channel,
+                audio_tx,
+            )?;
         }
         Ok(())
     }
 
     fn select_all_channels_for_stop(&mut self) {
         if let Some(selected_index) = self.list_state.selected() {
-            self.app_state.lock().unwrap().select_all_channels_for_stop(selected_index);
+            self.app_state
+                .lock()
+                .unwrap()
+                .select_all_channels_for_stop(selected_index);
         }
     }
 
     fn select_none_channels_for_stop(&mut self, audio_tx: &Sender<AppMessage>) -> Result<()> {
         if let Some(selected_index) = self.list_state.selected() {
-            self.app_state.lock().unwrap().select_none_channels_for_stop(selected_index, audio_tx)?;
+            self.app_state
+                .lock()
+                .unwrap()
+                .select_none_channels_for_stop(selected_index, audio_tx)?;
         }
         Ok(())
     }
@@ -141,7 +163,6 @@ pub fn run_tui_loop(
     let organ_library = load_organ_library().unwrap_or_default();
 
     loop {
-        
         if !is_running.load(Ordering::Relaxed) {
             break;
         }
@@ -150,7 +171,9 @@ pub fn run_tui_loop(
 
         // Check for incoming MIDI if in Learn Mode
         if tui_state.mode == AppMode::MidiLearn {
-            tui_state.midi_learn_state.check_for_midi_input(&tui_state.app_state);
+            tui_state
+                .midi_learn_state
+                .check_for_midi_input(&tui_state.app_state);
         }
 
         if tui_state.mode == AppMode::MainApp {
@@ -160,33 +183,47 @@ pub fn run_tui_loop(
                 // Take the event to consume it (preventing double processing)
                 if let Some((event, _time)) = state.last_midi_event_received.take() {
                     // Check against library
-                    organ_library.organs.iter()
-                       .find(|o| o.name != current_name && o.activation_trigger.as_ref().map_or(false, |t| t == &event)) // Check Name
-                       .map(|o| o.path.clone())
-               } else if let Some(sysex) = state.last_sysex.take() {
+                    organ_library
+                        .organs
+                        .iter()
+                        .find(|o| {
+                            o.name != current_name
+                                && o.activation_trigger.as_ref().map_or(false, |t| t == &event)
+                        }) // Check Name
+                        .map(|o| o.path.clone())
+                } else if let Some(sysex) = state.last_sysex.take() {
                     // SysEx check
                     let event = MidiEventSpec::SysEx(sysex);
-                    organ_library.organs.iter()
-                       .find(|o| o.name != current_name && o.activation_trigger.as_ref().map_or(false, |t| t == &event)) // Check Name
-                       .map(|o| o.path.clone())
-               } else {
-                   None
-               }
+                    organ_library
+                        .organs
+                        .iter()
+                        .find(|o| {
+                            o.name != current_name
+                                && o.activation_trigger.as_ref().map_or(false, |t| t == &event)
+                        }) // Check Name
+                        .map(|o| o.path.clone())
+                } else {
+                    None
+                }
             };
 
             if let Some(path) = switch_target {
                 // Found a trigger! Set reload action
                 *exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan { file: path };
-            
+
                 // Signal application to quit (shuts down audio/logic threads)
                 audio_tx.send(AppMessage::Quit)?;
-            
+
                 // Break TUI loop immediately
-                break; 
+                break;
             }
         }
         // Update piano roll state before drawing
-        tui_state.app_state.lock().unwrap().update_piano_roll_state();
+        tui_state
+            .app_state
+            .lock()
+            .unwrap()
+            .update_piano_roll_state();
 
         // Draw UI (which now dispatches based on mode)
         terminal.draw(|f| ui(f, &mut tui_state))?;
@@ -195,9 +232,7 @@ pub fn run_tui_loop(
         if event::poll(Duration::from_millis(50))? {
             let event = event::read()?;
 
-
             if let Event::Key(key) = event {
-
                 // 1. Process Music Input via the shared helper
                 let command = {
                     let state = tui_state.app_state.lock().unwrap();
@@ -222,12 +257,10 @@ pub fn run_tui_loop(
                             KeyEventKind::Release => state.handle_keyboard_note(note, 0, &audio_tx),
                             _ => {}
                         }
-
                     }
                     MusicCommand::None => {
                         // Handle UI Keys (Only on Press)
                         if key.kind == KeyEventKind::Press {
-                
                             match &mut tui_state.mode {
                                 AppMode::MainApp => {
                                     // --- Handle Main App Input ---
@@ -265,81 +298,147 @@ pub fn run_tui_loop(
                                             KeyCode::Char('p') => {
                                                 audio_tx.send(AppMessage::AllNotesOff)?;
                                             }
-                                            KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                                            KeyCode::Char('m')
+                                                if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                                            {
                                                 let mut state = tui_state.app_state.lock().unwrap();
                                                 state.is_recording_midi = !state.is_recording_midi;
                                                 if state.is_recording_midi {
-                                                    audio_tx.send(AppMessage::StartMidiRecording)?;
+                                                    audio_tx
+                                                        .send(AppMessage::StartMidiRecording)?;
                                                 } else {
                                                     audio_tx.send(AppMessage::StopMidiRecording)?;
                                                 }
-                                            },
-                                            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                                            }
+                                            KeyCode::Char('r')
+                                                if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                                            {
                                                 let mut state = tui_state.app_state.lock().unwrap();
-                                                state.is_recording_audio = !state.is_recording_audio;
+                                                state.is_recording_audio =
+                                                    !state.is_recording_audio;
                                                 if state.is_recording_audio {
-                                                    audio_tx.send(AppMessage::StartAudioRecording)?;
+                                                    audio_tx
+                                                        .send(AppMessage::StartAudioRecording)?;
                                                 } else {
-                                                    audio_tx.send(AppMessage::StopAudioRecording)?;
+                                                    audio_tx
+                                                        .send(AppMessage::StopAudioRecording)?;
                                                 }
-                                            },
-                                            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                                            }
+                                            KeyCode::Char('a')
+                                                if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                                            {
                                                 tui_state.select_all_channels_for_stop();
                                             }
-                                            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                                                tui_state.select_none_channels_for_stop(&audio_tx)?;
+                                            KeyCode::Char('n')
+                                                if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                                            {
+                                                tui_state
+                                                    .select_none_channels_for_stop(&audio_tx)?;
                                             }
                                             // Open MIDI learn dialog
                                             KeyCode::Char('i') => {
                                                 if let Some(idx) = tui_state.list_state.selected() {
                                                     let stop_name = {
-                                                        let state = tui_state.app_state.lock().unwrap();
+                                                        let state =
+                                                            tui_state.app_state.lock().unwrap();
                                                         state.organ.stops[idx].name.clone()
                                                     };
-                                                    tui_state.midi_learn_state.reset_stop(idx, stop_name);
+                                                    tui_state
+                                                        .midi_learn_state
+                                                        .reset_stop(idx, stop_name);
                                                     tui_state.mode = AppMode::MidiLearn;
                                                 }
                                             }
-                                            KeyCode::F(n) if (1..=12).contains(&n) && key.modifiers.contains(KeyModifiers::SHIFT) => {
+                                            KeyCode::F(n)
+                                                if (1..=12).contains(&n)
+                                                    && key
+                                                        .modifiers
+                                                        .contains(KeyModifiers::SHIFT) =>
+                                            {
                                                 let slot = (n - 1) as usize;
-                                                let current_name = tui_state.app_state.lock().unwrap().presets[slot]
-                                                    .as_ref()
-                                                    .map_or_else(
-                                                        || t!("gui.default_preset_name_fmt", num = slot + 1).to_string(),
-                                                        |p| p.name.clone()
-                                                    );
-                                                tui_state.mode = AppMode::PresetSaveName(slot, current_name);
+                                                let current_name =
+                                                    tui_state.app_state.lock().unwrap().presets
+                                                        [slot]
+                                                        .as_ref()
+                                                        .map_or_else(
+                                                            || {
+                                                                t!(
+                                                                    "gui.default_preset_name_fmt",
+                                                                    num = slot + 1
+                                                                )
+                                                                .to_string()
+                                                            },
+                                                            |p| p.name.clone(),
+                                                        );
+                                                tui_state.mode =
+                                                    AppMode::PresetSaveName(slot, current_name);
                                             }
-                                            KeyCode::F(n) if (1..=12).contains(&n) && key.modifiers.is_empty() => {
-                                                if let Err(e) = tui_state.app_state.lock().unwrap().recall_preset((n - 1) as usize, &audio_tx) {
-                                                    tui_state.app_state.lock().unwrap().add_midi_log(
-                                                        t!("errors.recall_preset_fail", err = e).to_string()
-                                                    );
+                                            KeyCode::F(n)
+                                                if (1..=12).contains(&n)
+                                                    && key.modifiers.is_empty() =>
+                                            {
+                                                if let Err(e) = tui_state
+                                                    .app_state
+                                                    .lock()
+                                                    .unwrap()
+                                                    .recall_preset((n - 1) as usize, &audio_tx)
+                                                {
+                                                    tui_state
+                                                        .app_state
+                                                        .lock()
+                                                        .unwrap()
+                                                        .add_midi_log(
+                                                            t!(
+                                                                "errors.recall_preset_fail",
+                                                                err = e
+                                                            )
+                                                            .to_string(),
+                                                        );
                                                 }
                                             }
                                             // Gain
                                             KeyCode::Char('+') | KeyCode::Char('=') => {
-                                                tui_state.app_state.lock().unwrap().modify_gain(0.05, &audio_tx);
+                                                tui_state
+                                                    .app_state
+                                                    .lock()
+                                                    .unwrap()
+                                                    .modify_gain(0.05, &audio_tx);
                                             }
                                             KeyCode::Char('-') => {
-                                                tui_state.app_state.lock().unwrap().modify_gain(-0.05, &audio_tx);
+                                                tui_state
+                                                    .app_state
+                                                    .lock()
+                                                    .unwrap()
+                                                    .modify_gain(-0.05, &audio_tx);
                                             }
                                             // Polyphony
                                             KeyCode::Char(']') => {
-                                                tui_state.app_state.lock().unwrap().modify_polyphony(16, &audio_tx);
+                                                tui_state
+                                                    .app_state
+                                                    .lock()
+                                                    .unwrap()
+                                                    .modify_polyphony(16, &audio_tx);
                                             }
                                             KeyCode::Char('[') => {
-                                                tui_state.app_state.lock().unwrap().modify_polyphony(-16, &audio_tx);
+                                                tui_state
+                                                    .app_state
+                                                    .lock()
+                                                    .unwrap()
+                                                    .modify_polyphony(-16, &audio_tx);
                                             }
-                                        _ => {}
+                                            _ => {}
                                         }
                                     }
-                                },
+                                }
                                 AppMode::PresetSaveName(slot, name_buffer) => {
                                     match key.code {
                                         KeyCode::Enter => {
                                             if !name_buffer.is_empty() {
-                                                tui_state.app_state.lock().unwrap().save_preset(*slot, name_buffer.clone());
+                                                tui_state
+                                                    .app_state
+                                                    .lock()
+                                                    .unwrap()
+                                                    .save_preset(*slot, name_buffer.clone());
                                             }
                                             tui_state.mode = AppMode::MainApp;
                                         }
@@ -354,10 +453,12 @@ pub fn run_tui_loop(
                                         }
                                         _ => {} // Ignore other keys
                                     }
-                                },
+                                }
                                 // Handle MIDI Learn Input
                                 AppMode::MidiLearn => {
-                                    let keep_open = tui_state.midi_learn_state.handle_input(key.code, &tui_state.app_state);
+                                    let keep_open = tui_state
+                                        .midi_learn_state
+                                        .handle_input(key.code, &tui_state.app_state);
                                     if !keep_open {
                                         tui_state.mode = AppMode::MainApp;
                                     }
@@ -366,7 +467,6 @@ pub fn run_tui_loop(
                         }
                     } // non-note keyboard commmands
                 }
-
             }
         }
     }
@@ -378,26 +478,22 @@ pub fn run_tui_loop(
 
 // Main App UI function
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
-fn draw_main_app_ui(
-    frame: &mut Frame, 
-    app_state: &mut AppState,
-    list_state: &mut ListState,
-) {
+fn draw_main_app_ui(frame: &mut Frame, app_state: &mut AppState, list_state: &mut ListState) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Percentage(70), // Stops
             Constraint::Percentage(30), // MIDI Log
-            Constraint::Length(1),     // Footer
+            Constraint::Length(1),      // Footer
         ])
         .split(frame.area());
 
     let is_underrun = {
-         if let Some(last) = app_state.last_underrun {
-             last.elapsed() < Duration::from_millis(200)
-         } else {
-             false
-         }
+        if let Some(last) = app_state.last_underrun {
+            last.elapsed() < Duration::from_millis(200)
+        } else {
+            false
+        }
     };
 
     // --- Footer Help Text / Error ---
@@ -413,21 +509,27 @@ fn draw_main_app_ui(
     };
 
     let footer_widget = if let Some(err) = &app_state.error_msg {
-        Paragraph::new(err.as_str())
-            .style(Style::default().fg(Color::White).bg(Color::Red))
+        Paragraph::new(err.as_str()).style(Style::default().fg(Color::White).bg(Color::Red))
     } else if is_underrun {
         Paragraph::new(t!("tui.err_underrun").to_string())
             .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::White).bg(Color::Red).add_modifier(Modifier::BOLD))
+            .style(
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            )
     } else {
-        let status = t!("tui.status_bar_fmt",
+        let status = t!(
+            "tui.status_bar_fmt",
             rec = rec_status,
             cpu = format!("{:.1}", app_state.cpu_load * 100.0),
-            gain = format!("{:.0}", app_state.gain * 100.0), 
+            gain = format!("{:.0}", app_state.gain * 100.0),
             active = app_state.active_voice_count,
             poly = app_state.polyphony
-        ).to_string();
-        
+        )
+        .to_string();
+
         Paragraph::new(status).alignment(Alignment::Center)
     };
     frame.render_widget(footer_widget, main_layout[2]);
@@ -444,19 +546,23 @@ fn draw_main_app_ui(
             Constraint::Percentage(33),
         ])
         .split(stops_area);
-    
+
     let selected_index = list_state.selected().unwrap_or(0);
     let stops_count = app_state.organ.stops.len();
     if stops_count == 0 {
         let no_stops_msg = Paragraph::new(t!("tui.no_stops").to_string())
             .alignment(Alignment::Center)
-            .block(Block::default().borders(Borders::ALL).title(app_state.organ.name.as_str()));
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(app_state.organ.name.as_str()),
+            );
         frame.render_widget(no_stops_msg, stops_area);
     } else {
         let items_per_column = (stops_count + NUM_COLUMNS - 1) / NUM_COLUMNS;
-        
+
         let all_stops: Vec<_> = app_state.organ.stops.iter().enumerate().collect();
-        
+
         for (col_idx, rect) in column_layout.iter().enumerate() {
             let start_idx = col_idx * items_per_column;
             let end_idx = (start_idx + items_per_column).min(stops_count);
@@ -465,7 +571,8 @@ fn draw_main_app_ui(
                 continue;
             }
 
-            let column_items: Vec<ListItem> = all_stops[start_idx..end_idx].iter()
+            let column_items: Vec<ListItem> = all_stops[start_idx..end_idx]
+                .iter()
                 .map(|(global_idx, stop)| {
                     let active_channels = app_state
                         .stop_channels
@@ -477,16 +584,20 @@ fn draw_main_app_ui(
 
                     for i in 0..10u8 {
                         if active_channels.contains(&i) {
-                            let display_num = if i == 9 { "0".to_string() } else { format!("{}", i + 1) };
+                            let display_num = if i == 9 {
+                                "0".to_string()
+                            } else {
+                                format!("{}", i + 1)
+                            };
                             channel_spans.push(Span::styled(
                                 display_num,
-                                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
                             ));
                         } else {
-                            channel_spans.push(Span::styled(
-                                "■", 
-                                Style::default().fg(Color::DarkGray),
-                            ));
+                            channel_spans
+                                .push(Span::styled("■", Style::default().fg(Color::DarkGray)));
                         }
                     }
 
@@ -503,10 +614,14 @@ fn draw_main_app_ui(
                     ListItem::new(line).style(style)
                 })
                 .collect();
-            
-            let title = if col_idx == 0 { app_state.organ.name.as_str() } else { "" };
-            let list_widget = List::new(column_items)
-                .block(Block::default().borders(Borders::ALL).title(title));
+
+            let title = if col_idx == 0 {
+                app_state.organ.name.as_str()
+            } else {
+                ""
+            };
+            let list_widget =
+                List::new(column_items).block(Block::default().borders(Borders::ALL).title(title));
             frame.render_widget(list_widget, *rect);
         }
     }
@@ -521,14 +636,20 @@ fn draw_main_app_ui(
         ])
         .split(bottom_area);
 
-    let log_items: Vec<ListItem> = app_state.midi_log.iter()
+    let log_items: Vec<ListItem> = app_state
+        .midi_log
+        .iter()
         .map(|msg| ListItem::new(Line::from(msg.clone())))
         .collect();
 
     let log_widget = List::new(log_items)
-        .block(Block::default().borders(Borders::ALL).title(t!("tui.midi_log_title").to_string()))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(t!("tui.midi_log_title").to_string()),
+        )
         .style(Style::default().fg(Color::Cyan));
-    
+
     frame.render_widget(log_widget, bottom_chunks[0]);
 
     const PIANO_LOW_NOTE: u8 = 21;
@@ -536,27 +657,30 @@ fn draw_main_app_ui(
     const BLACK_KEY_MODS: [u8; 5] = [1, 3, 6, 8, 10];
 
     let now = Instant::now();
-    let display_start_time = now.checked_sub(app_state.piano_roll_display_duration)
+    let display_start_time = now
+        .checked_sub(app_state.piano_roll_display_duration)
         .unwrap_or(Instant::now());
 
     let piano_roll = Canvas::default()
-        .block(Block::default().borders(Borders::ALL).title(t!("tui.piano_roll_title").to_string()))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(t!("tui.piano_roll_title").to_string()),
+        )
         .marker(Marker::Block)
-        .x_bounds([
-            PIANO_LOW_NOTE as f64,
-            PIANO_HIGH_NOTE as f64 + 1.0,
-        ])
-        .y_bounds([
-            0.0, 
-            app_state.piano_roll_display_duration.as_secs_f64()
-        ])
+        .x_bounds([PIANO_LOW_NOTE as f64, PIANO_HIGH_NOTE as f64 + 1.0])
+        .y_bounds([0.0, app_state.piano_roll_display_duration.as_secs_f64()])
         .paint(|ctx| {
             let area_height_coords = app_state.piano_roll_display_duration.as_secs_f64();
 
             for note in PIANO_LOW_NOTE..=PIANO_HIGH_NOTE {
                 let is_black_key = BLACK_KEY_MODS.contains(&(note % 12));
-                let color = if is_black_key { Color::Rgb(50, 50, 50) } else { Color::Rgb(100, 100, 100) };
-                
+                let color = if is_black_key {
+                    Color::Rgb(50, 50, 50)
+                } else {
+                    Color::Rgb(100, 100, 100)
+                };
+
                 ctx.draw(&CanvasLine {
                     x1: note as f64,
                     y1: 0.0,
@@ -566,21 +690,21 @@ fn draw_main_app_ui(
                 });
             }
 
-            let map_time_to_y = |time: Instant| -> f64 {
-                time.duration_since(display_start_time).as_secs_f64()
-            };
+            let map_time_to_y =
+                |time: Instant| -> f64 { time.duration_since(display_start_time).as_secs_f64() };
 
             for played_note in &app_state.finished_notes_display {
                 let note_x = played_note.note as f64;
                 let start_y = map_time_to_y(played_note.start_time);
-                let end_y = played_note.end_time.map_or_else(
-                    || map_time_to_y(now),
-                    |et| map_time_to_y(et),
-                );
-                
+                let end_y = played_note
+                    .end_time
+                    .map_or_else(|| map_time_to_y(now), |et| map_time_to_y(et));
+
                 ctx.draw(&CanvasLine {
-                    x1: note_x, y1: start_y,
-                    x2: note_x, y2: end_y,
+                    x1: note_x,
+                    y1: start_y,
+                    x2: note_x,
+                    y2: end_y,
                     color: Color::Magenta,
                 });
             }
@@ -588,11 +712,13 @@ fn draw_main_app_ui(
             for (_, played_note) in &app_state.currently_playing_notes {
                 let note_x = played_note.note as f64;
                 let start_y = map_time_to_y(played_note.start_time);
-                let end_y = map_time_to_y(now); 
-                
+                let end_y = map_time_to_y(now);
+
                 ctx.draw(&CanvasLine {
-                    x1: note_x, y1: start_y,
-                    x2: note_x, y2: end_y,
+                    x1: note_x,
+                    y1: start_y,
+                    x2: note_x,
+                    y2: end_y,
                     color: Color::Green,
                 });
             }
@@ -600,53 +726,44 @@ fn draw_main_app_ui(
     frame.render_widget(piano_roll, bottom_chunks[1]);
 }
 
-
 /// Renders the UI frame.
 fn ui(frame: &mut Frame, state: &mut TuiState) {
     let mut app_state_locked = state.app_state.lock().unwrap();
     let mode = state.mode.clone();
     match mode {
-        AppMode::MainApp => draw_main_app_ui(
-            frame, 
-            &mut app_state_locked, 
-            &mut state.list_state, 
-        ),
+        AppMode::MainApp => draw_main_app_ui(frame, &mut app_state_locked, &mut state.list_state),
         AppMode::PresetSaveName(slot, name_buffer) => {
             // Draw the main app in the background
-            draw_main_app_ui(
-                frame, 
-                &mut app_state_locked, 
-                &mut state.list_state, 
-            );
+            draw_main_app_ui(frame, &mut app_state_locked, &mut state.list_state);
             // Draw the modal on top
             draw_preset_save_modal(frame, slot, &name_buffer);
-        },
+        }
         AppMode::MidiLearn => {
             draw_midi_learn_modal(frame, &state.midi_learn_state, &app_state_locked);
-        },
+        }
     }
 }
 
 fn draw_preset_save_modal(frame: &mut Frame, slot: usize, name_buffer: &str) {
-    let area = centered_rect(frame.area(), 60, 20); 
+    let area = centered_rect(frame.area(), 60, 20);
     let slot_display = slot + 1;
-    
+
     let text = vec![
         Line::from(Span::styled(
             t!("tui.save_header_fmt", num = slot_display).to_string(),
-            Style::default().add_modifier(Modifier::BOLD)
+            Style::default().add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
         Line::from(t!("tui.save_prompt").to_string()),
         Line::from(""),
         Line::from(Span::styled(
             format!("{}▋", name_buffer),
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(Color::Yellow),
         )),
         Line::from(""),
         Line::from(Span::styled(
             t!("tui.save_footer").to_string(),
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::DarkGray),
         )),
     ];
 
@@ -681,7 +798,6 @@ fn centered_rect(r: Rect, percent_x: u16, percent_y: u16) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-
 /// Helper to set up the terminal for TUI mode.
 pub fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     let mut stdout = stdout();
@@ -690,15 +806,13 @@ pub fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
     // Enable Keyboard Enhancements
     // REPORT_EVENT_TYPES is required to distinguish Press vs Release
     let supports_keyboard_enhancement = matches!(
-        crossterm::terminal::supports_keyboard_enhancement(), 
+        crossterm::terminal::supports_keyboard_enhancement(),
         Ok(true)
     );
     if supports_keyboard_enhancement {
         execute!(
             stdout,
-            PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::REPORT_EVENT_TYPES 
-            )
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::REPORT_EVENT_TYPES)
         )?;
     }
     Ok(Terminal::new(CrosstermBackend::new(stdout))?)
@@ -707,11 +821,11 @@ pub fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
 /// Helper to clean up the terminal.
 pub fn cleanup_terminal() -> Result<()> {
     let mut stdout = stdout();
-    
+
     // Disable Keyboard Enhancements
     // If we don't do this, the user's shell might act weirdly after exit.
     let supports_keyboard_enhancement = matches!(
-        crossterm::terminal::supports_keyboard_enhancement(), 
+        crossterm::terminal::supports_keyboard_enhancement(),
         Ok(true)
     );
 

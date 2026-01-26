@@ -1,10 +1,9 @@
 use eframe::{egui, App, Frame};
-use std::sync::{
-    mpsc,
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
 use rust_i18n::t;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc,
+};
 
 struct LoadingApp {
     progress_rx: mpsc::Receiver<(f32, String)>,
@@ -77,9 +76,5 @@ pub fn run_loading_ui(
 
     let app_name = t!("loading.app_name").to_string();
 
-    eframe::run_native(
-        &app_name,
-        native_options,
-        Box::new(|_cc| Ok(Box::new(app))),
-    )
+    eframe::run_native(&app_name, native_options, Box::new(|_cc| Ok(Box::new(app))))
 }

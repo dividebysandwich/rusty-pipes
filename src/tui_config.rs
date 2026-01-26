@@ -655,7 +655,7 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
     // --- Calculate new header height ---
     let pipes_lines = PIPES.lines().count(); // 7
     let logo_lines_count = LOGO.lines().count(); // 5
-    // 7(pipes) + 5(logo) + 1(indicia) + 1(blank) + 1(title) + 2(borders) = 17
+                                                 // 7(pipes) + 5(logo) + 1(indicia) + 1(blank) + 1(title) + 2(borders) = 17
     let header_height = (pipes_lines + logo_lines_count + 5) as u16;
 
     // --- Main Layout ---

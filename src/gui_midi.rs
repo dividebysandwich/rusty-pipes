@@ -37,7 +37,7 @@ impl MidiMappingWindow {
         let window_title = t!("midi_config.window_title_fmt", name = device.name);
 
         let mut is_open = self.visible;
-        
+
         let mut close_requested = false;
 
         egui::Window::new(window_title.to_string())
@@ -54,10 +54,18 @@ impl MidiMappingWindow {
                 // --- Mode Selection ---
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(t!("midi_config.mode_label")).strong());
-                    ui.radio_value(&mut device.mapping_mode, MidiMappingMode::Simple, t!("midi_config.mode_simple"));
-                    ui.radio_value(&mut device.mapping_mode, MidiMappingMode::Complex, t!("midi_config.mode_complex"));
+                    ui.radio_value(
+                        &mut device.mapping_mode,
+                        MidiMappingMode::Simple,
+                        t!("midi_config.mode_simple"),
+                    );
+                    ui.radio_value(
+                        &mut device.mapping_mode,
+                        MidiMappingMode::Complex,
+                        t!("midi_config.mode_complex"),
+                    );
                 });
-                
+
                 ui.separator();
                 ui.add_space(5.0);
 
@@ -95,23 +103,30 @@ impl MidiMappingWindow {
 
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(t!("midi_config.target_channel_label")).strong());
-                
+
                 // ComboBox for 1-16 (stored as 0-15)
-                let current_text = t!("midi_config.channel_fmt", num = device.simple_target_channel + 1);
+                let current_text = t!(
+                    "midi_config.channel_fmt",
+                    num = device.simple_target_channel + 1
+                );
                 egui::ComboBox::from_id_salt("simple_target_selector")
                     .selected_text(current_text)
                     .show_ui(ui, |ui| {
                         for ch in 0..16 {
                             ui.selectable_value(
-                                &mut device.simple_target_channel, 
-                                ch, 
-                                t!("midi_config.channel_fmt", num = ch + 1).to_string()
+                                &mut device.simple_target_channel,
+                                ch,
+                                t!("midi_config.channel_fmt", num = ch + 1).to_string(),
                             );
                         }
                     });
             });
             ui.add_space(10.0);
-            ui.label(egui::RichText::new(t!("midi_config.simple_hint")).italics().weak());
+            ui.label(
+                egui::RichText::new(t!("midi_config.simple_hint"))
+                    .italics()
+                    .weak(),
+            );
         });
     }
 
@@ -128,23 +143,31 @@ impl MidiMappingWindow {
                     .spacing([40.0, 10.0])
                     .show(ui, |ui| {
                         // Header
-                        ui.label(egui::RichText::new(t!("midi_config.col_input")).strong().underline());
-                        ui.label(egui::RichText::new(t!("midi_config.col_target")).strong().underline());
+                        ui.label(
+                            egui::RichText::new(t!("midi_config.col_input"))
+                                .strong()
+                                .underline(),
+                        );
+                        ui.label(
+                            egui::RichText::new(t!("midi_config.col_target"))
+                                .strong()
+                                .underline(),
+                        );
                         ui.end_row();
 
                         // Rows 1-16
                         for i in 0..16 {
                             ui.label(t!("midi_config.input_channel_fmt", num = i + 1));
-                            
+
                             let unique_id = format!("complex_ch_combo_{}", i);
                             egui::ComboBox::from_id_salt(unique_id)
                                 .selected_text(format!("{}", device.complex_mapping[i] + 1))
                                 .show_ui(ui, |ui| {
                                     for target in 0..16 {
                                         ui.selectable_value(
-                                            &mut device.complex_mapping[i], 
-                                            target, 
-                                            format!("{}", target + 1)
+                                            &mut device.complex_mapping[i],
+                                            target,
+                                            format!("{}", target + 1),
                                         );
                                     }
                                 });

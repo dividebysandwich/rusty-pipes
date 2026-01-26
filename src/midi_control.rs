@@ -1,9 +1,9 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
-use anyhow::Result;
 
 use crate::config::MidiEventSpec;
 
@@ -17,16 +17,25 @@ pub struct StopChannelControl {
 /// Unified action type returned when checking events
 #[derive(Debug, PartialEq)]
 pub enum ControlAction {
-    SetStop { index: usize, internal_channel: u8, active: bool },
-    SetTremulant { id: String, active: bool },
-    LoadPreset { slot_index: usize },
+    SetStop {
+        index: usize,
+        internal_channel: u8,
+        active: bool,
+    },
+    SetTremulant {
+        id: String,
+        active: bool,
+    },
+    LoadPreset {
+        slot_index: usize,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct MidiControlMap {
     // Map<StopIndex, Map<InternalChannel, Control>>
     pub stops: HashMap<usize, HashMap<u8, StopChannelControl>>,
-    
+
     // Map<TremulantID, Control>
     #[serde(default)]
     pub tremulants: HashMap<String, StopChannelControl>,
@@ -38,7 +47,7 @@ pub struct MidiControlMap {
 
 impl MidiControlMap {
     pub fn new() -> Self {
-        Self { 
+        Self {
             stops: HashMap::new(),
             tremulants: HashMap::new(),
             presets: HashMap::new(),
@@ -49,7 +58,8 @@ impl MidiControlMap {
         let config_path = confy::get_configuration_file_path("rusty-pipes", "settings")
             .expect("Could not get configuration file path");
         let parent = config_path.parent().expect("Could not get config parent");
-        let safe_name: String = organ_name.chars()
+        let safe_name: String = organ_name
+            .chars()
             .map(|x| if x.is_alphanumeric() { x } else { '_' })
             .collect();
         parent.join(format!("{}.midi_map.json", safe_name))
@@ -77,11 +87,11 @@ impl MidiControlMap {
     }
 
     pub fn learn_stop(
-        &mut self, 
-        stop_index: usize, 
-        internal_channel: u8, 
-        event: MidiEventSpec, 
-        is_enable_action: bool
+        &mut self,
+        stop_index: usize,
+        internal_channel: u8,
+        event: MidiEventSpec,
+        is_enable_action: bool,
     ) {
         let stop_entry = self.stops.entry(stop_index).or_default();
         let ch_entry = stop_entry.entry(internal_channel).or_default();
@@ -97,7 +107,7 @@ impl MidiControlMap {
         &mut self,
         trem_id: String,
         event: MidiEventSpec,
-        is_enable_action: bool
+        is_enable_action: bool,
     ) {
         let entry = self.tremulants.entry(trem_id).or_default();
         if is_enable_action {
@@ -134,12 +144,20 @@ impl MidiControlMap {
             for (internal_channel, control) in channel_map {
                 if let Some(trigger) = &control.enable_event {
                     if trigger == incoming {
-                        actions.push(ControlAction::SetStop { index: *stop_idx, internal_channel: *internal_channel, active: true });
+                        actions.push(ControlAction::SetStop {
+                            index: *stop_idx,
+                            internal_channel: *internal_channel,
+                            active: true,
+                        });
                     }
                 }
                 if let Some(trigger) = &control.disable_event {
                     if trigger == incoming {
-                        actions.push(ControlAction::SetStop { index: *stop_idx, internal_channel: *internal_channel, active: false });
+                        actions.push(ControlAction::SetStop {
+                            index: *stop_idx,
+                            internal_channel: *internal_channel,
+                            active: false,
+                        });
                     }
                 }
             }
@@ -149,12 +167,18 @@ impl MidiControlMap {
         for (trem_id, control) in &self.tremulants {
             if let Some(trigger) = &control.enable_event {
                 if trigger == incoming {
-                    actions.push(ControlAction::SetTremulant { id: trem_id.clone(), active: true });
+                    actions.push(ControlAction::SetTremulant {
+                        id: trem_id.clone(),
+                        active: true,
+                    });
                 }
             }
             if let Some(trigger) = &control.disable_event {
                 if trigger == incoming {
-                    actions.push(ControlAction::SetTremulant { id: trem_id.clone(), active: false });
+                    actions.push(ControlAction::SetTremulant {
+                        id: trem_id.clone(),
+                        active: false,
+                    });
                 }
             }
         }

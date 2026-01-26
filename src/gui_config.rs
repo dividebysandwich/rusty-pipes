@@ -4,7 +4,7 @@ use crate::config::{AppSettings, ConfigState, RuntimeConfig};
 use crate::gui_filepicker;
 use crate::gui_midi::MidiMappingWindow;
 use anyhow::Result;
-use eframe::{App, Frame, egui};
+use eframe::{egui, App, Frame};
 use midir::MidiInput;
 use rust_i18n::t;
 use std::sync::{Arc, Mutex};
