@@ -4881,7 +4881,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
 name = "rusty-pipes"
-version = "1.6.4"
+version = "1.6.5"
 dependencies = [
  "actix-web",
  "anyhow",
