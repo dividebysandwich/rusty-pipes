@@ -71,7 +71,7 @@ fn get_cpal_host() -> cpal::Host {
     let host_names: Vec<_> = available_hosts.iter().map(|id| id.name()).collect();
     log::info!("[Audio] Available Hosts: {:?}", host_names);
 
-    let priority_order = ["jack", "alsa"];
+    let priority_order = ["asio","jack", "alsa"];
 
     for target_name in priority_order {
         if let Some(host_id) = available_hosts

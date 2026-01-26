@@ -10,7 +10,7 @@ env:
 
 defaults:
   run:
-    # necessary for windows
+    # necessary for windows to use standard bash commands
     shell: bash
 
 jobs:
@@ -91,6 +91,25 @@ jobs:
       OS: ${{ matrix.OS }}
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Install LLVM and Clang (Windows)
+        if: runner.os == 'Windows'
+        run: choco install llvm -y
+
+      - name: Set LIBCLANG_PATH (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $GITHUB_ENV
+          echo "C:\Program Files\LLVM\bin" >> $GITHUB_PATH
+
+      - name: Enable ASIO feature in Cargo.toml (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          (Get-Content Cargo.toml) -replace 'features = \["jack"\]', 'features = ["jack", "asio"]' | Set-Content Cargo.toml
+          Write-Host "Patched Cargo.toml for ASIO support:"
+          Get-Content Cargo.toml | Select-String "cpal"
+
       - name: Calculate Cargo hash
         id: cargo-hash
         run: |
@@ -108,8 +127,6 @@ jobs:
             ~/.cargo/registry
             ./target
           key: build-cargo-registry-${{ matrix.TARGET }}-${{ steps.cargo-hash.outputs.hash }}
-      - name: List
-        run: find ./
 
       - name: Install dependencies
         if: runner.os == 'Linux'
@@ -200,6 +217,22 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install LLVM and Clang
+        run: choco install llvm -y
+
+      - name: Set LIBCLANG_PATH
+        shell: bash
+        run: |
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> $GITHUB_ENV
+          echo "C:\Program Files\LLVM\bin" >> $GITHUB_PATH
+
+      - name: Enable ASIO feature in Cargo.toml
+        shell: powershell
+        run: |
+          (Get-Content Cargo.toml) -replace 'features = \["jack"\]', 'features = ["jack", "asio"]' | Set-Content Cargo.toml
+          Write-Host "Patched Cargo.toml for ASIO support:"
+          Get-Content Cargo.toml | Select-String "cpal"
       
       - name: Cargo cache
         uses: actions/cache@v4
