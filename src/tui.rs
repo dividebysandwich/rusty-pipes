@@ -29,6 +29,7 @@ use crate::app_state::AppState;
 use crate::config::{MidiEventSpec, load_organ_library};
 use crate::input::MusicCommand;
 use crate::tui_midi_learn::{MidiLearnTuiState, draw_midi_learn_modal};
+use crate::tui_organ_manager::{OrganManagerTuiState, draw_organ_manager};
 
 const NUM_COLUMNS: usize = 3; // Number of columns for the stop list
 
@@ -37,115 +38,226 @@ enum AppMode {
     MainApp,
     PresetSaveName(usize, String), // Holds (slot_index, current_name_buffer)
     MidiLearn,
+    OrganManager,
+}
+
+#[derive(Clone, PartialEq, Eq, Default)]
+enum MainViewMode {
+    #[default]
+    Stops,
+    Tremulants,
+    Presets,
+}
+
+impl MainViewMode {
+    fn next(&self) -> Self {
+        match self {
+            MainViewMode::Stops => MainViewMode::Tremulants,
+            MainViewMode::Tremulants => MainViewMode::Presets,
+            MainViewMode::Presets => MainViewMode::Stops,
+        }
+    }
 }
 
 /// Holds the state specific to the TUI.
 struct TuiState {
     mode: AppMode,
     app_state: Arc<Mutex<AppState>>,
-    list_state: ListState, // TUI-specific selection state
+
+    // Main View Mode (Stops, Tremulants, Presets)
+    main_view_mode: MainViewMode,
+
+    // List States for each view
+    stop_list_state: ListState, // Renamed from list_state
+    tremulant_list_state: ListState,
+    preset_list_state: ListState,
+
     items_per_column: usize,
     stops_count: usize,
     midi_learn_state: MidiLearnTuiState,
+    organ_manager_state: OrganManagerTuiState,
 }
 
 impl TuiState {
     fn new(app_state: Arc<Mutex<AppState>>) -> Result<Self> {
         let app_state_locked = app_state.lock().unwrap();
 
-        let mut list_state = ListState::default();
+        let mut stop_list_state = ListState::default();
         let stops_count = app_state_locked.organ.stops.len();
         if stops_count > 0 {
-            list_state.select(Some(0)); // Select the first item
+            stop_list_state.select(Some(0)); // Select the first item
         }
         let items_per_column = (stops_count + NUM_COLUMNS - 1) / NUM_COLUMNS;
+
+        // Tremulant list state
+        let mut tremulant_list_state = ListState::default();
+        if !app_state_locked.organ.tremulants.is_empty() {
+            tremulant_list_state.select(Some(0));
+        }
+
+        // Preset list state
+        let mut preset_list_state = ListState::default();
+        preset_list_state.select(Some(0)); // Presets are always 12 slots
 
         drop(app_state_locked); // Explicitly drop the lock
 
         Ok(Self {
             mode: AppMode::MainApp, // Always start in MainApp
+            main_view_mode: MainViewMode::Stops,
             app_state,
-            list_state,
+            stop_list_state,
+            tremulant_list_state,
+            preset_list_state,
             items_per_column,
-            stops_count,
+            stops_count, // Keeping this cached for Stops view
             midi_learn_state: MidiLearnTuiState::default(),
+            organ_manager_state: OrganManagerTuiState::new(),
         })
     }
 
     // --- TUI-specific navigation ---
 
     fn next_item(&mut self) {
-        if self.stops_count == 0 {
-            return;
+        match self.main_view_mode {
+            MainViewMode::Stops => {
+                if self.stops_count == 0 {
+                    return;
+                }
+                let i = match self.stop_list_state.selected() {
+                    Some(i) => (i + 1) % self.stops_count,
+                    None => 0,
+                };
+                self.stop_list_state.select(Some(i));
+            }
+            MainViewMode::Tremulants => {
+                let count = self.app_state.lock().unwrap().organ.tremulants.len();
+                if count == 0 {
+                    return;
+                }
+                let i = match self.tremulant_list_state.selected() {
+                    Some(i) => (i + 1) % count,
+                    None => 0,
+                };
+                self.tremulant_list_state.select(Some(i));
+            }
+            MainViewMode::Presets => {
+                let count = 12; // Fixed
+                let i = match self.preset_list_state.selected() {
+                    Some(i) => (i + 1) % count,
+                    None => 0,
+                };
+                self.preset_list_state.select(Some(i));
+            }
         }
-        let i = match self.list_state.selected() {
-            Some(i) => (i + 1) % self.stops_count,
-            None => 0,
-        };
-        self.list_state.select(Some(i));
     }
 
     fn prev_item(&mut self) {
-        if self.stops_count == 0 {
-            return;
-        }
-        let i = match self.list_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.stops_count - 1
-                } else {
-                    i - 1
+        match self.main_view_mode {
+            MainViewMode::Stops => {
+                if self.stops_count == 0 {
+                    return;
                 }
+                let i = match self.stop_list_state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            self.stops_count - 1
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.stop_list_state.select(Some(i));
             }
-            None => 0,
-        };
-        self.list_state.select(Some(i));
-    }
-    fn next_col(&mut self) {
-        if self.stops_count == 0 {
-            return;
+            MainViewMode::Tremulants => {
+                let count = self.app_state.lock().unwrap().organ.tremulants.len();
+                if count == 0 {
+                    return;
+                }
+                let i = match self.tremulant_list_state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            count - 1
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.tremulant_list_state.select(Some(i));
+            }
+            MainViewMode::Presets => {
+                let count = 12;
+                let i = match self.preset_list_state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            count - 1
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.preset_list_state.select(Some(i));
+            }
         }
-        let i = match self.list_state.selected() {
-            Some(i) => (i + self.items_per_column).min(self.stops_count - 1),
-            None => 0,
-        };
-        self.list_state.select(Some(i));
+    }
+
+    fn next_col(&mut self) {
+        if let MainViewMode::Stops = self.main_view_mode {
+            if self.stops_count == 0 {
+                return;
+            }
+            let i = match self.stop_list_state.selected() {
+                Some(i) => (i + self.items_per_column).min(self.stops_count - 1),
+                None => 0,
+            };
+            self.stop_list_state.select(Some(i));
+        }
     }
 
     fn prev_col(&mut self) {
-        let i = match self.list_state.selected() {
-            Some(i) => i.saturating_sub(self.items_per_column),
-            None => 0,
-        };
-        self.list_state.select(Some(i));
+        if let MainViewMode::Stops = self.main_view_mode {
+            let i = match self.stop_list_state.selected() {
+                Some(i) => i.saturating_sub(self.items_per_column),
+                None => 0,
+            };
+            self.stop_list_state.select(Some(i));
+        }
     }
 
     fn toggle_stop_channel(&mut self, channel: u8, audio_tx: &Sender<AppMessage>) -> Result<()> {
-        if let Some(selected_index) = self.list_state.selected() {
-            self.app_state.lock().unwrap().toggle_stop_channel(
-                selected_index,
-                channel,
-                audio_tx,
-            )?;
+        if let MainViewMode::Stops = self.main_view_mode {
+            if let Some(selected_index) = self.stop_list_state.selected() {
+                self.app_state.lock().unwrap().toggle_stop_channel(
+                    selected_index,
+                    channel,
+                    audio_tx,
+                )?;
+            }
         }
         Ok(())
     }
 
     fn select_all_channels_for_stop(&mut self) {
-        if let Some(selected_index) = self.list_state.selected() {
-            self.app_state
-                .lock()
-                .unwrap()
-                .select_all_channels_for_stop(selected_index);
+        if let MainViewMode::Stops = self.main_view_mode {
+            if let Some(selected_index) = self.stop_list_state.selected() {
+                self.app_state
+                    .lock()
+                    .unwrap()
+                    .select_all_channels_for_stop(selected_index);
+            }
         }
     }
 
     fn select_none_channels_for_stop(&mut self, audio_tx: &Sender<AppMessage>) -> Result<()> {
-        if let Some(selected_index) = self.list_state.selected() {
-            self.app_state
-                .lock()
-                .unwrap()
-                .select_none_channels_for_stop(selected_index, audio_tx)?;
+        if let MainViewMode::Stops = self.main_view_mode {
+            if let Some(selected_index) = self.stop_list_state.selected() {
+                self.app_state
+                    .lock()
+                    .unwrap()
+                    .select_none_channels_for_stop(selected_index, audio_tx)?;
+            }
         }
         Ok(())
     }
@@ -173,6 +285,12 @@ pub fn run_tui_loop(
         if tui_state.mode == AppMode::MidiLearn {
             tui_state
                 .midi_learn_state
+                .check_for_midi_input(&tui_state.app_state);
+        }
+
+        if tui_state.mode == AppMode::OrganManager {
+            tui_state
+                .organ_manager_state
                 .check_for_midi_input(&tui_state.app_state);
         }
 
@@ -264,170 +382,287 @@ pub fn run_tui_loop(
                             match &mut tui_state.mode {
                                 AppMode::MainApp => {
                                     // --- Handle Main App Input ---
-                                    let channel_to_toggle = match key.code {
-                                        KeyCode::Char('1') => Some(0),
-                                        KeyCode::Char('2') => Some(1),
-                                        KeyCode::Char('3') => Some(2),
-                                        KeyCode::Char('4') => Some(3),
-                                        KeyCode::Char('5') => Some(4),
-                                        KeyCode::Char('6') => Some(5),
-                                        KeyCode::Char('7') => Some(6),
-                                        KeyCode::Char('8') => Some(7),
-                                        KeyCode::Char('9') => Some(8),
-                                        KeyCode::Char('0') => Some(9),
-                                        _ => None,
-                                    };
-                                    if let Some(channel) = channel_to_toggle {
-                                        tui_state.toggle_stop_channel(channel, &audio_tx)?;
-                                    } else {
-                                        // Handle other keys if no channel key was pressed
-                                        match key.code {
-                                            KeyCode::Char('q') | KeyCode::Esc => {
-                                                audio_tx.send(AppMessage::Quit)?;
-                                                *exit_action.lock().unwrap() = MainLoopAction::Exit;
-                                                break; // Exit TUI loop
-                                            }
-                                            KeyCode::Down => {
-                                                tui_state.next_item();
-                                            }
-                                            KeyCode::Up => {
-                                                tui_state.prev_item();
-                                            }
-                                            KeyCode::Right => tui_state.next_col(),
-                                            KeyCode::Left => tui_state.prev_col(),
-                                            KeyCode::Char('p') => {
-                                                audio_tx.send(AppMessage::AllNotesOff)?;
-                                            }
-                                            KeyCode::Char('m')
-                                                if key.modifiers.contains(KeyModifiers::SHIFT) =>
-                                            {
-                                                let mut state = tui_state.app_state.lock().unwrap();
-                                                state.is_recording_midi = !state.is_recording_midi;
-                                                if state.is_recording_midi {
-                                                    audio_tx
-                                                        .send(AppMessage::StartMidiRecording)?;
-                                                } else {
-                                                    audio_tx.send(AppMessage::StopMidiRecording)?;
+                                    match key.code {
+                                        KeyCode::Tab => {
+                                            tui_state.main_view_mode =
+                                                tui_state.main_view_mode.next();
+                                        }
+                                        KeyCode::Char('O')
+                                            if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                                        {
+                                            tui_state.mode = AppMode::OrganManager;
+                                        }
+                                        KeyCode::Char('i') => {
+                                            match tui_state.main_view_mode {
+                                                MainViewMode::Stops => {
+                                                    if let Some(idx) =
+                                                        tui_state.stop_list_state.selected()
+                                                    {
+                                                        let stop_name = {
+                                                            let state =
+                                                                tui_state.app_state.lock().unwrap();
+                                                            state.organ.stops[idx].name.clone()
+                                                        };
+                                                        tui_state
+                                                            .midi_learn_state
+                                                            .reset_stop(idx, stop_name);
+                                                        tui_state.mode = AppMode::MidiLearn;
+                                                    }
+                                                }
+                                                MainViewMode::Tremulants => {
+                                                    // Need to get Tremulant ID by index
+                                                    if let Some(idx) =
+                                                        tui_state.tremulant_list_state.selected()
+                                                    {
+                                                        let (id, name) = {
+                                                            let state =
+                                                                tui_state.app_state.lock().unwrap();
+                                                            let mut trems: Vec<_> = state
+                                                                .organ
+                                                                .tremulants
+                                                                .values()
+                                                                .collect();
+                                                            trems.sort_by_key(|t| &t.name);
+                                                            if let Some(t) = trems.get(idx) {
+                                                                (t.id_str.clone(), t.name.clone())
+                                                            } else {
+                                                                (String::new(), String::new())
+                                                            }
+                                                        };
+                                                        if !id.is_empty() {
+                                                            tui_state
+                                                                .midi_learn_state
+                                                                .reset_tremulant(id, name);
+                                                            tui_state.mode = AppMode::MidiLearn;
+                                                        }
+                                                    }
+                                                }
+                                                MainViewMode::Presets => {
+                                                    if let Some(slot) =
+                                                        tui_state.preset_list_state.selected()
+                                                    {
+                                                        tui_state
+                                                            .midi_learn_state
+                                                            .reset_preset(slot);
+                                                        tui_state.mode = AppMode::MidiLearn;
+                                                    }
                                                 }
                                             }
-                                            KeyCode::Char('r')
-                                                if key.modifiers.contains(KeyModifiers::SHIFT) =>
-                                            {
-                                                let mut state = tui_state.app_state.lock().unwrap();
-                                                state.is_recording_audio =
-                                                    !state.is_recording_audio;
-                                                if state.is_recording_audio {
-                                                    audio_tx
-                                                        .send(AppMessage::StartAudioRecording)?;
-                                                } else {
-                                                    audio_tx
-                                                        .send(AppMessage::StopAudioRecording)?;
+                                        }
+                                        // Space toggle for Tremulants
+                                        KeyCode::Char(' ') | KeyCode::Enter => {
+                                            #[allow(clippy::single_match)]
+                                            match tui_state.main_view_mode {
+                                                MainViewMode::Tremulants => {
+                                                    if let Some(idx) =
+                                                        tui_state.tremulant_list_state.selected()
+                                                    {
+                                                        let id = {
+                                                            let state =
+                                                                tui_state.app_state.lock().unwrap();
+                                                            let mut trems: Vec<_> = state
+                                                                .organ
+                                                                .tremulants
+                                                                .values()
+                                                                .collect();
+                                                            trems.sort_by_key(|t| &t.name);
+                                                            trems.get(idx).map(|t| t.id_str.clone())
+                                                        };
+
+                                                        if let Some(id) = id {
+                                                            let mut state =
+                                                                tui_state.app_state.lock().unwrap();
+                                                            let active = state
+                                                                .active_tremulants
+                                                                .contains(&id);
+                                                            state.set_tremulant_active(
+                                                                id, !active, &audio_tx,
+                                                            );
+                                                        }
+                                                    }
                                                 }
-                                            }
-                                            KeyCode::Char('a')
-                                                if key.modifiers.contains(KeyModifiers::SHIFT) =>
-                                            {
-                                                tui_state.select_all_channels_for_stop();
-                                            }
-                                            KeyCode::Char('n')
-                                                if key.modifiers.contains(KeyModifiers::SHIFT) =>
-                                            {
-                                                tui_state
-                                                    .select_none_channels_for_stop(&audio_tx)?;
-                                            }
-                                            // Open MIDI learn dialog
-                                            KeyCode::Char('i') => {
-                                                if let Some(idx) = tui_state.list_state.selected() {
-                                                    let stop_name = {
-                                                        let state =
-                                                            tui_state.app_state.lock().unwrap();
-                                                        state.organ.stops[idx].name.clone()
-                                                    };
-                                                    tui_state
-                                                        .midi_learn_state
-                                                        .reset_stop(idx, stop_name);
-                                                    tui_state.mode = AppMode::MidiLearn;
+                                                MainViewMode::Presets => {
+                                                    if let Some(slot) =
+                                                        tui_state.preset_list_state.selected()
+                                                    {
+                                                        let _ = tui_state
+                                                            .app_state
+                                                            .lock()
+                                                            .unwrap()
+                                                            .recall_preset(slot, &audio_tx);
+                                                    }
                                                 }
+                                                _ => {}
                                             }
-                                            KeyCode::F(n)
-                                                if (1..=12).contains(&n)
-                                                    && key
+                                        }
+
+                                        // Standard Stop Toggles (Channels 1-9)
+                                        KeyCode::Char(c)
+                                            if c.is_ascii_digit()
+                                                && c != '0'
+                                                && matches!(
+                                                    tui_state.main_view_mode,
+                                                    MainViewMode::Stops
+                                                ) =>
+                                        {
+                                            let channel = c as u8 - b'1';
+                                            tui_state.toggle_stop_channel(channel, &audio_tx)?;
+                                        }
+                                        KeyCode::Char('0')
+                                            if matches!(
+                                                tui_state.main_view_mode,
+                                                MainViewMode::Stops
+                                            ) =>
+                                        {
+                                            tui_state.toggle_stop_channel(9, &audio_tx)?;
+                                        }
+
+                                        // Passthrough to other keys
+                                        _ => {
+                                            match key.code {
+                                                KeyCode::Char('q') | KeyCode::Esc => {
+                                                    audio_tx.send(AppMessage::Quit)?;
+                                                    *exit_action.lock().unwrap() =
+                                                        MainLoopAction::Exit;
+                                                    break; // Exit TUI loop
+                                                }
+                                                KeyCode::Down => tui_state.next_item(),
+                                                KeyCode::Up => tui_state.prev_item(),
+                                                KeyCode::Right => tui_state.next_col(),
+                                                KeyCode::Left => tui_state.prev_col(),
+                                                KeyCode::Char('p') => {
+                                                    audio_tx.send(AppMessage::AllNotesOff)?;
+                                                }
+                                                KeyCode::Char('m')
+                                                    if key
                                                         .modifiers
                                                         .contains(KeyModifiers::SHIFT) =>
-                                            {
-                                                let slot = (n - 1) as usize;
-                                                let current_name =
-                                                    tui_state.app_state.lock().unwrap().presets
-                                                        [slot]
-                                                        .as_ref()
-                                                        .map_or_else(
-                                                            || {
-                                                                t!(
+                                                {
+                                                    let mut state =
+                                                        tui_state.app_state.lock().unwrap();
+                                                    state.is_recording_midi =
+                                                        !state.is_recording_midi;
+                                                    if state.is_recording_midi {
+                                                        audio_tx
+                                                            .send(AppMessage::StartMidiRecording)?;
+                                                    } else {
+                                                        audio_tx
+                                                            .send(AppMessage::StopMidiRecording)?;
+                                                    }
+                                                }
+                                                KeyCode::Char('r')
+                                                    if key
+                                                        .modifiers
+                                                        .contains(KeyModifiers::SHIFT) =>
+                                                {
+                                                    let mut state =
+                                                        tui_state.app_state.lock().unwrap();
+                                                    state.is_recording_audio =
+                                                        !state.is_recording_audio;
+                                                    if state.is_recording_audio {
+                                                        audio_tx.send(
+                                                            AppMessage::StartAudioRecording,
+                                                        )?;
+                                                    } else {
+                                                        audio_tx
+                                                            .send(AppMessage::StopAudioRecording)?;
+                                                    }
+                                                }
+                                                KeyCode::Char('a')
+                                                    if key
+                                                        .modifiers
+                                                        .contains(KeyModifiers::SHIFT) =>
+                                                {
+                                                    tui_state.select_all_channels_for_stop();
+                                                }
+                                                KeyCode::Char('n')
+                                                    if key
+                                                        .modifiers
+                                                        .contains(KeyModifiers::SHIFT) =>
+                                                {
+                                                    tui_state
+                                                        .select_none_channels_for_stop(&audio_tx)?;
+                                                }
+                                                KeyCode::F(n)
+                                                    if (1..=12).contains(&n)
+                                                        && key
+                                                            .modifiers
+                                                            .contains(KeyModifiers::SHIFT) =>
+                                                {
+                                                    let slot = (n - 1) as usize;
+                                                    let current_name =
+                                                        tui_state.app_state.lock().unwrap().presets
+                                                            [slot]
+                                                            .as_ref()
+                                                            .map_or_else(
+                                                                || {
+                                                                    t!(
                                                                     "gui.default_preset_name_fmt",
                                                                     num = slot + 1
                                                                 )
-                                                                .to_string()
-                                                            },
-                                                            |p| p.name.clone(),
-                                                        );
-                                                tui_state.mode =
-                                                    AppMode::PresetSaveName(slot, current_name);
-                                            }
-                                            KeyCode::F(n)
-                                                if (1..=12).contains(&n)
-                                                    && key.modifiers.is_empty() =>
-                                            {
-                                                if let Err(e) = tui_state
-                                                    .app_state
-                                                    .lock()
-                                                    .unwrap()
-                                                    .recall_preset((n - 1) as usize, &audio_tx)
+                                                                    .to_string()
+                                                                },
+                                                                |p| p.name.clone(),
+                                                            );
+                                                    tui_state.mode =
+                                                        AppMode::PresetSaveName(slot, current_name);
+                                                }
+                                                KeyCode::F(n)
+                                                    if (1..=12).contains(&n)
+                                                        && key.modifiers.is_empty() =>
                                                 {
+                                                    if let Err(e) = tui_state
+                                                        .app_state
+                                                        .lock()
+                                                        .unwrap()
+                                                        .recall_preset((n - 1) as usize, &audio_tx)
+                                                    {
+                                                        tui_state
+                                                            .app_state
+                                                            .lock()
+                                                            .unwrap()
+                                                            .add_midi_log(
+                                                                t!(
+                                                                    "errors.recall_preset_fail",
+                                                                    err = e
+                                                                )
+                                                                .to_string(),
+                                                            );
+                                                    }
+                                                }
+                                                // Gain
+                                                KeyCode::Char('+') | KeyCode::Char('=') => {
                                                     tui_state
                                                         .app_state
                                                         .lock()
                                                         .unwrap()
-                                                        .add_midi_log(
-                                                            t!(
-                                                                "errors.recall_preset_fail",
-                                                                err = e
-                                                            )
-                                                            .to_string(),
-                                                        );
+                                                        .modify_gain(0.05, &audio_tx);
                                                 }
+                                                KeyCode::Char('-') => {
+                                                    tui_state
+                                                        .app_state
+                                                        .lock()
+                                                        .unwrap()
+                                                        .modify_gain(-0.05, &audio_tx);
+                                                }
+                                                // Polyphony
+                                                KeyCode::Char(']') => {
+                                                    tui_state
+                                                        .app_state
+                                                        .lock()
+                                                        .unwrap()
+                                                        .modify_polyphony(16, &audio_tx);
+                                                }
+                                                KeyCode::Char('[') => {
+                                                    tui_state
+                                                        .app_state
+                                                        .lock()
+                                                        .unwrap()
+                                                        .modify_polyphony(-16, &audio_tx);
+                                                }
+                                                _ => {}
                                             }
-                                            // Gain
-                                            KeyCode::Char('+') | KeyCode::Char('=') => {
-                                                tui_state
-                                                    .app_state
-                                                    .lock()
-                                                    .unwrap()
-                                                    .modify_gain(0.05, &audio_tx);
-                                            }
-                                            KeyCode::Char('-') => {
-                                                tui_state
-                                                    .app_state
-                                                    .lock()
-                                                    .unwrap()
-                                                    .modify_gain(-0.05, &audio_tx);
-                                            }
-                                            // Polyphony
-                                            KeyCode::Char(']') => {
-                                                tui_state
-                                                    .app_state
-                                                    .lock()
-                                                    .unwrap()
-                                                    .modify_polyphony(16, &audio_tx);
-                                            }
-                                            KeyCode::Char('[') => {
-                                                tui_state
-                                                    .app_state
-                                                    .lock()
-                                                    .unwrap()
-                                                    .modify_polyphony(-16, &audio_tx);
-                                            }
-                                            _ => {}
-                                        }
+                                        } // end passthrough
                                     }
                                 }
                                 AppMode::PresetSaveName(slot, name_buffer) => {
@@ -463,6 +698,24 @@ pub fn run_tui_loop(
                                         tui_state.mode = AppMode::MainApp;
                                     }
                                 }
+                                AppMode::OrganManager => {
+                                    if tui_state.organ_manager_state.handle_input(
+                                        key.code,
+                                        &mut terminal,
+                                        &exit_action,
+                                        &tui_state.app_state,
+                                    ) {
+                                        // Check if we need to reload (handled via exit_action) or just switch back
+                                        // If exit_action is Reload, run_tui_loop logic at end will catch it.
+                                        // If just closed, switch mode back.
+                                        if let MainLoopAction::ReloadOrgan { .. } =
+                                            *exit_action.lock().unwrap()
+                                        {
+                                            break;
+                                        }
+                                        tui_state.mode = AppMode::MainApp;
+                                    }
+                                }
                             }
                         }
                     } // non-note keyboard commmands
@@ -478,156 +731,66 @@ pub fn run_tui_loop(
 
 // Main App UI function
 #[cfg_attr(feature = "hotpath", hotpath::measure)]
-fn draw_main_app_ui(frame: &mut Frame, app_state: &mut AppState, list_state: &mut ListState) {
+fn draw_main_app_ui(frame: &mut Frame, app_state: &mut AppState, tui_state: &mut TuiState) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(70), // Stops
+            Constraint::Length(3),      // Tabs
+            Constraint::Percentage(70), // Content (Stops/Trems/Presets)
             Constraint::Percentage(30), // MIDI Log
             Constraint::Length(1),      // Footer
         ])
         .split(frame.area());
 
-    let is_underrun = {
-        if let Some(last) = app_state.last_underrun {
-            last.elapsed() < Duration::from_millis(200)
-        } else {
-            false
-        }
+    // --- Tabs ---
+    let titles = vec!["Stops", "Tremulants", "Presets"];
+    let selected_tab = match tui_state.main_view_mode {
+        MainViewMode::Stops => 0,
+        MainViewMode::Tremulants => 1,
+        MainViewMode::Presets => 2,
     };
 
-    // --- Footer Help Text / Error ---
-
-    let rec_status = if app_state.is_recording_midi && app_state.is_recording_audio {
-        t!("tui.status_rec_midi_wav").to_string()
-    } else if app_state.is_recording_midi {
-        t!("tui.status_rec_midi").to_string()
-    } else if app_state.is_recording_audio {
-        t!("tui.status_rec_wav").to_string()
-    } else {
-        "".to_string()
-    };
-
-    let footer_widget = if let Some(err) = &app_state.error_msg {
-        Paragraph::new(err.as_str()).style(Style::default().fg(Color::White).bg(Color::Red))
-    } else if is_underrun {
-        Paragraph::new(t!("tui.err_underrun").to_string())
-            .alignment(Alignment::Center)
-            .style(
-                Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
-            )
-    } else {
-        let status = t!(
-            "tui.status_bar_fmt",
-            rec = rec_status,
-            cpu = format!("{:.1}", app_state.cpu_load * 100.0),
-            gain = format!("{:.0}", app_state.gain * 100.0),
-            active = app_state.active_voice_count,
-            poly = app_state.polyphony
+    let tabs = ratatui::widgets::Tabs::new(titles)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(app_state.organ.name.as_str()),
         )
-        .to_string();
+        .select(selected_tab)
+        .highlight_style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        );
 
-        Paragraph::new(status).alignment(Alignment::Center)
-    };
-    frame.render_widget(footer_widget, main_layout[2]);
+    frame.render_widget(tabs, main_layout[0]);
 
-    // --- Stop List (Multi-column) ---
-    const NUM_COLUMNS: usize = 3;
-    let stops_area = main_layout[0];
-
-    let column_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
-        ])
-        .split(stops_area);
-
-    let selected_index = list_state.selected().unwrap_or(0);
-    let stops_count = app_state.organ.stops.len();
-    if stops_count == 0 {
-        let no_stops_msg = Paragraph::new(t!("tui.no_stops").to_string())
-            .alignment(Alignment::Center)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(app_state.organ.name.as_str()),
-            );
-        frame.render_widget(no_stops_msg, stops_area);
-    } else {
-        let items_per_column = (stops_count + NUM_COLUMNS - 1) / NUM_COLUMNS;
-
-        let all_stops: Vec<_> = app_state.organ.stops.iter().enumerate().collect();
-
-        for (col_idx, rect) in column_layout.iter().enumerate() {
-            let start_idx = col_idx * items_per_column;
-            let end_idx = (start_idx + items_per_column).min(stops_count);
-
-            if start_idx >= end_idx {
-                continue;
-            }
-
-            let column_items: Vec<ListItem> = all_stops[start_idx..end_idx]
-                .iter()
-                .map(|(global_idx, stop)| {
-                    let active_channels = app_state
-                        .stop_channels
-                        .get(global_idx)
-                        .cloned()
-                        .unwrap_or_default();
-
-                    let mut channel_spans: Vec<Span> = Vec::with_capacity(22);
-
-                    for i in 0..10u8 {
-                        if active_channels.contains(&i) {
-                            let display_num = if i == 9 {
-                                "0".to_string()
-                            } else {
-                                format!("{}", i + 1)
-                            };
-                            channel_spans.push(Span::styled(
-                                display_num,
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            ));
-                        } else {
-                            channel_spans
-                                .push(Span::styled("■", Style::default().fg(Color::DarkGray)));
-                        }
-                    }
-
-                    channel_spans.push(Span::raw(format!("    {}", stop.name)));
-                    let line = Line::from(channel_spans);
-
-                    let style = if selected_index == *global_idx {
-                        Style::default().fg(Color::Black).bg(Color::Cyan)
-                    } else if !active_channels.is_empty() {
-                        Style::default().fg(Color::Green)
-                    } else {
-                        Style::default()
-                    };
-                    ListItem::new(line).style(style)
-                })
-                .collect();
-
-            let title = if col_idx == 0 {
-                app_state.organ.name.as_str()
-            } else {
-                ""
-            };
-            let list_widget =
-                List::new(column_items).block(Block::default().borders(Borders::ALL).title(title));
-            frame.render_widget(list_widget, *rect);
-        }
+    // --- Content ---
+    let content_area = main_layout[1];
+    match tui_state.main_view_mode {
+        MainViewMode::Stops => draw_stops_view(
+            frame,
+            content_area,
+            app_state,
+            &mut tui_state.stop_list_state,
+        ),
+        MainViewMode::Tremulants => draw_tremulants_view(
+            frame,
+            content_area,
+            app_state,
+            &mut tui_state.tremulant_list_state,
+        ),
+        MainViewMode::Presets => draw_presets_view(
+            frame,
+            content_area,
+            app_state,
+            &mut tui_state.preset_list_state,
+        ),
     }
 
     // --- Bottom Area (MIDI Log + Piano Roll) ---
-    let bottom_area = main_layout[1];
+    // Note: main_layout indices shifted by 1 due to Tabs
+    let bottom_area = main_layout[2];
     let bottom_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -724,22 +887,234 @@ fn draw_main_app_ui(frame: &mut Frame, app_state: &mut AppState, list_state: &mu
             }
         });
     frame.render_widget(piano_roll, bottom_chunks[1]);
+
+    let is_underrun = {
+        if let Some(last) = app_state.last_underrun {
+            last.elapsed() < Duration::from_millis(200)
+        } else {
+            false
+        }
+    };
+
+    // --- Footer Help Text / Error ---
+
+    let rec_status = if app_state.is_recording_midi && app_state.is_recording_audio {
+        t!("tui.status_rec_midi_wav").to_string()
+    } else if app_state.is_recording_midi {
+        t!("tui.status_rec_midi").to_string()
+    } else if app_state.is_recording_audio {
+        t!("tui.status_rec_wav").to_string()
+    } else {
+        "".to_string()
+    };
+
+    let footer_widget = if let Some(err) = &app_state.error_msg {
+        Paragraph::new(err.as_str()).style(Style::default().fg(Color::White).bg(Color::Red))
+    } else if is_underrun {
+        Paragraph::new(t!("tui.err_underrun").to_string())
+            .alignment(Alignment::Center)
+            .style(
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Red)
+                    .add_modifier(Modifier::BOLD),
+            )
+    } else {
+        let status = t!(
+            "tui.status_bar_fmt",
+            rec = rec_status,
+            cpu = format!("{:.1}", app_state.cpu_load * 100.0),
+            gain = format!("{:.0}", app_state.gain * 100.0),
+            active = app_state.active_voice_count,
+            poly = app_state.polyphony
+        )
+        .to_string();
+
+        Paragraph::new(status).alignment(Alignment::Center)
+    };
+    frame.render_widget(footer_widget, main_layout[3]);
+}
+
+fn draw_stops_view(
+    frame: &mut Frame,
+    area: Rect,
+    app_state: &AppState,
+    list_state: &mut ListState,
+) {
+    let stops_count = app_state.organ.stops.len();
+    if stops_count == 0 {
+        let msg = Paragraph::new("No Stops").alignment(Alignment::Center);
+        frame.render_widget(msg, area);
+        return;
+    }
+
+    let column_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
+        .split(area);
+
+    let selected_index = list_state.selected().unwrap_or(0);
+    let items_per_column = (stops_count + NUM_COLUMNS - 1) / NUM_COLUMNS;
+    let all_stops: Vec<_> = app_state.organ.stops.iter().enumerate().collect();
+
+    for (col_idx, rect) in column_layout.iter().enumerate() {
+        let start_idx = col_idx * items_per_column;
+        let end_idx = (start_idx + items_per_column).min(stops_count);
+
+        if start_idx >= end_idx {
+            continue;
+        }
+
+        let column_items: Vec<ListItem> = all_stops[start_idx..end_idx]
+            .iter()
+            .map(|(global_idx, stop)| {
+                let active_channels = app_state
+                    .stop_channels
+                    .get(global_idx)
+                    .cloned()
+                    .unwrap_or_default();
+
+                let mut channel_spans: Vec<Span> = Vec::with_capacity(22);
+
+                for i in 0..10u8 {
+                    if active_channels.contains(&i) {
+                        let display_num = if i == 9 {
+                            "0".to_string()
+                        } else {
+                            format!("{}", i + 1)
+                        };
+                        channel_spans.push(Span::styled(
+                            display_num,
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    } else {
+                        channel_spans.push(Span::styled("■", Style::default().fg(Color::DarkGray)));
+                    }
+                }
+
+                channel_spans.push(Span::raw(format!("    {}", stop.name)));
+                let line = Line::from(channel_spans);
+
+                let style = if selected_index == *global_idx {
+                    Style::default().fg(Color::Black).bg(Color::Cyan)
+                } else if !active_channels.is_empty() {
+                    Style::default().fg(Color::Green)
+                } else {
+                    Style::default()
+                };
+                ListItem::new(line).style(style)
+            })
+            .collect();
+        frame.render_widget(
+            List::new(column_items).block(Block::default().borders(Borders::LEFT)),
+            *rect,
+        );
+    }
+}
+
+fn draw_tremulants_view(
+    frame: &mut Frame,
+    area: Rect,
+    app_state: &AppState,
+    list_state: &mut ListState,
+) {
+    // Sort tremulants to match navigation order
+    let mut trems: Vec<_> = app_state.organ.tremulants.values().collect();
+    trems.sort_by_key(|t| &t.name);
+
+    if trems.is_empty() {
+        let msg = Paragraph::new("No Tremulants").alignment(Alignment::Center);
+        frame.render_widget(msg, area);
+        return;
+    }
+
+    let items: Vec<ListItem> = trems
+        .iter()
+        .map(|trem| {
+            let active = app_state.active_tremulants.contains(&trem.id_str);
+            let status = if active { "[ON] " } else { "[   ] " };
+            let content = format!("{}{}", status, trem.name);
+
+            // Check if midi learned
+            let learned = app_state
+                .midi_control_map
+                .tremulants
+                .contains_key(&trem.id_str);
+            let learned_mark = if learned { " (M)" } else { "" };
+
+            let style = if active {
+                Style::default().fg(Color::Green)
+            } else {
+                Style::default()
+            };
+
+            ListItem::new(format!("{}{}", content, learned_mark)).style(style)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title("Tremulants"))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
+
+    frame.render_stateful_widget(list, area, list_state);
+}
+
+fn draw_presets_view(
+    frame: &mut Frame,
+    area: Rect,
+    app_state: &AppState,
+    list_state: &mut ListState,
+) {
+    let items: Vec<ListItem> = (0..12)
+        .map(|i| {
+            let preset_name = app_state.presets[i]
+                .as_ref()
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "Empty".to_string());
+
+            let learned = app_state.midi_control_map.presets.contains_key(&i);
+            let learned_mark = if learned { " (M)" } else { "" };
+
+            let content = format!("F{:<2}: {}{}", i + 1, preset_name, learned_mark);
+            ListItem::new(content)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title("Presets"))
+        .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan));
+
+    frame.render_stateful_widget(list, area, list_state);
 }
 
 /// Renders the UI frame.
 fn ui(frame: &mut Frame, state: &mut TuiState) {
-    let mut app_state_locked = state.app_state.lock().unwrap();
-    let mode = state.mode.clone();
+    let app_state_arc = state.app_state.clone();
+    let mut app_state_locked = app_state_arc.lock().unwrap();
+    let mode = state.mode.clone(); // Clone mode to avoid borrowing state during match
     match mode {
-        AppMode::MainApp => draw_main_app_ui(frame, &mut app_state_locked, &mut state.list_state),
+        AppMode::MainApp => draw_main_app_ui(frame, &mut app_state_locked, state),
         AppMode::PresetSaveName(slot, name_buffer) => {
             // Draw the main app in the background
-            draw_main_app_ui(frame, &mut app_state_locked, &mut state.list_state);
+            draw_main_app_ui(frame, &mut app_state_locked, state);
             // Draw the modal on top
             draw_preset_save_modal(frame, slot, &name_buffer);
         }
         AppMode::MidiLearn => {
             draw_midi_learn_modal(frame, &state.midi_learn_state, &app_state_locked);
+        }
+        AppMode::OrganManager => {
+            draw_organ_manager(
+                frame,
+                &mut state.organ_manager_state,
+                &app_state_locked.organ.name,
+            );
         }
     }
 }

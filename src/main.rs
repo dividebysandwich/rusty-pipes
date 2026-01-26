@@ -42,6 +42,7 @@ mod tui_filepicker;
 mod tui_lcd;
 mod tui_midi;
 mod tui_midi_learn;
+mod tui_organ_manager;
 mod voice;
 mod wav;
 mod wav_converter;
