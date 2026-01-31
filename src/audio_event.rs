@@ -234,11 +234,12 @@ pub fn process_message(
 
             if let Some(idx) = stop_map.get(&s) {
                 if let Some(list) = active_notes.get_mut(&n) {
-                    if let Some(pos) = list.iter().position(|an| an.stop_index == *idx) {
-                        let stopped = list.remove(pos);
-                        if list.is_empty() {
-                            active_notes.remove(&n);
-                        }
+                    // Partition into notes to release and notes to keep
+                    let (to_release, to_keep) = 
+                        list.drain(..).partition(|active_note| active_note.stop_index == *idx);
+                    *list = to_keep;
+                    
+                    for stopped in to_release{
                         trigger_note_release(
                             stopped,
                             organ,
@@ -247,6 +248,10 @@ pub fn process_message(
                             voice_counter,
                             spawner_tx,
                         );
+                    }
+
+                    if list.is_empty() {
+                        active_notes.remove(&n);
                     }
                 }
             }
