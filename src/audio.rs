@@ -703,7 +703,7 @@ fn spawn_audio_processing_thread<P>(
                 let pushed = producer.push_slice(&mix_buffer[offset..needed]);
                 offset += pushed;
                 if offset < needed {
-                    std::thread::yield_now();
+                    thread::sleep(Duration::from_millis(1));
                 }
             }
         }
