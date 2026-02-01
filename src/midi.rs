@@ -517,12 +517,14 @@ pub fn send_lcd_sysex(
     // Construct 32 bytes of text (pad with spaces)
     let full_text = format!("{:16.16}{:16.16}", line1, line2);
     let text_bytes = full_text.as_bytes();
+    // Hauptwerk IDs are 0-based, so subtract 1
+    let hauptwerk_display_id = display_id - 1;
 
     let mut msg = Vec::with_capacity(39);
     msg.push(0xF0);
     msg.push(0x7D);
     msg.push(0x01);
-    msg.push(display_id & 0x7F); // LSB of ID (assuming ID fits in 7 bits, ignoring MSB/Extension logic for simplicity unless user asked for >127)
+    msg.push(hauptwerk_display_id & 0x7F); // LSB of ID (assuming ID fits in 7 bits, ignoring MSB/Extension logic for simplicity unless user asked for >127)
     msg.push(0x00); // MSB of ID (0 for valid IDs 1-127)
     msg.push(color_code & 0x7F);
 
