@@ -417,13 +417,13 @@ fn main() -> Result<()> {
             let (tui_progress_tx, tui_progress_rx) = mpsc::channel::<(f32, String)>();
 
             // TUI progress-printing thread
-            let _tui_progress_thread = if config.precache && tui_mode {
+            let _tui_progress_thread = if tui_mode {
                 Some(thread::spawn(move || {
                     while let Ok((progress, file_name)) = tui_progress_rx.recv() {
                         // Simple TUI progress
                         use std::io::Write;
                         print!(
-                            "\r{}      ",
+                            "\r{}               ",
                             t!(
                                 "main.loading_samples_fmt",
                                 percent = (progress * 100.0) as i32,
@@ -438,15 +438,13 @@ fn main() -> Result<()> {
                 None
             };
 
-            // Note: For TUI mode, we only pass the progress transmitter if we are precaching.
-            // If we aren't precaching, the conversion is usually fast enough (or hidden) in TUI.
             organ = Arc::new(Organ::load(
                 &config.organ_file,
                 config.convert_to_16bit,
                 config.precache,
                 config.original_tuning,
                 config.sample_rate,
-                if config.precache && tui_mode {
+                if tui_mode {
                     Some(tui_progress_tx)
                 } else {
                     None
