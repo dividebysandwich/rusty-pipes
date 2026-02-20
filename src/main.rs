@@ -133,6 +133,10 @@ struct Args {
     /// Force a specific language/locale (e.g., "en", "de", "nl-BE")
     #[arg(long, value_name = "LANG")]
     lang: Option<String>,
+
+    /// Skip the configuration UI and start playing immediately
+    #[arg(long)]
+    auto_start: bool,
 }
 
 // Handle struct that manages the lifecycle for the midi thread
@@ -278,8 +282,50 @@ fn main() -> Result<()> {
         }
     }
 
-    // --- Run Configuration UI ---
-    let config_result = if tui_mode {
+    // --- Run Configuration UI or Auto-Start ---
+    let config_result = if args.auto_start {
+        // Create a RuntimeConfig directly from the merged settings
+        let mut active_midi_devices = Vec::new();
+        
+        // Use the midi_input_arc to find ports for enabled devices
+        if let Some(ref mi) = *midi_input_arc.lock().unwrap() {
+            // Get the list of actual port handles from the MIDI library
+            let available_ports = mi.ports(); 
+            
+            for dev_cfg in &settings.midi_devices {
+                if dev_cfg.enabled {
+                    // Look for a port handle that matches the saved device name
+                    for port in &available_ports {
+                        if let Ok(name) = mi.port_name(port) {
+                            if name == dev_cfg.name {
+                                // Push the actual Port object, not the index
+                                active_midi_devices.push((port.clone(), dev_cfg.clone()));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(Some(RuntimeConfig {
+            organ_file: settings.organ_file.clone().unwrap_or_default(),
+            ir_file: settings.ir_file.clone(),
+            reverb_mix: settings.reverb_mix,
+            audio_buffer_frames: settings.audio_buffer_frames,
+            max_ram_gb: settings.max_ram_gb,
+            precache: settings.precache,
+            convert_to_16bit: settings.convert_to_16bit,
+            original_tuning: settings.original_tuning,
+            active_midi_devices,
+            gain: settings.gain,
+            polyphony: settings.polyphony,
+            audio_device_name: settings.audio_device_name.clone(),
+            sample_rate: settings.sample_rate,
+            midi_file: args.midi_file.clone(),
+            lcd_displays: settings.lcd_displays.clone(),
+        }))
+    } else if tui_mode {
         tui_config::run_config_ui(settings.clone(), Arc::clone(&midi_input_arc))
     } else {
         gui_config::run_config_ui(settings.clone(), Arc::clone(&midi_input_arc))
@@ -302,6 +348,10 @@ fn main() -> Result<()> {
             return Err(e);
         }
     };
+
+    if config.organ_file.as_os_str().is_empty() {
+        return Err(anyhow::anyhow!("No organ file specified. Use --organ-file or run without --auto-start to select one."));
+    }
 
     // --- Save Final Settings (excluding runtime options) ---
     // We reconstruct the midi_devices list based on the active connections + config logic.
@@ -348,11 +398,7 @@ fn main() -> Result<()> {
 
         let reverb_files = config::get_available_ir_files();
 
-        // If we are in GUI mode, we generally want the loading window,
-        // especially if we are precaching OR converting OR just parsing a large file.
-        let needs_loading_ui = !tui_mode;
-
-        if needs_loading_ui {
+        if !tui_mode {
             // --- GUI Pre-caching with Progress Window ---
             log::info!("Starting GUI loading process...");
 
