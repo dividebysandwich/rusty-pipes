@@ -78,7 +78,7 @@ jobs:
           - TARGET: x86_64-unknown-linux-gnu 
             OS: ubuntu-latest
           - TARGET: x86_64-apple-darwin
-            OS: macos-latest
+            OS: macos-26-intel
           - TARGET: aarch64-apple-darwin
             OS: macos-latest
           - TARGET: x86_64-pc-windows-msvc
@@ -185,6 +185,9 @@ jobs:
               fi
 
               echo "Found app: $APP_NAME_WITH_EXT"
+
+              echo "Ad-hoc signing the app bundle..."
+              codesign --force --deep --sign - "$APP_DIR/$APP_NAME_WITH_EXT"
               
               # Copy readme and license into the directory to get clean paths
               echo "Copying auxiliary files into bundle directory..."
@@ -195,7 +198,7 @@ jobs:
               
               # cd into the directory containing the .app so it's at the zip root
               # Now zip the app and the local copies of the readme/license
-              (cd "$APP_DIR" && zip -r -q "../../../../../artifacts/$NAME-$TARGET-$TAG.zip" "$APP_NAME_WITH_EXT" readme.md LICENSE)
+              (cd "$APP_DIR" && zip -r -y -q "../../../../../artifacts/$NAME-$TARGET-$TAG.zip" "$APP_NAME_WITH_EXT" readme.md LICENSE)
 
           else
               EXEC=$NAME
