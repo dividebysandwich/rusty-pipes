@@ -1030,7 +1030,9 @@ impl EguiApp {
 
                 if ui.button(t!("gui.btn_all_channels")).clicked() {
                     let mut app_state = self.app_state.lock().unwrap();
-                    app_state.select_all_channels_for_stop(idx);
+                    if let Err(e) = app_state.select_all_channels_for_stop(idx, &self.audio_tx) {
+                        app_state.add_midi_log(format!("ERROR: {}", e));
+                    }
                 }
                 if ui.button(t!("gui.btn_no_channels")).clicked() {
                     let mut app_state = self.app_state.lock().unwrap();

@@ -239,15 +239,16 @@ impl TuiState {
         Ok(())
     }
 
-    fn select_all_channels_for_stop(&mut self) {
+    fn select_all_channels_for_stop(&mut self, audio_tx: &Sender<AppMessage>) -> Result<()> {
         if let MainViewMode::Stops = self.main_view_mode {
             if let Some(selected_index) = self.stop_list_state.selected() {
                 self.app_state
                     .lock()
                     .unwrap()
-                    .select_all_channels_for_stop(selected_index);
+                    .select_all_channels_for_stop(selected_index, audio_tx)?;
             }
         }
+        Ok(())
     }
 
     fn select_none_channels_for_stop(&mut self, audio_tx: &Sender<AppMessage>) -> Result<()> {
@@ -573,7 +574,7 @@ pub fn run_tui_loop(
                                                         .modifiers
                                                         .contains(KeyModifiers::SHIFT) =>
                                                 {
-                                                    tui_state.select_all_channels_for_stop();
+                                                    tui_state.select_all_channels_for_stop(&audio_tx)?;
                                                 }
                                                 KeyCode::Char('n')
                                                     if key
