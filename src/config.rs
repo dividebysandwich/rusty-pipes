@@ -10,6 +10,11 @@ use crate::audio::{
     get_audio_device_names, get_default_audio_device_name, get_supported_sample_rates,
 };
 use crate::input::KeyboardLayout;
+use crate::voice::MAX_NEW_VOICES_PER_BLOCK;
+
+fn default_max_new_voices_per_block() -> usize {
+    MAX_NEW_VOICES_PER_BLOCK
+}
 
 /// Represents a specific MIDI trigger (Note or SysEx)
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -92,6 +97,10 @@ pub struct AppSettings {
     pub tui_mode: bool,
     pub gain: f32,
     pub polyphony: usize,
+    /// Maximum number of new voices spawned per audio block. Smooths the CPU
+    /// load from large simultaneous note-on bursts (e.g. dense MIDI playback).
+    #[serde(default = "default_max_new_voices_per_block")]
+    pub max_new_voices_per_block: usize,
     pub audio_device_name: Option<String>,
     pub sample_rate: u32,
     pub keyboard_layout: KeyboardLayout,
@@ -203,6 +212,7 @@ impl Default for AppSettings {
             tui_mode: false, // Default to GUI
             gain: 0.4,       // Conservative default gain
             polyphony: 128,
+            max_new_voices_per_block: default_max_new_voices_per_block(),
             audio_device_name: None,
             sample_rate: 48000,
             keyboard_layout: KeyboardLayout::Qwerty,
@@ -227,6 +237,7 @@ pub struct RuntimeConfig {
     pub original_tuning: bool,
     pub gain: f32,
     pub polyphony: usize,
+    pub max_new_voices_per_block: usize,
 
     // --- Runtime-Only Settings ---
     pub midi_file: Option<PathBuf>,

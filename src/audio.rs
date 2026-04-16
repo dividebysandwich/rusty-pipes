@@ -22,9 +22,7 @@ use crate::audio_convolver::StereoConvolver;
 use crate::audio_event::{enforce_voice_limit, process_message, process_note_on};
 use crate::audio_loader::run_loader_job;
 use crate::audio_recorder::AudioRecorder;
-use crate::voice::{
-    CHANNEL_COUNT, MAX_NEW_VOICES_PER_BLOCK, SpawnJob, TREMULANT_AM_BOOST, TremulantLfo, Voice,
-};
+use crate::voice::{CHANNEL_COUNT, SpawnJob, TREMULANT_AM_BOOST, TremulantLfo, Voice};
 
 // Handle struct that manages the lifecycle for the audio thread
 #[allow(dead_code)]
@@ -234,6 +232,7 @@ fn spawn_audio_processing_thread<P>(
     buffer_size_frames: usize,
     mut system_gain: f32,
     mut polyphony: usize,
+    max_new_voices_per_block: usize,
     tui_tx: mpsc::Sender<TuiMessage>,
     shared_midi_recorder: Arc<Mutex<Option<MidiRecorder>>>,
     stop_signal: Arc<AtomicBool>,
@@ -340,7 +339,7 @@ fn spawn_audio_processing_thread<P>(
 
             // Throttle Note Ons
             let mut new_voice_count = 0;
-            while new_voice_count < MAX_NEW_VOICES_PER_BLOCK {
+            while new_voice_count < max_new_voices_per_block {
                 if let Some(msg) = pending_note_queue.pop_front() {
                     process_note_on(
                         msg,
@@ -718,6 +717,7 @@ pub fn start_audio_playback(
     requested_buffer_size: usize,
     gain: f32,
     polyphony: usize,
+    max_new_voices_per_block: usize,
     audio_device_name: Option<String>,
     sample_rate: u32,
     tui_tx: mpsc::Sender<TuiMessage>,
@@ -809,6 +809,7 @@ pub fn start_audio_playback(
         actual_buffer_frames,
         gain,
         polyphony,
+        max_new_voices_per_block,
         tui_tx.clone(),
         shared_midi_recorder,
         stop_signal.clone(),

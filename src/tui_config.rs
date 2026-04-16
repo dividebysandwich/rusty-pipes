@@ -375,6 +375,8 @@ pub fn run_config_ui(
                                                 active_midi_devices: active_devices,
                                                 gain: s.gain,
                                                 polyphony: s.polyphony,
+                                                max_new_voices_per_block: s
+                                                    .max_new_voices_per_block,
                                                 audio_device_name: state
                                                     .config_state
                                                     .selected_audio_device_name
