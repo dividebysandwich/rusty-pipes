@@ -83,8 +83,8 @@ pub struct AppState {
     pub finished_notes_display: VecDeque<PlayedNote>,
     // Time parameters for the scrolling window
     pub piano_roll_display_duration: Duration,
-    /// Maps MIDI Channel (0-15) -> Set of active notes (0-127)
-    pub channel_active_notes: HashMap<u8, BTreeSet<u8>>,
+    /// Maps MIDI Channel (0-15) -> Map of active notes (0-127) -> velocity
+    pub channel_active_notes: HashMap<u8, HashMap<u8, u8>>,
     /// MIDI channel assignment presets
     pub presets: PresetBank,
     pub gain: f32,
@@ -414,7 +414,7 @@ impl AppState {
                 self.channel_active_notes
                     .entry(channel)
                     .or_default()
-                    .insert(note);
+                    .insert(note, vel);
                 // Find all stops mapped to this channel and send AppMessage
                 for (stop_index, active_channels) in &self.stop_channels {
                     if active_channels.contains(&channel) {
@@ -507,7 +507,7 @@ impl AppState {
                             if let Some(stop) = self.organ.stops.get(*stop_index) {
                                 let stop_name = stop.name.clone();
                                 // Send NoteOff for each note that was active on this channel
-                                for &note in &notes_to_stop {
+                                for (&note, _) in &notes_to_stop {
                                     audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
                                 }
                             }
@@ -557,7 +557,27 @@ impl AppState {
         }
     }
 
-    // Helper to explicit set (not toggle) channel state
+    /// Sends NoteOn for every note currently held on `channel`, routed through the given stop.
+    /// Used when a stop-channel mapping becomes active while notes are being held,
+    /// so those notes start sounding through the newly activated stop.
+    fn dispatch_held_notes_on(
+        &self,
+        stop_index: usize,
+        channel: u8,
+        audio_tx: &Sender<AppMessage>,
+    ) -> Result<()> {
+        if let (Some(active_notes), Some(stop)) = (
+            self.channel_active_notes.get(&channel),
+            self.organ.stops.get(stop_index),
+        ) {
+            let stop_name = stop.name.clone();
+            for (&note, &vel) in active_notes {
+                audio_tx.send(AppMessage::NoteOn(note, vel, stop_name.clone()))?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn set_stop_channel_state(
         &mut self,
         stop_index: usize,
@@ -565,18 +585,25 @@ impl AppState {
         active: bool,
         audio_tx: &Sender<AppMessage>,
     ) -> Result<()> {
-        let stop_set = self.stop_channels.entry(stop_index).or_default();
-        let was_active = stop_set.contains(&channel);
+        let was_active = self
+            .stop_channels
+            .get(&stop_index)
+            .map_or(false, |s| s.contains(&channel));
 
         if active && !was_active {
-            stop_set.insert(channel);
+            self.stop_channels
+                .entry(stop_index)
+                .or_default()
+                .insert(channel);
+            self.dispatch_held_notes_on(stop_index, channel, audio_tx)?;
         } else if !active && was_active {
-            stop_set.remove(&channel);
-            // Cut notes if disabling
+            if let Some(stop_set) = self.stop_channels.get_mut(&stop_index) {
+                stop_set.remove(&channel);
+            }
             if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
                 if let Some(stop) = self.organ.stops.get(stop_index) {
                     let stop_name = stop.name.clone();
-                    for &note in notes_to_stop {
+                    for (&note, _) in notes_to_stop {
                         audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
                     }
                 }
@@ -612,6 +639,10 @@ impl AppState {
             self.currently_playing_notes
                 .insert(note, played_note.clone());
             self.active_midi_notes.insert((channel, note), played_note);
+            self.channel_active_notes
+                .entry(channel)
+                .or_default()
+                .insert(note, velocity);
 
             // Update Log
             self.add_midi_log(format!("Key On: {} (Ch 1, Vel {})", note_name, velocity));
@@ -639,6 +670,9 @@ impl AppState {
             }
 
             self.active_midi_notes.remove(&(channel, note));
+            if let Some(notes) = self.channel_active_notes.get_mut(&channel) {
+                notes.remove(&note);
+            }
 
             // Update Log
             self.add_midi_log(format!("Key Off: {} (Ch 1)", note_name));
@@ -671,7 +705,7 @@ impl AppState {
                 if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
                     if let Some(stop) = self.organ.stops.get(stop_index) {
                         let stop_name = stop.name.clone();
-                        for &note in notes_to_stop {
+                        for (&note, _) in notes_to_stop {
                             audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
                         }
                     }
@@ -682,6 +716,10 @@ impl AppState {
                 true
             }
         };
+
+        if is_active {
+            self.dispatch_held_notes_on(stop_index, channel, audio_tx)?;
+        }
 
         // Update LCD info
         if let Some(stop) = self.organ.stops.get(stop_index) {
@@ -694,10 +732,18 @@ impl AppState {
     }
 
     /// Activates all channels for the specified stop.
-    pub fn select_all_channels_for_stop(&mut self, stop_index: usize) {
-        let stop_set = self.stop_channels.entry(stop_index).or_default();
-        for channel in 0..16 {
-            stop_set.insert(channel);
+    pub fn select_all_channels_for_stop(
+        &mut self,
+        stop_index: usize,
+        audio_tx: &Sender<AppMessage>,
+    ) -> Result<()> {
+        let newly_added: Vec<u8> = {
+            let stop_set = self.stop_channels.entry(stop_index).or_default();
+            (0..16u8).filter(|&c| stop_set.insert(c)).collect()
+        };
+
+        for channel in newly_added {
+            self.dispatch_held_notes_on(stop_index, channel, audio_tx)?;
         }
 
         // Update LCD info
@@ -705,6 +751,8 @@ impl AppState {
             self.last_stop_change_name = self.get_stop_activity_label(true) + &stop.name.clone();
         }
         self.refresh_lcds();
+
+        Ok(())
     }
 
     /// Deactivates all channels for the specified stop.
@@ -724,7 +772,7 @@ impl AppState {
                     for channel in channels_to_deactivate {
                         // --- Send NoteOff for all active notes on this channel for this stop ---
                         if let Some(notes_to_stop) = self.channel_active_notes.get(&channel) {
-                            for &note in notes_to_stop {
+                            for (&note, _) in notes_to_stop {
                                 audio_tx.send(AppMessage::NoteOff(note, stop_name.clone()))?;
                             }
                         }
@@ -868,7 +916,7 @@ impl AppState {
                                     let stop_name = stop.name.clone();
 
                                     // Send NoteOff for currently active notes on this specific channel/stop combo
-                                    for &note in active_notes_on_channel {
+                                    for (&note, _) in active_notes_on_channel {
                                         audio_tx
                                             .send(AppMessage::NoteOff(note, stop_name.clone()))?;
                                     }
@@ -877,6 +925,24 @@ impl AppState {
                         }
                     }
                 }
+
+                let added_mappings: Vec<(usize, u8)> = self
+                    .stop_channels
+                    .iter()
+                    .flat_map(|(&stop_index, new_channels)| {
+                        let old_opt = old_map.get(&stop_index);
+                        new_channels
+                            .iter()
+                            .copied()
+                            .filter(move |c| old_opt.map_or(true, |old| !old.contains(c)))
+                            .map(move |c| (stop_index, c))
+                    })
+                    .collect();
+
+                for (stop_index, channel) in added_mappings {
+                    self.dispatch_held_notes_on(stop_index, channel, audio_tx)?;
+                }
+
                 log::info!("Recalled preset from slot F{}", slot + 1);
                 self.last_recalled_preset_name = format!("F{}: {}", slot + 1, _preset_name);
                 self.add_midi_log(format!("Recalled preset F{}", slot + 1));
