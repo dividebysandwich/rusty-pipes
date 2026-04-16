@@ -13,7 +13,16 @@ pub enum WsMessage {
     PresetsChanged,
     TremulantsChanged,
     AudioChanged,
-    OrganChanged,
+    /// Instructs the web client to reload all state. Pushed by the server
+    /// to every newly-connected WebSocket so a client that joined mid-way
+    /// through an organ switch ends up with the new organ's data.
+    Refetch,
+    /// Sent by the outgoing server right before it shuts down for an
+    /// organ switch. Clients should abort in-flight fetches and close
+    /// the WebSocket; the WS handler also closes the session from the
+    /// server side so the close event fires promptly. The client's
+    /// reconnect loop then hits the new server and receives Refetch.
+    ServerRestarting,
     MidiLearn {
         state: String,
         target_name: Option<String>,

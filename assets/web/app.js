@@ -3,7 +3,17 @@
 // ---------- API client ----------
 const api = {
   async json(method, path, body) {
-    const opts = { method, headers: {} };
+    // cache: "no-store" prevents the browser from returning a stale REST
+    // response after an organ switch (the server port is the same but the
+    // content behind it isn't). signal aborts in-flight requests when the
+    // server signals a restart, so stale replies can't overwrite fresh
+    // data loaded from the new server.
+    const opts = {
+      method,
+      headers: {},
+      cache: "no-store",
+      signal: wsCtrl.abortController?.signal,
+    };
     if (body !== undefined) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
@@ -76,7 +86,11 @@ const wsCtrl = {
   reconnectTimer: null,
   reconnectDelay: 500,
   openedAt: 0,
-  hasEverConnected: false,
+  // AbortController shared by every fetch while a WS connection is open.
+  // When the server signals a restart (or the socket closes), we abort it
+  // so any in-flight request can't land late with stale data from the
+  // outgoing server.
+  abortController: null,
 };
 const WS_DELAY_MAX = 3000;
 const WS_DELAY_MIN = 500;
@@ -781,19 +795,12 @@ function connectWebSocket() {
     if (ws !== wsCtrl.ws) return; // event from a stale socket
     wsCtrl.openedAt = Date.now();
     wsCtrl.reconnectDelay = WS_DELAY_MIN;
+    wsCtrl.abortController = new AbortController();
     setStatus("connected", "Connected");
-    // Refetch state in case the desktop UI changed something while we were
-    // disconnected. Skip on the very first connect — init() already loaded.
-    if (wsCtrl.hasEverConnected) {
-      Promise.allSettled([
-        refreshOrgan().then(() => loadOrgans().catch(() => {})),
-        loadStops(),
-        loadPresets(),
-        loadTremulants(),
-        loadAudio(),
-      ]);
-    }
-    wsCtrl.hasEverConnected = true;
+    // No refetch here: the server sends a "Refetch" message as its first
+    // frame to every new connection, which the message handler uses to
+    // reload all state. Keeping this logic server-driven means the new
+    // server is the one that decides when the client's view is fresh.
   });
 
   ws.addEventListener("message", (ev) => {
@@ -810,6 +817,14 @@ function connectWebSocket() {
   ws.addEventListener("close", () => {
     if (ws !== wsCtrl.ws) return;
     wsCtrl.ws = null;
+    // Abort any fetches still in flight from the outgoing connection so
+    // their responses can't land after the new socket opens.
+    if (wsCtrl.abortController) {
+      try {
+        wsCtrl.abortController.abort();
+      } catch (_) {}
+      wsCtrl.abortController = null;
+    }
     // If we were stably connected for a while, reset backoff so the next
     // outage doesn't carry over a long delay from the original failure.
     if (wsCtrl.openedAt && Date.now() - wsCtrl.openedAt > WS_STABLE_MS) {
@@ -834,6 +849,9 @@ document.addEventListener("visibilitychange", () => {
 
 function handleWsMessage(msg) {
   switch (msg.type) {
+    case "Refetch":
+      refetchAll();
+      break;
     case "StopsChanged":
       loadStops().catch(() => {});
       break;
@@ -853,17 +871,39 @@ function handleWsMessage(msg) {
         })
         .catch(() => {});
       break;
-    case "OrganChanged":
-      refreshOrgan()
-        .then(() => loadOrgans().catch(() => {}))
-        .catch(() => {});
-      // The organ is reloading — full refresh of everything.
-      Promise.allSettled([loadStops(), loadPresets(), loadTremulants(), loadAudio()]);
+    case "ServerRestarting":
+      // Outgoing server warned us it's about to shut down. Abort any
+      // pending fetches so none of their responses can land after we
+      // reconnect to the new server, then close our socket proactively.
+      // The existing reconnect loop takes over from there; the new
+      // server's Refetch message will drive the state reload.
+      toast("Loading organ…");
+      if (wsCtrl.abortController) {
+        try {
+          wsCtrl.abortController.abort();
+        } catch (_) {}
+        wsCtrl.abortController = null;
+      }
+      if (wsCtrl.ws) {
+        try {
+          wsCtrl.ws.close();
+        } catch (_) {}
+      }
       break;
     case "MidiLearn":
       handleLearnUpdate(msg);
       break;
   }
+}
+
+function refetchAll() {
+  Promise.allSettled([
+    refreshOrgan().then(() => loadOrgans().catch(() => {})),
+    loadStops(),
+    loadPresets(),
+    loadTremulants(),
+    loadAudio(),
+  ]);
 }
 
 // ---------- Init ----------

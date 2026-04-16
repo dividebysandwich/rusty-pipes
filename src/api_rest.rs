@@ -310,13 +310,25 @@ async fn load_organ(body: web::Json<LoadOrganRequest>, data: web::Data<ApiData>)
     if let Some(profile) = found {
         log::info!("API: Requesting reload of organ: {}", profile.name);
 
+        // Tell every connected web client the server is about to restart
+        // BEFORE we start shutting things down. The WS tasks will forward
+        // this frame and then close their sessions, so the clients see
+        // the close event promptly and begin reconnecting. By the time
+        // they successfully reconnect, they'll be talking to the new
+        // server (with the new organ's state).
+        broadcast(&data, WsMessage::ServerRestarting);
+
+        // Give the async WS tasks a moment to flush the ServerRestarting
+        // frame and close their sessions before the main thread tears
+        // down. Without this, the tasks can be cancelled mid-send.
+        actix_web::rt::time::sleep(Duration::from_millis(100)).await;
+
         // Signal the main loop to reload
         *data.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan {
             file: profile.path.clone(),
         };
 
         let _ = data.audio_tx.send(AppMessage::Quit);
-        broadcast(&data, WsMessage::OrganChanged);
 
         HttpResponse::Ok().json(serde_json::json!({"status": "reloading", "organ": profile.name}))
     } else {
@@ -1066,6 +1078,18 @@ async fn ws_handler(
     let mut rx = data.ws_tx.subscribe();
 
     actix_web::rt::spawn(async move {
+        // Immediately tell this client to reload everything. This is the
+        // authoritative signal: "you're talking to the current server, the
+        // data behind the REST endpoints is whatever this server has now."
+        // Critical after an organ switch — the new server broadcasts this
+        // to every client that reconnects to it, so the UI refreshes even
+        // if an old in-flight fetch races with the reconnect.
+        if let Ok(json) = serde_json::to_string(&WsMessage::Refetch) {
+            if session.text(json).await.is_err() {
+                return;
+            }
+        }
+
         loop {
             tokio::select! {
                 ws_msg = msg_stream.next() => match ws_msg {
@@ -1083,10 +1107,19 @@ async fn ws_handler(
                 },
                 bcast = rx.recv() => match bcast {
                     Ok(msg) => {
+                        let is_restart = matches!(msg, WsMessage::ServerRestarting);
                         if let Ok(json) = serde_json::to_string(&msg) {
                             if session.text(json).await.is_err() {
                                 break;
                             }
+                        }
+                        if is_restart {
+                            // Close the session ourselves so the client
+                            // sees the close event quickly and reconnects,
+                            // instead of waiting for a network timeout
+                            // when the process exits.
+                            let _ = session.close(None).await;
+                            break;
                         }
                     }
                     // If we lagged, just keep going — the client refetches state.
