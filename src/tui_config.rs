@@ -715,7 +715,9 @@ fn draw_config_ui(frame: &mut Frame, state: &mut TuiConfigState) {
 
     let title_widget = Paragraph::new(header_lines)
         .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
+        .block(Block::default().borders(Borders::ALL).title_bottom(
+            Line::from(format!(" v{} ", env!("CARGO_PKG_VERSION"))).right_aligned(),
+        ));
 
     frame.render_widget(title_widget, main_layout[0]);
 

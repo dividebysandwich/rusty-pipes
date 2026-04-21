@@ -273,6 +273,16 @@ impl App for ConfigApp {
                                 .color(orange),
                         );
                     });
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), 16.0),
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            ui.label(
+                                egui::RichText::new(format!("v{}", env!("CARGO_PKG_VERSION")))
+                                    .color(egui::Color32::GRAY),
+                            );
+                        },
+                    );
                     ui.add_space(10.0);
 
                     ui.heading(t!("config.window_title"));
