@@ -1,7 +1,7 @@
 [package]
 name = "rusty-pipes"
 description = "Virtual pipe organ simulator"
-version = "1.6.11"
+version = "1.6.12"
 license = "GPL-2.0-or-later"
 authors = ["dividebysandwich"]
 repository = "https://github.com/dividebysandwich/rusty-pipes"
@@ -75,7 +75,7 @@ assets = [
 name = "Rusty Pipes"
 identifier = "com.dividebysandwich.rustypipes"
 icon = ["assets/rusty-pipes.icns"]
-version = "1.6.11" 
+version = "1.6.12" 
 copyright = "Copyright 2025-2026 Dividebysandwich"
 category = "Music"
 short_description = "Virtual pipe organ simulator"
