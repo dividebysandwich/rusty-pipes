@@ -638,9 +638,14 @@ pub fn process_sample_file(
         )
         .unwrap();
 
-        // Prepare Output Buffer
+        // Prepare Output Buffer.
+        // Headroom must be in *output* frames: with large upsampling ratios (e.g. -6000 cent
+        // pitch shift => ratio 32) a single chunk_size of input produces chunk_size*ratio
+        // output frames, so a headroom of `chunk_size * 2` input frames is far too small and
+        // rubato's partial-chunk write overflows the buffer.
+        let output_frames_max = resampler.output_frames_max();
         let expected_output_frames =
-            (num_input_frames as f64 * resample_ratio).ceil() as usize + chunk_size * 2;
+            (num_input_frames as f64 * resample_ratio).ceil() as usize + output_frames_max * 2;
         let mut output_interleaved = vec![0.0f32; expected_output_frames * num_channels];
 
         // Create Adapters
