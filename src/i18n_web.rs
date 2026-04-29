@@ -159,6 +159,56 @@ pub fn web_translations() -> Value {
     s.insert("config_btn_quit".into(), t!("config.btn_quit").into());
     s.insert("config_btn_rescan".into(), t!("web.config_btn_rescan").into());
     s.insert(
+        "config_btn_browse".into(),
+        t!("web.config_btn_browse").into(),
+    );
+    s.insert(
+        "config_btn_add_organ".into(),
+        t!("web.config_btn_add_organ").into(),
+    );
+    s.insert(
+        "config_btn_remove_organ".into(),
+        t!("web.config_btn_remove_organ").into(),
+    );
+
+    // File browser
+    s.insert("file_browser_title".into(), t!("web.file_browser_title").into());
+    s.insert(
+        "file_browser_title_organ".into(),
+        t!("web.file_browser_title_organ").into(),
+    );
+    s.insert(
+        "file_browser_title_ir".into(),
+        t!("web.file_browser_title_ir").into(),
+    );
+    s.insert(
+        "file_browser_up_title".into(),
+        t!("web.file_browser_up_title").into(),
+    );
+    s.insert(
+        "file_browser_empty".into(),
+        t!("web.file_browser_empty").into(),
+    );
+
+    // Library mutation toasts/confirms
+    s.insert(
+        "config_added_organ_fmt".into(),
+        t!("web.config_added_organ_fmt").into(),
+    );
+    s.insert(
+        "config_removed_organ_fmt".into(),
+        t!("web.config_removed_organ_fmt").into(),
+    );
+    s.insert(
+        "config_remove_organ_confirm_fmt".into(),
+        t!("web.config_remove_organ_confirm_fmt").into(),
+    );
+    s.insert(
+        "config_ir_selected_fmt".into(),
+        t!("web.config_ir_selected_fmt").into(),
+    );
+    s.insert("err_browse_fmt".into(), t!("web.err_browse_fmt").into());
+    s.insert(
         "config_warn_no_organ".into(),
         t!("config.warn_select_organ").into(),
     );

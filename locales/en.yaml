@@ -368,10 +368,24 @@ web:
   config_btn_start: "▶ Start"
   config_btn_quit: "Quit"
   config_btn_rescan: "↻ Rescan"
+  config_btn_browse: "Browse…"
+  config_btn_add_organ: "+ Add organ…"
+  config_btn_remove_organ: "Remove from library"
   config_warn_no_organ: "Select an organ first."
   config_organ_badge_selected: "Selected"
   config_selected_fmt: "Selected %{name}"
   config_quit_confirm: "Quit Rusty Pipes?"
+  config_added_organ_fmt: "Added organ: %{path}"
+  config_removed_organ_fmt: "Removed %{name} from library"
+  config_remove_organ_confirm_fmt: "Remove \"%{name}\" from the library? The organ files on disk are not deleted."
+  config_ir_selected_fmt: "Selected reverb file: %{path}"
+
+  # File browser modal
+  file_browser_title: "Browse Files"
+  file_browser_title_organ: "Select Organ Definition"
+  file_browser_title_ir: "Select Reverb (Impulse Response) File"
+  file_browser_up_title: "Go to parent directory"
+  file_browser_empty: "No matching files in this directory."
 
   # Config: Audio tab
   config_audio_device_heading: "Output Device"
@@ -486,4 +500,5 @@ web:
   err_start_fmt: "Start failed: %{err}"
   err_quit_fmt: "Quit failed: %{err}"
   err_selection_fmt: "Selection failed: %{err}"
+  err_browse_fmt: "Browse failed: %{err}"
 

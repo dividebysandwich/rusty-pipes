@@ -139,6 +139,10 @@
           <div id="config-organ-list" class="organ-list"></div>
 
           <div class="card config-actions">
+            <button id="config-add-organ-btn" class="ghost" data-i18n="config_btn_add_organ">+ Add organ…</button>
+          </div>
+
+          <div class="card config-actions">
             <button id="config-start-btn" class="primary big" disabled data-i18n="config_btn_start">▶ Start</button>
             <button id="config-quit-btn" class="ghost" data-i18n="config_btn_quit">Quit</button>
             <p id="config-start-warning" class="muted small" data-i18n="config_warn_no_organ">Select an organ first.</p>
@@ -168,6 +172,7 @@
             <h3 data-i18n="config_reverb_heading">Reverb (Impulse Response)</h3>
             <div class="row">
               <select id="config-ir-file" class="grow"></select>
+              <button id="config-browse-ir-btn" class="ghost small" data-i18n="config_btn_browse">Browse…</button>
             </div>
             <div class="slider-row">
               <label for="config-reverb-mix" data-i18n="audio_mix_label">Mix:</label>
@@ -300,6 +305,22 @@
         <p id="learn-result" class="muted small"></p>
         <div class="modal-actions">
           <button id="learn-cancel" class="ghost" data-i18n="modal_btn_cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- File Browser Modal -->
+    <div id="modal-file-browser" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card wide">
+        <h3 id="file-browser-title" data-i18n="file_browser_title">Browse Files</h3>
+        <div class="file-browser-toolbar">
+          <button id="file-browser-up" class="ghost small" data-i18n-title="file_browser_up_title" title="Up">↑</button>
+          <input id="file-browser-current-path" type="text" class="grow" readonly />
+        </div>
+        <div id="file-browser-entries" class="file-browser-entries"></div>
+        <p id="file-browser-empty" class="muted small hidden" data-i18n="file_browser_empty">No matching files in this directory.</p>
+        <div class="modal-actions">
+          <button class="ghost" data-modal-close data-i18n="modal_btn_cancel">Cancel</button>
         </div>
       </div>
     </div>

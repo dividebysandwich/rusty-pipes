@@ -152,6 +152,17 @@ const api = {
   cfgStart: () => api.json("POST", "/config/start"),
   cfgQuit: () => api.json("POST", "/config/quit"),
   cfgSetLocale: (locale) => api.json("POST", "/config/locale", { locale }),
+  cfgBrowse: (path, exts) => {
+    const params = new URLSearchParams();
+    if (path) params.set("path", path);
+    if (exts) params.set("exts", exts);
+    const qs = params.toString();
+    return api.json("GET", "/config/browse" + (qs ? `?${qs}` : ""));
+  },
+  cfgAddOrgan: (path, name) =>
+    api.json("POST", "/config/library/add-organ", { path, name }),
+  cfgRemoveOrgan: (path) =>
+    api.json("POST", "/config/library/remove-organ", { path }),
 };
 
 // ---------- Toasts ----------
@@ -1012,6 +1023,104 @@ function setSliderValue(sliderId, valueId, value, decimals) {
   if (label) label.textContent = Number(value).toFixed(decimals);
 }
 
+// ---------- File browser ----------
+// Single shared instance — only one browser modal can be open at a time.
+const fileBrowser = {
+  exts: null, // comma-separated extensions or null for all files
+  parentPath: null,
+  // Resolve callback set by openFileBrowser; called with the chosen path
+  // (or null if the user cancels by closing the modal).
+  resolve: null,
+};
+
+async function openFileBrowser({ title, exts, initialPath }) {
+  fileBrowser.exts = exts || null;
+  document.getElementById("file-browser-title").textContent =
+    title || t("file_browser_title");
+  await navigateFileBrowser(initialPath || null);
+  openModal("modal-file-browser");
+  return new Promise((resolve) => {
+    fileBrowser.resolve = resolve;
+  });
+}
+
+async function navigateFileBrowser(path) {
+  try {
+    const data = await api.cfgBrowse(path, fileBrowser.exts);
+    fileBrowser.parentPath = data.parent_path;
+    document.getElementById("file-browser-current-path").value =
+      data.current_path;
+    renderFileBrowserEntries(data.entries);
+  } catch (e) {
+    toast(t("err_browse_fmt", { err: e.message }), { error: true });
+  }
+}
+
+function renderFileBrowserEntries(entries) {
+  const container = document.getElementById("file-browser-entries");
+  container.innerHTML = "";
+  const empty = document.getElementById("file-browser-empty");
+  if (!entries || entries.length === 0) {
+    empty.classList.remove("hidden");
+    return;
+  }
+  empty.classList.add("hidden");
+  entries.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "file-entry " + (entry.is_dir ? "dir" : "file");
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    icon.textContent = entry.is_dir ? "📁" : "📄";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = entry.name;
+    row.appendChild(icon);
+    row.appendChild(name);
+    if (!entry.is_dir && entry.size != null) {
+      const size = document.createElement("span");
+      size.className = "size";
+      size.textContent = formatFileSize(entry.size);
+      row.appendChild(size);
+    }
+    row.addEventListener("click", () => {
+      if (entry.is_dir) {
+        navigateFileBrowser(entry.path);
+      } else {
+        const resolve = fileBrowser.resolve;
+        fileBrowser.resolve = null;
+        closeModal("modal-file-browser");
+        if (resolve) resolve(entry.path);
+      }
+    });
+    container.appendChild(row);
+  });
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+// Wire the browser's static controls once at startup.
+function setupFileBrowser() {
+  document.getElementById("file-browser-up").addEventListener("click", () => {
+    if (fileBrowser.parentPath) navigateFileBrowser(fileBrowser.parentPath);
+  });
+  // Cancel resolves with null so callers can distinguish cancellation from
+  // a chosen file.
+  document
+    .querySelectorAll("#modal-file-browser [data-modal-close]")
+    .forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const resolve = fileBrowser.resolve;
+        fileBrowser.resolve = null;
+        if (resolve) resolve(null);
+      });
+    });
+}
+
 function renderConfigOrgans() {
   const c = state.config;
   const container = document.getElementById("config-organ-list");
@@ -1047,6 +1156,25 @@ function renderConfigOrgans() {
       badge.textContent = t("config_organ_badge_selected");
       item.appendChild(badge);
     }
+
+    // Selecting and removing share the same row, so the remove button
+    // stops propagation to avoid also firing the row's selection click.
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "ghost small organ-remove";
+    removeBtn.textContent = "×";
+    removeBtn.title = t("config_btn_remove_organ");
+    removeBtn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      if (!confirm(t("config_remove_organ_confirm_fmt", { name: entry.name })))
+        return;
+      try {
+        await api.cfgRemoveOrgan(entry.path);
+        toast(t("config_removed_organ_fmt", { name: entry.name }));
+      } catch (e) {
+        toast(t("err_update_fmt", { err: e.message }), { error: true });
+      }
+    });
+    item.appendChild(removeBtn);
 
     item.addEventListener("click", async () => {
       try {
@@ -1397,6 +1525,40 @@ function setupConfigControls() {
       }
     });
 
+  // --- Add organ button ---
+  document
+    .getElementById("config-add-organ-btn")
+    .addEventListener("click", async () => {
+      const picked = await openFileBrowser({
+        title: t("file_browser_title_organ"),
+        exts: "organ,orgue,Organ_Hauptwerk_xml,xml",
+      });
+      if (!picked) return;
+      try {
+        await api.cfgAddOrgan(picked, null);
+        toast(t("config_added_organ_fmt", { path: picked }));
+      } catch (e) {
+        toast(t("err_update_fmt", { err: e.message }), { error: true });
+      }
+    });
+
+  // --- Browse for IR file ---
+  document
+    .getElementById("config-browse-ir-btn")
+    .addEventListener("click", async () => {
+      const picked = await openFileBrowser({
+        title: t("file_browser_title_ir"),
+        exts: "wav,flac,mp3",
+      });
+      if (!picked) return;
+      try {
+        await api.cfgSetIrFile(picked);
+        toast(t("config_ir_selected_fmt", { path: picked }));
+      } catch (e) {
+        toast(t("err_ir_file_fmt", { err: e.message }), { error: true });
+      }
+    });
+
   // --- Language selector ---
   document
     .getElementById("config-language")
@@ -1656,6 +1818,7 @@ async function init() {
   setupAudioControls();
   setupRecordingControls();
   setupConfigControls();
+  setupFileBrowser();
 
   // Mark initial config-tab as active for visibility logic
   document

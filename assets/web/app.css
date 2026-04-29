@@ -776,6 +776,77 @@ input[type="number"] {
   opacity: 0.6;
 }
 
+/* Organ-list remove button (config mode) */
+.organ-remove {
+  flex-shrink: 0;
+  margin-left: 0.5rem;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0.2rem 0.55rem;
+  color: var(--text-dim);
+}
+.organ-remove:hover {
+  color: white;
+  background: var(--red);
+  border-color: var(--red);
+}
+
+/* File browser modal */
+.file-browser-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.6rem;
+}
+.file-browser-toolbar input[readonly] {
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 0.85rem;
+}
+.file-browser-entries {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+.file-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.file-entry:last-child {
+  border-bottom: 0;
+}
+.file-entry:hover {
+  background: var(--bg-elev-2);
+}
+.file-entry .icon {
+  flex-shrink: 0;
+}
+.file-entry .name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.file-entry .size {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+.file-entry.dir .name {
+  font-weight: 500;
+}
+
 /* Channel mapping modal */
 .modal-card.wide {
   max-width: 560px;

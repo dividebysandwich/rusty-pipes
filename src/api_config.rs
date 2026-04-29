@@ -3,6 +3,7 @@ use actix_web::{App, HttpRequest, HttpResponse, HttpServer, Responder, web};
 use anyhow::Result;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -11,7 +12,8 @@ use tokio::sync::broadcast;
 use crate::app::WsMessage;
 use crate::audio::get_supported_sample_rates;
 use crate::config::{
-    AppSettings, ConfigShared, MidiDeviceConfig, MidiMappingMode, OrganProfile, load_organ_library,
+    self, AppSettings, ConfigShared, MidiDeviceConfig, MidiMappingMode, OrganProfile,
+    load_organ_library,
 };
 use crate::gui_config::build_runtime_config;
 
@@ -238,13 +240,42 @@ async fn set_ir_file(
     match &body.path {
         None => st.settings.ir_file = None,
         Some(p) => {
-            let m = st
+            // First try matching against the auto-discovered list (fast path
+            // and preserves the original PathBuf).
+            let matched = st
                 .available_ir_files
                 .iter()
-                .find(|(_, path)| path.to_string_lossy() == *p);
-            match m {
-                Some((_, path)) => st.settings.ir_file = Some(path.clone()),
-                None => return HttpResponse::BadRequest().body("Unknown IR file"),
+                .find(|(_, path)| path.to_string_lossy() == *p)
+                .cloned();
+            if let Some((_, path)) = matched {
+                st.settings.ir_file = Some(path);
+            } else {
+                // Fall through: allow paths the user picked from the file
+                // browser, even if they live outside the reverb directory.
+                let path = PathBuf::from(p);
+                if !path.exists() || !path.is_file() {
+                    return HttpResponse::BadRequest().body("File not found");
+                }
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase());
+                let ok = matches!(ext.as_deref(), Some("wav") | Some("flac") | Some("mp3"));
+                if !ok {
+                    return HttpResponse::BadRequest().body("Unsupported IR file extension");
+                }
+                // Surface the chosen file in the dropdown so the UI can
+                // display it as the active selection. The auto-discovered
+                // entries from the reverb directory remain alongside.
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Custom")
+                    .to_string();
+                if !st.available_ir_files.iter().any(|(_, p2)| p2 == &path) {
+                    st.available_ir_files.push((name, path.clone()));
+                }
+                st.settings.ir_file = Some(path);
             }
         }
     }
@@ -402,6 +433,229 @@ async fn quit(data: web::Data<ConfigApiData>) -> impl Responder {
     s.web_quit_request = true;
     s.revision = s.revision.wrapping_add(1);
     HttpResponse::Ok().json(serde_json::json!({"status": "quitting"}))
+}
+
+// --- File browser ---
+
+#[derive(Deserialize)]
+struct BrowseQuery {
+    /// Directory to list. If absent or empty, defaults to the user's home
+    /// directory.
+    path: Option<String>,
+    /// Comma-separated list of extensions to include (no leading dot).
+    /// Empty/missing means "show all files".
+    exts: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BrowseEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    /// File size in bytes; null for directories.
+    size: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct BrowseResponse {
+    current_path: String,
+    parent_path: Option<String>,
+    entries: Vec<BrowseEntry>,
+}
+
+/// Lists the contents of a directory on the server's filesystem. Used by
+/// the web UI's file browser modal to let users pick organ definition files
+/// and reverb impulse-response files. Hidden entries (names starting with
+/// `.`) are omitted.
+async fn browse(query: web::Query<BrowseQuery>) -> impl Responder {
+    let raw = query
+        .path
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    let path: PathBuf = match raw {
+        Some(p) => PathBuf::from(p),
+        None => dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
+    };
+
+    let path = match path.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            return HttpResponse::BadRequest().body(format!("Invalid path: {}", e));
+        }
+    };
+
+    if !path.is_dir() {
+        return HttpResponse::BadRequest().body("Path is not a directory");
+    }
+
+    let exts: Option<Vec<String>> = query.exts.as_deref().map(|s| {
+        s.split(',')
+            .map(|e| e.trim().trim_start_matches('.').to_lowercase())
+            .filter(|e| !e.is_empty())
+            .collect()
+    });
+
+    let mut entries: Vec<BrowseEntry> = Vec::new();
+    let read = match std::fs::read_dir(&path) {
+        Ok(rd) => rd,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .body(format!("Failed to read directory: {}", e));
+        }
+    };
+
+    for entry in read.flatten() {
+        let entry_path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Hide dotfiles — most users don't want to see them, and the
+        // organ/IR files we care about never start with a dot.
+        if name.starts_with('.') {
+            continue;
+        }
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let is_dir = metadata.is_dir();
+
+        // Apply extension filter to files only — directories always show so
+        // the user can navigate into them.
+        if !is_dir {
+            if let Some(ref filter_exts) = exts {
+                let ext = entry_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase());
+                let matches = ext.as_ref().is_some_and(|e| filter_exts.contains(e));
+                if !matches {
+                    continue;
+                }
+            }
+        }
+
+        entries.push(BrowseEntry {
+            name,
+            path: entry_path.to_string_lossy().to_string(),
+            is_dir,
+            size: if is_dir { None } else { Some(metadata.len()) },
+        });
+    }
+
+    // Directories first, then alphabetically.
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+
+    let parent_path = path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty());
+
+    HttpResponse::Ok().json(BrowseResponse {
+        current_path: path.to_string_lossy().to_string(),
+        parent_path,
+        entries,
+    })
+}
+
+// --- Organ library mutation ---
+
+#[derive(Deserialize)]
+struct AddOrganRequest {
+    /// Absolute path to the organ definition file.
+    path: String,
+    /// Optional human-readable name. Defaults to the file's stem.
+    name: Option<String>,
+}
+
+async fn add_organ_to_library(
+    body: web::Json<AddOrganRequest>,
+    data: web::Data<ConfigApiData>,
+) -> impl Responder {
+    let path = PathBuf::from(&body.path);
+    if !path.exists() || !path.is_file() {
+        return HttpResponse::BadRequest().body("File not found");
+    }
+
+    let mut library = match load_organ_library() {
+        Ok(l) => l,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    if library.organs.iter().any(|o| o.path == path) {
+        return HttpResponse::Conflict().body("Organ already in library");
+    }
+
+    let name = body
+        .name
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| path.to_string_lossy().to_string())
+        });
+
+    library.organs.push(OrganProfile {
+        name,
+        path,
+        activation_trigger: None,
+    });
+
+    if let Err(e) = config::save_organ_library(&library) {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+
+    {
+        let mut s = data.shared.lock().unwrap();
+        s.revision = s.revision.wrapping_add(1);
+    }
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
+#[derive(Deserialize)]
+struct RemoveOrganRequest {
+    path: String,
+}
+
+async fn remove_organ_from_library(
+    body: web::Json<RemoveOrganRequest>,
+    data: web::Data<ConfigApiData>,
+) -> impl Responder {
+    let path = PathBuf::from(&body.path);
+
+    let mut library = match load_organ_library() {
+        Ok(l) => l,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+
+    let before = library.organs.len();
+    library.organs.retain(|o| o.path != path);
+    if library.organs.len() == before {
+        return HttpResponse::NotFound().body("Organ not found in library");
+    }
+
+    if let Err(e) = config::save_organ_library(&library) {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+
+    {
+        let mut s = data.shared.lock().unwrap();
+        // If the removed organ was the currently selected one, clear it so
+        // the user is forced to make a fresh choice before pressing Start.
+        if s.state.settings.organ_file.as_ref() == Some(&path) {
+            s.state.settings.organ_file = None;
+        }
+        s.revision = s.revision.wrapping_add(1);
+    }
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
 }
 
 #[derive(Deserialize)]
@@ -590,6 +844,16 @@ pub fn start_config_api_server(
                 .route("/config/start", web::post().to(start))
                 .route("/config/quit", web::post().to(quit))
                 .route("/config/locale", web::post().to(set_locale))
+                // File browser + organ library management
+                .route("/config/browse", web::get().to(browse))
+                .route(
+                    "/config/library/add-organ",
+                    web::post().to(add_organ_to_library),
+                )
+                .route(
+                    "/config/library/remove-organ",
+                    web::post().to(remove_organ_from_library),
+                )
         })
         .bind(("0.0.0.0", port));
 
