@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Velg klangfil (Impulsrespons)"
   file_browser_up_title: "Gå til overordnet mappe"
   file_browser_empty: "Ingen samsvarende filer i denne mappen."
+  file_browser_drives_label: "Stasjoner"

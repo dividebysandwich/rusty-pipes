@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Eligere fasciculum resonantiae (Responsionem impulsus)"
   file_browser_up_title: "Ire ad directorium parens"
   file_browser_empty: "Nulli fasciculi congruentes in hoc directorio."
+  file_browser_drives_label: "Discos"

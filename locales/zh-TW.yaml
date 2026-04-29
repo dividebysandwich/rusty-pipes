@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "選擇殘響(脈衝響應)檔案"
   file_browser_up_title: "前往上層目錄"
   file_browser_empty: "此目錄中沒有相符的檔案。"
+  file_browser_drives_label: "磁碟機"

@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Hall-Datei (Impulsantwort) auswählen"
   file_browser_up_title: "Übergeordnetes Verzeichnis"
   file_browser_empty: "Keine passenden Dateien in diesem Verzeichnis."
+  file_browser_drives_label: "Laufwerke"

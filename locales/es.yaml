@@ -457,3 +457,4 @@ web:
   file_browser_title_ir: "Seleccionar archivo de reverberación (respuesta de impulso)"
   file_browser_up_title: "Ir al directorio superior"
   file_browser_empty: "No hay archivos compatibles en este directorio."
+  file_browser_drives_label: "Unidades"

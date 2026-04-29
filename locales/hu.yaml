@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Visszhangfájl (impulzusválasz) kiválasztása"
   file_browser_up_title: "Ugrás a szülőkönyvtárba"
   file_browser_empty: "Nincs megfelelő fájl ebben a könyvtárban."
+  file_browser_drives_label: "Meghajtók"

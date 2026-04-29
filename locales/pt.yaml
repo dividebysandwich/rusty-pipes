@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Selecionar arquivo de reverberação (Resposta ao impulso)"
   file_browser_up_title: "Ir para o diretório pai"
   file_browser_empty: "Nenhum arquivo compatível neste diretório."
+  file_browser_drives_label: "Unidades"

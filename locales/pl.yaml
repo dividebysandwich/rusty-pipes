@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Wybierz plik pogłosu (Odpowiedź impulsowa)"
   file_browser_up_title: "Przejdź do katalogu nadrzędnego"
   file_browser_empty: "Brak pasujących plików w tym katalogu."
+  file_browser_drives_label: "Dyski"

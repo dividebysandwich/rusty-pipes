@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Sélectionner le fichier de réverbération (Réponse impulsionnelle)"
   file_browser_up_title: "Aller au répertoire parent"
   file_browser_empty: "Aucun fichier correspondant dans ce répertoire."
+  file_browser_drives_label: "Lecteurs"

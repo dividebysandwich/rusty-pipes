@@ -1290,6 +1290,86 @@ struct BrowseResponse {
     current_path: String,
     parent_path: Option<String>,
     entries: Vec<BrowseEntry>,
+    /// Set when `entries` contains the synthetic list of Windows drive
+    /// roots rather than directory contents. The web UI uses this to
+    /// label the breadcrumb with a localized "Drives" rather than the
+    /// internal sentinel path.
+    is_drives_view: bool,
+}
+
+/// Sentinel `path` value the client posts back to request the synthetic
+/// drives view. It's also returned as `parent_path` for any drive root so
+/// the "Up" button gives Windows users a way to switch drives. (Only
+/// referenced in `#[cfg(windows)]` code paths, but kept platform-agnostic
+/// so the JS contract is identical everywhere.)
+#[allow(dead_code)]
+const DRIVES_SENTINEL: &str = "::drives";
+
+/// On Windows, the parent of a drive root (e.g. `C:\`) is `None` and
+/// would leave the user stuck on that drive. We return the drives sentinel
+/// instead so the Up button takes them back to the drive list. On other
+/// platforms there's no such concept; `/`'s parent really is `None`.
+fn root_navigation_target() -> Option<String> {
+    #[cfg(windows)]
+    {
+        Some(DRIVES_SENTINEL.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// `Path::canonicalize` on Windows returns extended-length verbatim paths
+/// (e.g. `\\?\C:\Users`). Strip the `\\?\` prefix for nicer display in
+/// the breadcrumb and entry list. No-op everywhere else.
+fn pretty_path(s: &str) -> String {
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        stripped.to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+#[cfg(windows)]
+fn list_drive_roots() -> Vec<PathBuf> {
+    // Walk A..Z and keep the ones the OS reports as directories. This is
+    // simpler than calling `GetLogicalDrives` directly and avoids pulling
+    // in winapi just for this.
+    let mut drives = Vec::new();
+    for c in b'A'..=b'Z' {
+        let drive = format!("{}:\\", c as char);
+        let path = PathBuf::from(&drive);
+        if path.is_dir() {
+            drives.push(path);
+        }
+    }
+    drives
+}
+
+#[cfg(windows)]
+fn drives_browse_response() -> HttpResponse {
+    let entries: Vec<BrowseEntry> = list_drive_roots()
+        .into_iter()
+        .map(|d| {
+            // Use the full drive path (e.g. `C:\`) as both the visible name
+            // and the navigable path so the next browse request lands on
+            // that drive's root directory.
+            let s = d.to_string_lossy().to_string();
+            BrowseEntry {
+                name: s.clone(),
+                path: s,
+                is_dir: true,
+                size: None,
+            }
+        })
+        .collect();
+    HttpResponse::Ok().json(BrowseResponse {
+        current_path: DRIVES_SENTINEL.to_string(),
+        parent_path: None,
+        entries,
+        is_drives_view: true,
+    })
 }
 
 #[derive(Deserialize)]
@@ -1637,6 +1717,14 @@ async fn config_browse(query: web::Query<BrowseQuery>) -> impl Responder {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty());
 
+    // Windows-only: serve the synthetic drives view when the client sends
+    // the sentinel path. (`::drives` isn't a valid filesystem path so it
+    // can never collide with a real directory.)
+    #[cfg(windows)]
+    if raw == Some(DRIVES_SENTINEL) {
+        return drives_browse_response();
+    }
+
     let path: PathBuf = match raw {
         Some(p) => PathBuf::from(p),
         None => dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
@@ -1694,7 +1782,7 @@ async fn config_browse(query: web::Query<BrowseQuery>) -> impl Responder {
         }
         entries.push(BrowseEntry {
             name,
-            path: entry_path.to_string_lossy().to_string(),
+            path: pretty_path(&entry_path.to_string_lossy()),
             is_dir,
             size: if is_dir { None } else { Some(metadata.len()) },
         });
@@ -1706,15 +1794,20 @@ async fn config_browse(query: web::Query<BrowseQuery>) -> impl Responder {
         _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
+    // If the path has no parent (a drive root on Windows, `/` on Unix),
+    // fall back to the platform-specific root navigation target — on
+    // Windows that's the drives view, on Unix it's just None.
     let parent_path = path
         .parent()
-        .map(|p| p.to_string_lossy().to_string())
-        .filter(|s| !s.is_empty());
+        .map(|p| pretty_path(&p.to_string_lossy()))
+        .filter(|s| !s.is_empty())
+        .or_else(root_navigation_target);
 
     HttpResponse::Ok().json(BrowseResponse {
-        current_path: path.to_string_lossy().to_string(),
+        current_path: pretty_path(&path.to_string_lossy()),
         parent_path,
         entries,
+        is_drives_view: false,
     })
 }
 

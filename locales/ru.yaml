@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Выбрать файл реверберации (импульсная характеристика)"
   file_browser_up_title: "Перейти в родительский каталог"
   file_browser_empty: "В этом каталоге нет подходящих файлов."
+  file_browser_drives_label: "Диски"

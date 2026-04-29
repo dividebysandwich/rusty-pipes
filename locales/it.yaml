@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Seleziona file di riverbero (risposta all'impulso)"
   file_browser_up_title: "Vai alla directory superiore"
   file_browser_empty: "Nessun file compatibile in questa directory."
+  file_browser_drives_label: "Unità"

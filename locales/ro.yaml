@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Selectează fișierul de reverb (Răspuns la impuls)"
   file_browser_up_title: "Mergi la directorul părinte"
   file_browser_empty: "Niciun fișier potrivit în acest director."
+  file_browser_drives_label: "Unități"

@@ -386,6 +386,7 @@ web:
   file_browser_title_ir: "Select Reverb (Impulse Response) File"
   file_browser_up_title: "Go to parent directory"
   file_browser_empty: "No matching files in this directory."
+  file_browser_drives_label: "Drives"
 
   # Config: Audio tab
   config_audio_device_heading: "Output Device"

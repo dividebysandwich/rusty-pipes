@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "选择混响(脉冲响应)文件"
   file_browser_up_title: "前往上级目录"
   file_browser_empty: "此目录中没有匹配的文件。"
+  file_browser_drives_label: "驱动器"

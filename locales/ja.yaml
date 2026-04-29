@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "リバーブ(インパルスレスポンス)ファイルを選択"
   file_browser_up_title: "親ディレクトリへ"
   file_browser_empty: "このディレクトリには一致するファイルがありません。"
+  file_browser_drives_label: "ドライブ"

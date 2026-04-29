@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Galmbestand (Impulsrespons) selecteren"
   file_browser_up_title: "Naar bovenliggende map"
   file_browser_empty: "Geen overeenkomende bestanden in deze map."
+  file_browser_drives_label: "Schijven"

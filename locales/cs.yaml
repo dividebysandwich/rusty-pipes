@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Vybrat soubor dozvuku (Impulsní odezva)"
   file_browser_up_title: "Přejít do nadřazeného adresáře"
   file_browser_empty: "V tomto adresáři nejsou žádné odpovídající soubory."
+  file_browser_drives_label: "Disky"

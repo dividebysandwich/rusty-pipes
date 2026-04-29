@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Välj eko-fil (Impulssvar)"
   file_browser_up_title: "Gå till överordnad mapp"
   file_browser_empty: "Inga matchande filer i denna mapp."
+  file_browser_drives_label: "Enheter"

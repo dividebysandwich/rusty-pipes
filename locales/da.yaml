@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Vælg rumklangsfil (Impulssvar)"
   file_browser_up_title: "Gå til overordnet mappe"
   file_browser_empty: "Ingen matchende filer i denne mappe."
+  file_browser_drives_label: "Drev"

@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Roghnaigh comhad athshondais (Freagra bhuille)"
   file_browser_up_title: "Téigh go dtí an chomhadlann thuasluaite"
   file_browser_empty: "Níl aon chomhad oiriúnach sa chomhadlann seo."
+  file_browser_drives_label: "Tiomántáin"

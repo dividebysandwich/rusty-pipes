@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Tagh faidhle mac-talla (Freagairt buill)"
   file_browser_up_title: "Rach dhan phasgan as àirde"
   file_browser_empty: "Chan eil faidhle freagarrach sa phasgan seo."
+  file_browser_drives_label: "Draibhean"

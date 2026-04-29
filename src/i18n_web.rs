@@ -189,6 +189,10 @@ pub fn web_translations() -> Value {
         "file_browser_empty".into(),
         t!("web.file_browser_empty").into(),
     );
+    s.insert(
+        "file_browser_drives_label".into(),
+        t!("web.file_browser_drives_label").into(),
+    );
 
     // Library mutation toasts/confirms
     s.insert(

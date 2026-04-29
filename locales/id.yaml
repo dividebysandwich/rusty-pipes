@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Pilih file reverb (Respons impuls)"
   file_browser_up_title: "Ke direktori induk"
   file_browser_empty: "Tidak ada file yang cocok di direktori ini."
+  file_browser_drives_label: "Drive"

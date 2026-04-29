@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Valitse kaikutiedosto (Impulssivaste)"
   file_browser_up_title: "Siirry ylähakemistoon"
   file_browser_empty: "Hakemistossa ei ole sopivia tiedostoja."
+  file_browser_drives_label: "Asemat"

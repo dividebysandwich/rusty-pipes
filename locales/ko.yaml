@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "리버브(임펄스 응답) 파일 선택"
   file_browser_up_title: "상위 디렉터리로"
   file_browser_empty: "이 디렉터리에 일치하는 파일이 없습니다."
+  file_browser_drives_label: "드라이브"

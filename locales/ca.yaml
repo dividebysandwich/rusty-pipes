@@ -464,3 +464,4 @@ web:
   file_browser_title_ir: "Selecciona fitxer de reverberació (Resposta a l'impuls)"
   file_browser_up_title: "Vés al directori superior"
   file_browser_empty: "No hi ha fitxers coincidents en aquest directori."
+  file_browser_drives_label: "Unitats"

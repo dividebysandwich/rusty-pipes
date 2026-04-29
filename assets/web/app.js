@@ -1122,8 +1122,12 @@ async function navigateFileBrowser(path) {
   try {
     const data = await api.cfgBrowse(path, fileBrowser.exts);
     fileBrowser.parentPath = data.parent_path;
-    document.getElementById("file-browser-current-path").value =
-      data.current_path;
+    // Show a localized "Drives" label for the synthetic Windows drives
+    // view; the underlying current_path is just an internal sentinel.
+    const label = data.is_drives_view
+      ? t("file_browser_drives_label")
+      : data.current_path;
+    document.getElementById("file-browser-current-path").value = label;
     renderFileBrowserEntries(data.entries);
   } catch (e) {
     toast(t("err_browse_fmt", { err: e.message }), { error: true });
