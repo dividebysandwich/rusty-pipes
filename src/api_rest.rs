@@ -1610,6 +1610,22 @@ async fn config_set_locale(
     }
     rust_i18n::set_locale(&body.locale);
     log::info!("Locale switched to {}", body.locale);
+
+    // Persist immediately. The configuration UI's regular save path also
+    // includes `locale` when it exits, but we still write here so the
+    // setting sticks if the user changes language in play mode (where
+    // the config UI's save path never fires) or quits without going
+    // through Start. Read-modify-write so we don't clobber other fields.
+    match config::load_settings() {
+        Ok(mut settings) => {
+            settings.locale = Some(body.locale.clone());
+            if let Err(e) = config::save_settings(&settings) {
+                log::warn!("Failed to persist locale: {}", e);
+            }
+        }
+        Err(e) => log::warn!("Failed to load settings before locale persist: {}", e),
+    }
+
     broadcast(&data, WsMessage::Refetch);
     HttpResponse::Ok().json(serde_json::json!({"status": "ok", "locale": body.locale}))
 }

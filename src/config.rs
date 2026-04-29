@@ -108,6 +108,11 @@ pub struct AppSettings {
     pub midi_devices: Vec<MidiDeviceConfig>,
     #[serde(default)]
     pub lcd_displays: Vec<LcdDisplayConfig>,
+    /// Last-used UI locale (e.g. `"de"`, `"en"`, `"zh-CN"`). When unset
+    /// (e.g. on first run, or when the user has never explicitly chosen a
+    /// language) the system locale is used at startup.
+    #[serde(default)]
+    pub locale: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -218,6 +223,7 @@ impl Default for AppSettings {
             keyboard_layout: KeyboardLayout::Qwerty,
             midi_devices: Vec::new(),
             lcd_displays: Vec::new(),
+            locale: None,
         }
     }
 }

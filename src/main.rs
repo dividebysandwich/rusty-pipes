@@ -167,14 +167,25 @@ impl Drop for LogicThreadHandle {
 fn main() -> Result<()> {
     let args = Args::parse();
 
+    // --- Load persisted settings up-front so we can consult `settings.locale` ---
+    // Errors here aren't fatal — we fall back to defaults so the rest of
+    // startup (logging, locale, MIDI listing, etc.) can still proceed.
+    let mut settings = config::load_settings().unwrap_or_default();
+
     // --- Setup Locale ---
-    // Priority: 1. CLI Argument, 2. System Locale, 3. Fallback "en-US"
+    // Priority: 1. CLI argument, 2. config file, 3. system locale,
+    // 4. fallback "en-US".
     let locale_to_use = args
         .lang
         .clone()
+        .or_else(|| {
+            settings
+                .locale
+                .clone()
+                .filter(|s| !s.trim().is_empty())
+        })
         .unwrap_or_else(|| sys_locale::get_locale().unwrap_or_else(|| String::from("en-US")));
 
-    // Set the locale for rust-i18n
     rust_i18n::set_locale(&locale_to_use);
 
     // --- Setup logging ---
@@ -232,8 +243,7 @@ fn main() -> Result<()> {
         }
     }));
 
-    // --- Load Config and Merge CLI Args ---
-    let mut settings = config::load_settings().unwrap_or_default();
+    // --- Merge CLI Args into the settings already loaded for locale resolution ---
     let tui_mode = args.tui;
 
     let active_layout = KeyboardLayout::detect();
@@ -457,6 +467,10 @@ fn main() -> Result<()> {
         tui_mode,
         keyboard_layout: active_layout,
         lcd_displays: config.lcd_displays.clone(),
+        // Persist the active locale so the next launch (without --lang)
+        // picks it up automatically. `rust_i18n::locale()` reflects any
+        // changes made via the web UI's language selector during config.
+        locale: Some(rust_i18n::locale().to_string()),
     };
     if let Err(e) = config::save_settings(&settings_to_save) {
         log::warn!("Failed to save settings: {}", e);
