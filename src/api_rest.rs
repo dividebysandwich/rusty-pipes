@@ -264,6 +264,12 @@ async fn mode() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({"mode": "play"}))
 }
 
+/// Returns the active locale and the dictionary of translated strings used
+/// by the web UI. Mirrored on the config-mode server.
+async fn i18n() -> impl Responder {
+    HttpResponse::Ok().json(crate::i18n_web::web_translations())
+}
+
 /// Returns information about the currently loaded organ.
 #[utoipa::path(
     get, path = "/organ", tag = "General",
@@ -1297,6 +1303,7 @@ pub fn start_api_server(
                 .route("/ui/app.js", web::get().to(web_ui_js))
                 // Mode discovery
                 .route("/mode", web::get().to(mode))
+                .route("/i18n", web::get().to(i18n))
                 // Live updates
                 .route("/ws", web::get().to(ws_handler))
                 // General

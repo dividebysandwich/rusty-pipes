@@ -18,6 +18,7 @@ mod api_config;
 mod api_rest;
 mod app;
 mod app_state;
+mod i18n_web;
 mod audio;
 mod audio_convolver;
 mod audio_event;

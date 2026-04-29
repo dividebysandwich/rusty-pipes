@@ -154,6 +154,16 @@ button {
   filter: brightness(1.08);
 }
 
+/* Compact topbar language selector (config mode only) */
+.language-select {
+  height: 36px;
+  padding: 0 0.6rem;
+  flex: 0 0 auto;
+  /* Browsers vary in flag-emoji rendering; size text up slightly so the
+     glyph is visible. */
+  font-size: 0.95rem;
+}
+
 /* CONTENT */
 .content {
   padding: 1rem;

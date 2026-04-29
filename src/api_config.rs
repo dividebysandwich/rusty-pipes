@@ -130,6 +130,10 @@ async fn mode() -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({"mode": "config"}))
 }
 
+async fn i18n() -> impl Responder {
+    HttpResponse::Ok().json(crate::i18n_web::web_translations())
+}
+
 async fn get_state(data: web::Data<ConfigApiData>) -> impl Responder {
     let s = data.shared.lock().unwrap();
     let st = &s.state;
@@ -400,6 +404,36 @@ async fn quit(data: web::Data<ConfigApiData>) -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({"status": "quitting"}))
 }
 
+#[derive(Deserialize)]
+struct LocaleRequest {
+    locale: String,
+}
+
+/// Switch the active translation locale at runtime. Validated against the
+/// fixed list of supported locales so a malformed value can't put the app
+/// into an unknown state.
+async fn set_locale(
+    body: web::Json<LocaleRequest>,
+    data: web::Data<ConfigApiData>,
+) -> impl Responder {
+    let valid = crate::i18n_web::SUPPORTED_LANGUAGES
+        .iter()
+        .any(|(code, _, _)| *code == body.locale);
+    if !valid {
+        return HttpResponse::BadRequest().body("Unsupported locale");
+    }
+    rust_i18n::set_locale(&body.locale);
+    log::info!("Locale switched to {}", body.locale);
+    // Bump revision so the local UI can re-render with the new strings on
+    // its next frame, and notify other web clients so they reload /i18n.
+    {
+        let mut s = data.shared.lock().unwrap();
+        s.revision = s.revision.wrapping_add(1);
+    }
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok", "locale": body.locale}))
+}
+
 // --- WebSocket ---
 
 async fn ws_handler(
@@ -541,6 +575,7 @@ pub fn start_config_api_server(
                 .route("/ui/app.js", web::get().to(web_ui_js))
                 // Mode discovery
                 .route("/mode", web::get().to(mode))
+                .route("/i18n", web::get().to(i18n))
                 // Live updates
                 .route("/ws", web::get().to(ws_handler))
                 // Config endpoints
@@ -554,6 +589,7 @@ pub fn start_config_api_server(
                 .route("/config/midi/rescan", web::post().to(rescan_midi))
                 .route("/config/start", web::post().to(start))
                 .route("/config/quit", web::post().to(quit))
+                .route("/config/locale", web::post().to(set_locale))
         })
         .bind(("0.0.0.0", port));
 

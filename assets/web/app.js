@@ -1,5 +1,81 @@
 "use strict";
 
+// ---------- Translations ----------
+// Populated from GET /i18n on startup and after each WS reconnect (the
+// server might be a different one — config vs play — but both expose the
+// same dictionary). Falls back to the English text in the HTML / JS source.
+const i18n = {
+  locale: "en",
+  strings: {},
+  languages: [],
+};
+
+// Translate a key, optionally substituting `%{name}` placeholders. Falls
+// back to the key itself when not found.
+function t(key, params) {
+  const tmpl = i18n.strings[key] || key;
+  if (!params) return tmpl;
+  return tmpl.replace(/%\{(\w+)\}/g, (_, name) =>
+    params[name] !== undefined ? String(params[name]) : `%{${name}}`,
+  );
+}
+
+// Apply translations to every element in the DOM that has a `data-i18n` (or
+// `data-i18n-placeholder` / `data-i18n-title`) attribute. Called once after
+// `/i18n` is fetched, and again whenever translations change.
+function applyStaticTranslations() {
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const key = el.getAttribute("data-i18n");
+    if (key) el.textContent = t(key);
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-placeholder");
+    if (key) el.placeholder = t(key);
+  });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-title");
+    if (key) el.title = t(key);
+  });
+  document.documentElement.lang = i18n.locale;
+}
+
+async function loadTranslations() {
+  try {
+    const resp = await fetch("/i18n", { cache: "no-store" });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    i18n.locale = data.locale || "en";
+    i18n.strings = data.strings || {};
+    i18n.languages = data.languages || [];
+    applyStaticTranslations();
+    populateLanguageSelector();
+  } catch (_) {
+    // Keep the source-language defaults in the HTML.
+  }
+}
+
+function populateLanguageSelector() {
+  const sel = document.getElementById("config-language");
+  if (!sel) return;
+  sel.innerHTML = "";
+  i18n.languages.forEach((lang) => {
+    const opt = document.createElement("option");
+    opt.value = lang.code;
+    opt.textContent = `${lang.flag} ${lang.native_name}`;
+    sel.appendChild(opt);
+  });
+  // Match the active locale to one of the listed options. Compare
+  // case-insensitively and fall back to the language prefix so that
+  // system locales like "en-US" or "de-DE" resolve to "en" / "de".
+  const code = (i18n.locale || "en").toLowerCase();
+  let match = i18n.languages.find((l) => l.code.toLowerCase() === code);
+  if (!match) {
+    const prefix = code.split("-")[0];
+    match = i18n.languages.find((l) => l.code.toLowerCase() === prefix);
+  }
+  if (match) sel.value = match.code;
+}
+
 // ---------- API client ----------
 const api = {
   async json(method, path, body) {
@@ -75,6 +151,7 @@ const api = {
   cfgRescanMidi: () => api.json("POST", "/config/midi/rescan"),
   cfgStart: () => api.json("POST", "/config/start"),
   cfgQuit: () => api.json("POST", "/config/quit"),
+  cfgSetLocale: (locale) => api.json("POST", "/config/locale", { locale }),
 };
 
 // ---------- Toasts ----------
@@ -171,7 +248,7 @@ function setupChannelSelect() {
   for (let i = 0; i < 16; i++) {
     const opt = document.createElement("option");
     opt.value = String(i);
-    opt.textContent = `Channel ${i + 1}`;
+    opt.textContent = t("channel_fmt", { num: i + 1 });
     sel.appendChild(opt);
   }
   sel.addEventListener("change", () => {
@@ -271,7 +348,7 @@ const DIVISION_LABELS = {
 };
 
 function divisionLabel(id) {
-  if (!id) return "Stops";
+  if (!id) return t("default_division_heading");
   const friendly = DIVISION_LABELS[id];
   return friendly ? `${friendly} (${id})` : id;
 }
@@ -342,14 +419,16 @@ async function toggleStop(stop, active) {
     stop.active_channels = [...set].sort();
     renderStops();
   } catch (e) {
-    toast(`Stop toggle failed: ${e.message}`, { error: true });
+    toast(t("err_stop_toggle_fmt", { err: e.message }), { error: true });
   }
 }
 
 function openStopActions(stop) {
   document.getElementById("stop-actions-title").textContent = stop.name;
-  document.getElementById("stop-actions-subtitle").textContent =
-    `Channel ${state.channel + 1}`;
+  document.getElementById("stop-actions-subtitle").textContent = t(
+    "stop_actions_channel_fmt",
+    { num: state.channel + 1 },
+  );
   const enableBtn = document.getElementById("stop-action-learn-enable");
   const disableBtn = document.getElementById("stop-action-learn-disable");
   const clearBtn = document.getElementById("stop-action-clear");
@@ -375,9 +454,14 @@ function openStopActions(stop) {
     closeModal("modal-stop-actions");
     try {
       await api.clearStopBinding(stop.index, state.channel);
-      toast(`Cleared bindings for ${stop.name} ch ${state.channel + 1}`);
+      toast(
+        t("toast_cleared_stop_fmt", {
+          name: stop.name,
+          num: state.channel + 1,
+        }),
+      );
     } catch (e) {
-      toast(`Clear failed: ${e.message}`, { error: true });
+      toast(t("err_clear_fmt", { err: e.message }), { error: true });
     }
   };
   openModal("modal-stop-actions");
@@ -403,7 +487,7 @@ function renderPresets() {
     slot.textContent = `F${preset.slot}`;
     const name = document.createElement("div");
     name.className = "name";
-    name.textContent = preset.name || "(empty)";
+    name.textContent = preset.name || t("preset_empty");
     tile.appendChild(slot);
     tile.appendChild(name);
 
@@ -422,16 +506,17 @@ async function recallPreset(preset) {
   }
   try {
     await api.loadPreset(preset.slot);
-    toast(`Loaded ${preset.name || `F${preset.slot}`}`);
+    toast(t("toast_loaded_fmt", { name: preset.name || `F${preset.slot}` }));
     await loadStops();
   } catch (e) {
-    toast(`Load failed: ${e.message}`, { error: true });
+    toast(t("err_load_fmt", { err: e.message }), { error: true });
   }
 }
 
 function openPresetActions(preset) {
-  document.getElementById("preset-actions-title").textContent =
-    `Preset F${preset.slot}${preset.name ? ` — ${preset.name}` : ""}`;
+  document.getElementById("preset-actions-title").textContent = preset.name
+    ? t("modal_preset_title_named_fmt", { num: preset.slot, name: preset.name })
+    : t("modal_preset_title_fmt", { num: preset.slot });
   const loadBtn = document.getElementById("preset-action-load");
   const saveBtn = document.getElementById("preset-action-save");
   const learnBtn = document.getElementById("preset-action-learn");
@@ -453,9 +538,9 @@ function openPresetActions(preset) {
     closeModal("modal-preset-actions");
     try {
       await api.clearPresetBinding(preset.slot);
-      toast(`Cleared MIDI binding for F${preset.slot}`);
+      toast(t("toast_cleared_preset_fmt", { num: preset.slot }));
     } catch (e) {
-      toast(`Clear failed: ${e.message}`, { error: true });
+      toast(t("err_clear_fmt", { err: e.message }), { error: true });
     }
   };
   openModal("modal-preset-actions");
@@ -472,11 +557,11 @@ function openSavePresetDialog(preset) {
     if (!name) return;
     try {
       await api.savePreset(preset.slot, name);
-      toast(`Saved as ${name}`);
+      toast(t("toast_saved_fmt", { name }));
       closeModal("modal-save-preset");
       loadPresets();
     } catch (e) {
-      toast(`Save failed: ${e.message}`, { error: true });
+      toast(t("err_save_fmt", { err: e.message }), { error: true });
     }
   };
 }
@@ -493,7 +578,7 @@ function renderTremulants() {
   if (state.tremulants.length === 0) {
     const p = document.createElement("p");
     p.className = "muted";
-    p.textContent = "This organ has no tremulants.";
+    p.textContent = t("no_tremulants");
     grid.appendChild(p);
     return;
   }
@@ -517,7 +602,7 @@ async function toggleTremulant(trem, active) {
     trem.active = active;
     renderTremulants();
   } catch (e) {
-    toast(`Tremulant toggle failed: ${e.message}`, { error: true });
+    toast(t("err_tremulant_fmt", { err: e.message }), { error: true });
   }
 }
 
@@ -544,9 +629,11 @@ function openTremulantActions(trem) {
     closeModal("modal-tremulant-actions");
     try {
       await api.clearTremulantBinding(trem.id);
-      toast(`Cleared bindings for ${trem.name || trem.id}`);
+      toast(
+        t("toast_cleared_tremulant_fmt", { name: trem.name || trem.id }),
+      );
     } catch (e) {
-      toast(`Clear failed: ${e.message}`, { error: true });
+      toast(t("err_clear_fmt", { err: e.message }), { error: true });
     }
   };
   openModal("modal-tremulant-actions");
@@ -565,7 +652,7 @@ function renderOrgans(list) {
   if (!list || list.length === 0) {
     const p = document.createElement("p");
     p.className = "muted";
-    p.textContent = "No organs in library.";
+    p.textContent = t("organs_none");
     container.appendChild(p);
     return;
   }
@@ -589,7 +676,7 @@ function renderOrgans(list) {
     if (entry.name === currentName) {
       const badge = document.createElement("span");
       badge.className = "badge";
-      badge.textContent = "Current";
+      badge.textContent = t("organ_badge_current");
       item.appendChild(badge);
     }
 
@@ -601,20 +688,15 @@ function renderOrgans(list) {
 async function requestLoadOrgan(entry) {
   const currentName = document.getElementById("organ-name").textContent;
   if (entry.name === currentName) {
-    toast(`${entry.name} is already loaded`);
+    toast(t("organ_already_loaded_fmt", { name: entry.name }));
     return;
   }
-  if (
-    !confirm(
-      `Load "${entry.name}"? The application will reload — playing notes will stop and the web UI will briefly disconnect.`,
-    )
-  )
-    return;
+  if (!confirm(t("organ_load_confirm_fmt", { name: entry.name }))) return;
   try {
     await api.loadOrgan(entry.path);
-    toast(`Loading ${entry.name}…`);
+    toast(t("organ_loading_fmt", { name: entry.name }));
   } catch (e) {
-    toast(`Load failed: ${e.message}`, { error: true });
+    toast(t("err_load_fmt", { err: e.message }), { error: true });
   }
 }
 
@@ -645,7 +727,7 @@ function renderAudio() {
   reverbSel.innerHTML = "";
   const noneOpt = document.createElement("option");
   noneOpt.value = "-1";
-  noneOpt.textContent = "(disabled)";
+  noneOpt.textContent = t("reverb_disabled");
   reverbSel.appendChild(noneOpt);
   state.reverbs.forEach((r) => {
     const opt = document.createElement("option");
@@ -669,7 +751,7 @@ function setupAudioControls() {
   });
   gain.addEventListener("change", () => {
     api.setGain(Number(gain.value)).catch((e) =>
-      toast(`Gain failed: ${e.message}`, { error: true })
+      toast(t("err_gain_fmt", { err: e.message }), { error: true }),
     );
   });
 
@@ -680,14 +762,14 @@ function setupAudioControls() {
   });
   poly.addEventListener("change", () => {
     api.setPolyphony(Number(poly.value)).catch((e) =>
-      toast(`Polyphony failed: ${e.message}`, { error: true })
+      toast(t("err_polyphony_fmt", { err: e.message }), { error: true }),
     );
   });
 
   const reverbSel = document.getElementById("reverb-select");
   reverbSel.addEventListener("change", () => {
     api.selectReverb(Number(reverbSel.value)).catch((e) =>
-      toast(`Reverb failed: ${e.message}`, { error: true })
+      toast(t("err_reverb_fmt", { err: e.message }), { error: true }),
     );
   });
 
@@ -698,7 +780,7 @@ function setupAudioControls() {
   });
   mix.addEventListener("change", () => {
     api.setReverbMix(Number(mix.value)).catch((e) =>
-      toast(`Mix failed: ${e.message}`, { error: true })
+      toast(t("err_mix_fmt", { err: e.message }), { error: true }),
     );
   });
 }
@@ -711,12 +793,12 @@ function renderRecording() {
   if (!a) return;
   midiBtn.classList.toggle("on", a.is_recording_midi);
   midiBtn.textContent = a.is_recording_midi
-    ? "■ Stop MIDI Recording"
-    : "● Start MIDI Recording";
+    ? t("rec_midi_stop")
+    : t("rec_midi_start");
   audioBtn.classList.toggle("on", a.is_recording_audio);
   audioBtn.textContent = a.is_recording_audio
-    ? "■ Stop Audio Recording"
-    : "● Start Audio Recording";
+    ? t("rec_audio_stop")
+    : t("rec_audio_start");
 }
 
 function setupRecordingControls() {
@@ -728,9 +810,13 @@ function setupRecordingControls() {
         await api.recordMidi(newState);
         state.audio.is_recording_midi = newState;
         renderRecording();
-        toast(newState ? "MIDI recording started" : "MIDI recording saved");
+        toast(
+          newState
+            ? t("toast_rec_midi_started")
+            : t("toast_rec_midi_saved"),
+        );
       } catch (e) {
-        toast(`Recording failed: ${e.message}`, { error: true });
+        toast(t("err_recording_fmt", { err: e.message }), { error: true });
       }
     });
   document
@@ -741,9 +827,13 @@ function setupRecordingControls() {
         await api.recordAudio(newState);
         state.audio.is_recording_audio = newState;
         renderRecording();
-        toast(newState ? "Audio recording started" : "Audio recording saved");
+        toast(
+          newState
+            ? t("toast_rec_audio_started")
+            : t("toast_rec_audio_saved"),
+        );
       } catch (e) {
-        toast(`Recording failed: ${e.message}`, { error: true });
+        toast(t("err_recording_fmt", { err: e.message }), { error: true });
       }
     });
 }
@@ -752,9 +842,9 @@ function setupRecordingControls() {
 document.getElementById("panic-btn").addEventListener("click", async () => {
   try {
     await api.panic();
-    toast("Panic — all notes off");
+    toast(t("toast_panic"));
   } catch (e) {
-    toast(`Panic failed: ${e.message}`, { error: true });
+    toast(t("err_panic_fmt", { err: e.message }), { error: true });
   }
 });
 
@@ -767,8 +857,7 @@ async function startLearn(targetBody) {
     const resp = await api.midiLearnStart(targetBody);
     document.getElementById("learn-target-label").textContent =
       resp.target_name || "(target)";
-    document.getElementById("learn-state-label").textContent =
-      "Waiting for MIDI event…";
+    document.getElementById("learn-state-label").textContent = t("learn_waiting");
     document.getElementById("learn-result").textContent = "";
     if (learnAutoCloseHandle) {
       clearTimeout(learnAutoCloseHandle);
@@ -777,22 +866,21 @@ async function startLearn(targetBody) {
     learnActive = true;
     openModal("modal-learn");
   } catch (e) {
-    toast(`Learn failed: ${e.message}`, { error: true });
+    toast(t("err_learn_fmt", { err: e.message }), { error: true });
   }
 }
 
 function handleLearnUpdate(msg) {
   if (!learnActive) return;
   if (msg.state === "captured") {
-    document.getElementById("learn-state-label").textContent = "Learned ✓";
+    document.getElementById("learn-state-label").textContent = t("learn_done");
     document.getElementById("learn-result").textContent =
       msg.event_description || "";
-    toast(`Learned: ${msg.event_description || "event"}`);
+    toast(t("toast_learned_fmt", { event: msg.event_description || "event" }));
     learnActive = false;
     learnAutoCloseHandle = setTimeout(() => closeModal("modal-learn"), 1100);
   } else if (msg.state === "timed_out") {
-    document.getElementById("learn-state-label").textContent =
-      "Timed out — no MIDI event received.";
+    document.getElementById("learn-state-label").textContent = t("learn_timed_out");
     learnActive = false;
     learnAutoCloseHandle = setTimeout(() => closeModal("modal-learn"), 1500);
   } else if (msg.state === "idle") {
@@ -827,7 +915,7 @@ function renderConfig() {
   const c = state.config;
 
   // --- Topbar title: always "Configuration" while in config mode ---
-  document.getElementById("organ-name").textContent = "Configuration";
+  document.getElementById("organ-name").textContent = t("topbar_config");
 
   // --- Organ list ---
   renderConfigOrgans();
@@ -837,7 +925,7 @@ function renderConfig() {
   adev.innerHTML = "";
   const defaultOpt = document.createElement("option");
   defaultOpt.value = "";
-  defaultOpt.textContent = "[ System Default ]";
+  defaultOpt.textContent = t("config_audio_device_default");
   adev.appendChild(defaultOpt);
   c.available_audio_devices.forEach((name) => {
     const opt = document.createElement("option");
@@ -863,7 +951,7 @@ function renderConfig() {
   ir.innerHTML = "";
   const noneOpt = document.createElement("option");
   noneOpt.value = "";
-  noneOpt.textContent = "(no reverb)";
+  noneOpt.textContent = t("config_reverb_none");
   ir.appendChild(noneOpt);
   c.available_ir_files.forEach((entry) => {
     const opt = document.createElement("option");
@@ -931,8 +1019,7 @@ function renderConfigOrgans() {
   if (!c.organ_library || c.organ_library.length === 0) {
     const p = document.createElement("p");
     p.className = "muted";
-    p.textContent =
-      "No organs in the library yet. Use the desktop application to add organs.";
+    p.textContent = t("config_organs_empty");
     container.appendChild(p);
     return;
   }
@@ -957,7 +1044,7 @@ function renderConfigOrgans() {
     if (isCurrent) {
       const badge = document.createElement("span");
       badge.className = "badge";
-      badge.textContent = "Selected";
+      badge.textContent = t("config_organ_badge_selected");
       item.appendChild(badge);
     }
 
@@ -970,9 +1057,9 @@ function renderConfigOrgans() {
           state.config.settings.organ_file = entry.path;
           renderConfig();
         }
-        toast(`Selected ${entry.name}`);
+        toast(t("config_selected_fmt", { name: entry.name }));
       } catch (e) {
-        toast(`Selection failed: ${e.message}`, { error: true });
+        toast(t("err_selection_fmt", { err: e.message }), { error: true });
       }
     });
     container.appendChild(item);
@@ -986,8 +1073,7 @@ function renderConfigMidiList() {
   if (!c.system_midi_ports || c.system_midi_ports.length === 0) {
     const p = document.createElement("p");
     p.className = "muted";
-    p.textContent =
-      "No MIDI input devices detected. Plug in a device and click Rescan.";
+    p.textContent = t("config_midi_none");
     container.appendChild(p);
     return;
   }
@@ -1017,7 +1103,7 @@ function renderConfigMidiList() {
           enabled: cb.checked,
         });
       } catch (e) {
-        toast(`Update failed: ${e.message}`, { error: true });
+        toast(t("err_update_fmt", { err: e.message }), { error: true });
       }
     });
     header.appendChild(cb);
@@ -1029,7 +1115,7 @@ function renderConfigMidiList() {
 
     const mapBtn = document.createElement("button");
     mapBtn.className = "ghost small";
-    mapBtn.textContent = "Channel mapping…";
+    mapBtn.textContent = t("config_midi_map_button");
     mapBtn.addEventListener("click", () => openMidiMappingModal(port.name));
     header.appendChild(mapBtn);
 
@@ -1046,23 +1132,26 @@ function renderConfigMidiList() {
 
 function midiMappingSummary(cfg) {
   if (cfg.mapping_mode === "Simple") {
-    return `Simple mapping → all input channels → channel ${cfg.simple_target_channel + 1}`;
+    return t("config_midi_summary_simple_fmt", {
+      num: cfg.simple_target_channel + 1,
+    });
   }
-  // Show non-default mappings
   const notes = [];
   cfg.complex_mapping.forEach((target, i) => {
     if (target !== i) notes.push(`${i + 1}→${target + 1}`);
   });
-  if (notes.length === 0) return "Complex mapping (1:1, default)";
-  return `Complex mapping: ${notes.join(", ")}`;
+  if (notes.length === 0) return t("config_midi_summary_complex_default");
+  return t("config_midi_summary_complex_fmt", { notes: notes.join(", ") });
 }
 
 function openMidiMappingModal(deviceName) {
   const c = state.config;
   const cfg = c.settings.midi_devices.find((d) => d.name === deviceName);
   if (!cfg) return;
-  document.getElementById("midi-mapping-title").textContent =
-    `Channel Mapping — ${deviceName}`;
+  document.getElementById("midi-mapping-title").textContent = t(
+    "midi_modal_title_fmt",
+    { name: deviceName },
+  );
 
   const radios = document.querySelectorAll(
     "input[name='midi-mapping-mode']",
@@ -1076,11 +1165,10 @@ function openMidiMappingModal(deviceName) {
             name: deviceName,
             mapping_mode: r.value,
           });
-          // Refresh the modal contents from updated config
           await loadConfigState();
           openMidiMappingModal(deviceName);
         } catch (e) {
-          toast(`Update failed: ${e.message}`, { error: true });
+          toast(t("err_update_fmt", { err: e.message }), { error: true });
         }
       }
     };
@@ -1096,7 +1184,7 @@ function openMidiMappingModal(deviceName) {
     for (let i = 0; i < 16; i++) {
       const opt = document.createElement("option");
       opt.value = String(i);
-      opt.textContent = `Channel ${i + 1}`;
+      opt.textContent = t("channel_fmt", { num: i + 1 });
       sel.appendChild(opt);
     }
     sel.value = String(cfg.simple_target_channel);
@@ -1107,7 +1195,7 @@ function openMidiMappingModal(deviceName) {
           simple_target_channel: Number(sel.value),
         });
       } catch (e) {
-        toast(`Update failed: ${e.message}`, { error: true });
+        toast(t("err_update_fmt", { err: e.message }), { error: true });
       }
     };
   } else {
@@ -1119,12 +1207,12 @@ function openMidiMappingModal(deviceName) {
       const row = document.createElement("div");
       row.className = "row";
       const label = document.createElement("label");
-      label.textContent = `In ${i + 1}`;
+      label.textContent = t("midi_modal_input_fmt", { num: i + 1 });
       const sel = document.createElement("select");
-      for (let t = 0; t < 16; t++) {
+      for (let target2 = 0; target2 < 16; target2++) {
         const opt = document.createElement("option");
-        opt.value = String(t);
-        opt.textContent = String(t + 1);
+        opt.value = String(target2);
+        opt.textContent = String(target2 + 1);
         sel.appendChild(opt);
       }
       sel.value = String(target);
@@ -1137,7 +1225,7 @@ function openMidiMappingModal(deviceName) {
             complex_mapping: newMap,
           });
         } catch (e) {
-          toast(`Update failed: ${e.message}`, { error: true });
+          toast(t("err_update_fmt", { err: e.message }), { error: true });
         }
       });
       row.appendChild(label);
@@ -1158,7 +1246,7 @@ function setupConfigControls() {
       try {
         await api.cfgSetAudioDevice(name);
       } catch (err) {
-        toast(`Audio device failed: ${err.message}`, { error: true });
+        toast(t("err_audio_device_fmt", { err: err.message }), { error: true });
       }
     });
 
@@ -1169,7 +1257,7 @@ function setupConfigControls() {
       try {
         await api.cfgSetSampleRate(Number(e.target.value));
       } catch (err) {
-        toast(`Sample rate failed: ${err.message}`, { error: true });
+        toast(t("err_sample_rate_fmt", { err: err.message }), { error: true });
       }
     });
 
@@ -1180,7 +1268,7 @@ function setupConfigControls() {
       try {
         await api.cfgSetIrFile(e.target.value || null);
       } catch (err) {
-        toast(`IR file failed: ${err.message}`, { error: true });
+        toast(t("err_ir_file_fmt", { err: err.message }), { error: true });
       }
     });
 
@@ -1194,7 +1282,7 @@ function setupConfigControls() {
     try {
       await api.cfgSetAudioSettings({ reverb_mix: Number(mix.value) });
     } catch (e) {
-      toast(`Mix failed: ${e.message}`, { error: true });
+      toast(t("err_mix_fmt", { err: e.message }), { error: true });
     }
   });
 
@@ -1208,7 +1296,7 @@ function setupConfigControls() {
     try {
       await api.cfgSetAudioSettings({ gain: Number(gain.value) });
     } catch (e) {
-      toast(`Gain failed: ${e.message}`, { error: true });
+      toast(t("err_gain_fmt", { err: e.message }), { error: true });
     }
   });
 
@@ -1222,7 +1310,7 @@ function setupConfigControls() {
     try {
       await api.cfgSetAudioSettings({ polyphony: Number(poly.value) });
     } catch (e) {
-      toast(`Polyphony failed: ${e.message}`, { error: true });
+      toast(t("err_polyphony_fmt", { err: e.message }), { error: true });
     }
   });
 
@@ -1233,7 +1321,7 @@ function setupConfigControls() {
         audio_buffer_frames: Number(e.target.value),
       });
     } catch (err) {
-      toast(`Buffer failed: ${err.message}`, { error: true });
+      toast(t("err_buffer_fmt", { err: err.message }), { error: true });
     }
   });
 
@@ -1247,7 +1335,7 @@ function setupConfigControls() {
     try {
       await api.cfgSetAudioSettings({ max_ram_gb: Number(ram.value) });
     } catch (e) {
-      toast(`RAM failed: ${e.message}`, { error: true });
+      toast(t("err_ram_fmt", { err: e.message }), { error: true });
     }
   });
 
@@ -1262,7 +1350,7 @@ function setupConfigControls() {
       try {
         await api.cfgSetAudioSettings({ [field]: e.target.checked });
       } catch (err) {
-        toast(`Update failed: ${err.message}`, { error: true });
+        toast(t("err_update_fmt", { err: err.message }), { error: true });
       }
     });
   });
@@ -1273,9 +1361,9 @@ function setupConfigControls() {
     .addEventListener("click", async () => {
       try {
         await api.cfgRescanMidi();
-        toast("MIDI ports rescanned");
+        toast(t("config_midi_rescan_done"));
       } catch (e) {
-        toast(`Rescan failed: ${e.message}`, { error: true });
+        toast(t("err_rescan_fmt", { err: e.message }), { error: true });
       }
     });
 
@@ -1287,12 +1375,12 @@ function setupConfigControls() {
       // (when the config server is dropped); if our fetch happens to be
       // aborted by the resulting reconnect logic, AbortError is expected
       // and not user-visible.
-      toast("Loading organ…");
+      toast(t("toast_loading_organ"));
       try {
         await api.cfgStart();
       } catch (e) {
         if (e.name === "AbortError") return;
-        toast(`Start failed: ${e.message}`, { error: true });
+        toast(t("err_start_fmt", { err: e.message }), { error: true });
       }
     });
 
@@ -1300,12 +1388,29 @@ function setupConfigControls() {
   document
     .getElementById("config-quit-btn")
     .addEventListener("click", async () => {
-      if (!confirm("Quit Rusty Pipes?")) return;
+      if (!confirm(t("config_quit_confirm"))) return;
       try {
         await api.cfgQuit();
       } catch (e) {
         if (e.name === "AbortError") return;
-        toast(`Quit failed: ${e.message}`, { error: true });
+        toast(t("err_quit_fmt", { err: e.message }), { error: true });
+      }
+    });
+
+  // --- Language selector ---
+  document
+    .getElementById("config-language")
+    .addEventListener("change", async (e) => {
+      const code = e.target.value;
+      try {
+        await api.cfgSetLocale(code);
+        // Re-fetch translations and re-render dynamic text. Static
+        // `data-i18n` text is updated by applyStaticTranslations() which
+        // loadTranslations() calls.
+        await loadTranslations();
+        if (state.config) renderConfig();
+      } catch (err) {
+        toast(t("err_update_fmt", { err: err.message }), { error: true });
       }
     });
 }
@@ -1324,7 +1429,7 @@ function setStatus(state, label) {
 function scheduleReconnect() {
   if (wsCtrl.reconnectTimer) return;
   const secs = Math.ceil(wsCtrl.reconnectDelay / 1000);
-  setStatus("reconnecting", `Reconnecting in ${secs}s…`);
+  setStatus("reconnecting", t("status_reconnecting_fmt", { secs }));
   wsCtrl.reconnectTimer = setTimeout(() => {
     wsCtrl.reconnectTimer = null;
     connectWebSocket();
@@ -1404,7 +1509,7 @@ function connectWebSocket() {
     return;
   }
   wsCtrl.ws = ws;
-  setStatus("connecting", "Connecting…");
+  setStatus("connecting", t("status_connecting"));
 
   ws.addEventListener("open", () => {
     if (ws !== wsCtrl.ws) return;
@@ -1412,7 +1517,12 @@ function connectWebSocket() {
     wsCtrl.reconnectDelay = WS_DELAY_MIN;
     wsCtrl.abortController = new AbortController();
     stopModeProbe();
-    setStatus("connected", "Connected");
+    setStatus("connected", t("status_connected"));
+    // Re-fetch translations on every reconnect: the active locale and
+    // string set are the same across config/play servers in this build,
+    // but a future build that allows changing the locale at runtime would
+    // benefit from the refresh.
+    loadTranslations().catch(() => {});
     // The mode might have changed since we last connected (config →
     // play after Start). Re-detect and reload the appropriate state.
     detectMode().then((m) => {
@@ -1462,11 +1572,17 @@ document.addEventListener("visibilitychange", () => {
 function handleWsMessage(msg) {
   switch (msg.type) {
     case "Refetch":
-      if (state.mode === "play") {
-        refetchAllPlay();
-      } else if (state.mode === "config") {
-        refetchAllConfig();
-      }
+      // Reload translations too — covers the case where another client
+      // changed the active locale and we need to pick up the new strings.
+      loadTranslations()
+        .catch(() => {})
+        .finally(() => {
+          if (state.mode === "play") {
+            refetchAllPlay();
+          } else if (state.mode === "config") {
+            refetchAllConfig();
+          }
+        });
       break;
     case "StopsChanged":
       loadStops().catch(() => {});
@@ -1493,7 +1609,7 @@ function handleWsMessage(msg) {
       // (2) Play server → play server (organ reload)
       // (3) Config server → exit (we clicked Quit)
       // In all cases: abort fetches, set "unknown" mode until reconnect.
-      toast("Reloading…");
+      toast(t("toast_reloading"));
       setMode("unknown");
       if (wsCtrl.abortController) {
         try {
@@ -1531,6 +1647,9 @@ function refetchAllConfig() {
 // Init
 // =============================================================================
 async function init() {
+  // Load translations first so subsequent setup uses the localized strings.
+  await loadTranslations();
+
   setupTabs();
   setupConfigTabs();
   setupChannelSelect();

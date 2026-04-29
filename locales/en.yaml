@@ -305,3 +305,185 @@ organ_manager:
   description: "Manage your installed virtual pipe organs and learn SYSEX commands to switch between them."
   add_organ: "Add Organ"
   load: "Load Organ"
+
+web:
+  # Topbar
+  topbar_config: "Configuration"
+  topbar_panic: "PANIC"
+  status_connecting: "Connecting…"
+  status_connected: "Connected"
+  status_reconnecting_fmt: "Reconnecting in %{secs}s…"
+
+  # Play-mode tabs
+  tab_presets: "Presets"
+  tab_stops: "Stops"
+  tab_tremulants: "Tremulants"
+  tab_audio: "Audio"
+  tab_recording: "Recording"
+  tab_organs: "Organs"
+
+  # Config-mode tabs
+  config_tab_organ: "Organ"
+  config_tab_audio: "Audio"
+  config_tab_midi: "MIDI"
+  config_tab_advanced: "Advanced"
+
+  # Panel headers / hints
+  presets_hint: "Tap a preset to load. Long-press (or right-click) to save or learn a MIDI trigger."
+  stops_channel_label: "Channel:"
+  stops_channel_hint: "All toggle actions affect this channel."
+  channel_fmt: "Channel %{num}"
+  default_division_heading: "Stops"
+  tremulants_hint: "Tap to toggle. Long-press to learn an enable/disable trigger."
+  no_tremulants: "This organ has no tremulants."
+
+  # Audio panel
+  audio_master_gain: "Master Gain"
+  audio_polyphony: "Polyphony"
+  audio_reverb_heading: "Reverb"
+  audio_ir_label: "Impulse Response:"
+  audio_mix_label: "Mix:"
+  reverb_disabled: "(disabled)"
+
+  # Recording panel
+  rec_midi_start: "● Start MIDI Recording"
+  rec_midi_stop: "■ Stop MIDI Recording"
+  rec_audio_start: "● Start Audio Recording"
+  rec_audio_stop: "■ Stop Audio Recording"
+  rec_midi_hint: "Saves a .mid file alongside settings on stop."
+  rec_audio_hint: "Saves a stereo .wav file on stop."
+
+  # Organ list
+  organs_hint: "Tap an organ to load it. The application will reload, briefly disconnecting the web UI."
+  organs_none: "No organs in library."
+  organ_badge_current: "Current"
+  organ_already_loaded_fmt: "%{name} is already loaded"
+  organ_load_confirm_fmt: "Load \"%{name}\"? The application will reload — playing notes will stop and the web UI will briefly disconnect."
+  organ_loading_fmt: "Loading %{name}…"
+
+  # Config: Organ tab
+  config_select_organ_heading: "Select Organ"
+  config_select_organ_hint: "Pick an organ from the library, then click Start to load it."
+  config_organs_empty: "No organs in the library yet. Use the desktop application to add organs."
+  config_btn_start: "▶ Start"
+  config_btn_quit: "Quit"
+  config_btn_rescan: "↻ Rescan"
+  config_warn_no_organ: "Select an organ first."
+  config_organ_badge_selected: "Selected"
+  config_selected_fmt: "Selected %{name}"
+  config_quit_confirm: "Quit Rusty Pipes?"
+
+  # Config: Audio tab
+  config_audio_device_heading: "Output Device"
+  config_audio_device_default: "[ System Default ]"
+  config_sample_rate_heading: "Sample Rate"
+  config_sample_rate_hint: "Available rates depend on the selected device."
+  config_reverb_heading: "Reverb (Impulse Response)"
+  config_reverb_none: "(no reverb)"
+
+  # Config: MIDI tab
+  config_midi_heading: "MIDI Inputs"
+  config_midi_hint: "Enable devices and configure how their channels map to internal channels."
+  config_midi_none: "No MIDI input devices detected. Plug in a device and click Rescan."
+  config_midi_map_button: "Channel mapping…"
+  config_midi_summary_simple_fmt: "Simple mapping → all input channels → channel %{num}"
+  config_midi_summary_complex_default: "Complex mapping (1:1, default)"
+  config_midi_summary_complex_fmt: "Complex mapping: %{notes}"
+  config_midi_rescan_done: "MIDI ports rescanned"
+
+  # Config: Advanced tab
+  config_advanced_heading: "Advanced"
+  config_buffer_heading: "Audio Buffer Size (frames)"
+  config_buffer_hint: "Lower values reduce latency but may cause glitches."
+  config_max_ram_heading: "Maximum RAM (GB)"
+  config_max_ram_hint: 'RAM budget for sample preloading. Disabled when "Pre-cache all" is on.'
+  config_options_heading: "Loading Options"
+  config_chk_precache: "Pre-cache all samples on startup"
+  config_chk_convert: "Convert all samples to 16-bit PCM"
+  config_chk_tuning: "Preserve original sample (de)tuning"
+
+  # Modal: channel mapping
+  midi_modal_title: "Channel Mapping"
+  midi_modal_title_fmt: "Channel Mapping — %{name}"
+  midi_modal_mode_simple: "Simple (all → one channel)"
+  midi_modal_mode_complex: "Complex (per-channel)"
+  midi_modal_target_label: "Target channel:"
+  midi_modal_complex_hint: "Map each input channel to an internal channel."
+  midi_modal_input_fmt: "In %{num}"
+  midi_modal_done: "Done"
+
+  # Modal: save preset
+  modal_save_preset_title: "Save Preset"
+  modal_save_preset_slot_label: "Slot"
+  modal_save_preset_placeholder: "Preset name"
+  modal_btn_cancel: "Cancel"
+  modal_btn_save: "Save"
+  modal_btn_close: "Close"
+
+  # Modal: preset actions
+  modal_preset_title_fmt: "Preset F%{num}"
+  modal_preset_title_named_fmt: "Preset F%{num} — %{name}"
+  preset_action_load: "Load"
+  preset_action_save: "Save current to this slot…"
+  preset_action_learn: "MIDI Learn trigger"
+  preset_action_clear: "Clear MIDI binding"
+  preset_empty: "(empty)"
+
+  # Modal: stop actions
+  modal_stop_title: "Stop"
+  stop_actions_channel_fmt: "Channel %{num}"
+  stop_action_learn_enable: "MIDI Learn — Enable"
+  stop_action_learn_disable: "MIDI Learn — Disable"
+  stop_action_clear: "Clear MIDI bindings"
+
+  # Modal: tremulant actions
+  modal_tremulant_title: "Tremulant"
+  trem_action_learn_enable: "MIDI Learn — Enable"
+  trem_action_learn_disable: "MIDI Learn — Disable"
+  trem_action_clear: "Clear MIDI bindings"
+
+  # Modal: MIDI learn
+  modal_learn_title: "MIDI Learn"
+  learn_waiting: "Waiting for MIDI event…"
+  learn_done: "Learned ✓"
+  learn_timed_out: "Timed out — no MIDI event received."
+
+  # Toasts
+  toast_loaded_fmt: "Loaded %{name}"
+  toast_saved_fmt: "Saved as %{name}"
+  toast_panic: "Panic — all notes off"
+  toast_loading_organ: "Loading organ…"
+  toast_reloading: "Reloading…"
+  toast_rec_midi_started: "MIDI recording started"
+  toast_rec_midi_saved: "MIDI recording saved"
+  toast_rec_audio_started: "Audio recording started"
+  toast_rec_audio_saved: "Audio recording saved"
+  toast_cleared_stop_fmt: "Cleared bindings for %{name} ch %{num}"
+  toast_cleared_tremulant_fmt: "Cleared bindings for %{name}"
+  toast_cleared_preset_fmt: "Cleared MIDI binding for F%{num}"
+  toast_learned_fmt: "Learned: %{event}"
+
+  # Toast errors
+  err_stop_toggle_fmt: "Stop toggle failed: %{err}"
+  err_load_fmt: "Load failed: %{err}"
+  err_save_fmt: "Save failed: %{err}"
+  err_clear_fmt: "Clear failed: %{err}"
+  err_tremulant_fmt: "Tremulant toggle failed: %{err}"
+  err_recording_fmt: "Recording failed: %{err}"
+  err_panic_fmt: "Panic failed: %{err}"
+  err_learn_fmt: "Learn failed: %{err}"
+  err_gain_fmt: "Gain failed: %{err}"
+  err_polyphony_fmt: "Polyphony failed: %{err}"
+  err_reverb_fmt: "Reverb failed: %{err}"
+  err_mix_fmt: "Mix failed: %{err}"
+  err_audio_device_fmt: "Audio device failed: %{err}"
+  err_sample_rate_fmt: "Sample rate failed: %{err}"
+  err_ir_file_fmt: "IR file failed: %{err}"
+  err_buffer_fmt: "Buffer failed: %{err}"
+  err_ram_fmt: "RAM failed: %{err}"
+  err_update_fmt: "Update failed: %{err}"
+  err_rescan_fmt: "Rescan failed: %{err}"
+  err_start_fmt: "Start failed: %{err}"
+  err_quit_fmt: "Quit failed: %{err}"
+  err_selection_fmt: "Selection failed: %{err}"
+
