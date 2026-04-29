@@ -12,9 +12,14 @@ use tokio::sync::broadcast;
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::app::{AppMessage, MainLoopAction, WsMessage};
+use crate::app::{AppMessage, LoadingState, MainLoopAction, WsMessage};
 use crate::app_state::{AppState, WebLearnSession, WebLearnTarget};
-use crate::config::{self, MidiEventSpec, load_organ_library};
+use crate::audio::get_supported_sample_rates;
+use crate::config::{
+    self, ConfigShared, MidiDeviceConfig, MidiEventSpec, MidiMappingMode, OrganProfile,
+    load_organ_library,
+};
+use crate::gui_config::build_runtime_config;
 
 /// A handle that controls the lifecycle of the API Server.
 /// When this struct is dropped, the server shuts down and the background thread exits.
@@ -177,18 +182,91 @@ pub struct TremulantSetRequest {
 }
 
 // --- Shared State ---
+//
+// The server lives for the entire program lifetime. Its `mode` switches as
+// the application transitions Idle → Config → (loading) → Play → (loading) →
+// Play …, and each handler short-circuits with 503 when called in the wrong
+// mode. WebSocket connections persist across mode changes so the loading
+// modal can be driven through every transition.
 
-struct ApiData {
-    app_state: Arc<Mutex<AppState>>,
-    audio_tx: Sender<AppMessage>,
-    // We need access to the exit action mutex to trigger organ reload
-    exit_action: Arc<Mutex<MainLoopAction>>,
-    reverb_files: Arc<Vec<(String, PathBuf)>>,
-    ws_tx: broadcast::Sender<WsMessage>,
+/// Snapshot of the per-mode context. `Idle` is the boot state, used during
+/// transitions and when no organ is loaded.
+pub enum Mode {
+    Idle,
+    Config(Arc<Mutex<ConfigShared>>),
+    Play(PlayContext),
+}
+
+/// All the play-mode resources captured by play-only handlers. Cloning is
+/// cheap because every field is either an `Arc` or an `mpsc::Sender`.
+#[derive(Clone)]
+pub struct PlayContext {
+    pub app_state: Arc<Mutex<AppState>>,
+    pub audio_tx: Sender<AppMessage>,
+    pub exit_action: Arc<Mutex<MainLoopAction>>,
+    pub reverb_files: Arc<Vec<(String, PathBuf)>>,
+}
+
+pub struct ApiData {
+    pub mode: Arc<Mutex<Mode>>,
+    pub loading_state: Arc<Mutex<LoadingState>>,
+    pub ws_tx: broadcast::Sender<WsMessage>,
 }
 
 fn broadcast(data: &web::Data<ApiData>, msg: WsMessage) {
     let _ = data.ws_tx.send(msg);
+}
+
+/// Returns a cheap clone of the play-mode context, or `None` if the server
+/// is currently in another mode.
+fn get_play(data: &web::Data<ApiData>) -> Option<PlayContext> {
+    let mode = data.mode.lock().unwrap();
+    match &*mode {
+        Mode::Play(ctx) => Some(ctx.clone()),
+        _ => None,
+    }
+}
+
+fn get_config(data: &web::Data<ApiData>) -> Option<Arc<Mutex<ConfigShared>>> {
+    let mode = data.mode.lock().unwrap();
+    match &*mode {
+        Mode::Config(shared) => Some(Arc::clone(shared)),
+        _ => None,
+    }
+}
+
+/// Mode-name for the `/mode` endpoint.
+fn current_mode_name(data: &web::Data<ApiData>) -> &'static str {
+    let mode = data.mode.lock().unwrap();
+    match &*mode {
+        Mode::Idle => "idle",
+        Mode::Config(_) => "config",
+        Mode::Play(_) => "play",
+    }
+}
+
+macro_rules! require_play {
+    ($data:expr) => {
+        match get_play(&$data) {
+            Some(p) => p,
+            None => {
+                return HttpResponse::ServiceUnavailable()
+                    .body("Server is not currently in play mode");
+            }
+        }
+    };
+}
+
+macro_rules! require_config {
+    ($data:expr) => {
+        match get_config(&$data) {
+            Some(c) => c,
+            None => {
+                return HttpResponse::ServiceUnavailable()
+                    .body("Server is not currently in configuration mode");
+            }
+        }
+    };
 }
 
 // --- OpenAPI Documentation ---
@@ -260,8 +338,8 @@ async fn index() -> impl Responder {
 
 /// Returns the server's current operating mode. The web UI uses this to
 /// decide whether to render the configuration view or the play view.
-async fn mode() -> impl Responder {
-    HttpResponse::Ok().json(serde_json::json!({"mode": "play"}))
+async fn get_mode(data: web::Data<ApiData>) -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({"mode": current_mode_name(&data)}))
 }
 
 /// Returns the active locale and the dictionary of translated strings used
@@ -276,7 +354,8 @@ async fn i18n() -> impl Responder {
     responses((status = 200, body = OrganInfoResponse))
 )]
 async fn get_organ_info(data: web::Data<ApiData>) -> impl Responder {
-    let state = data.app_state.lock().unwrap();
+    let play = require_play!(data);
+    let state = play.app_state.lock().unwrap();
     HttpResponse::Ok().json(OrganInfoResponse {
         name: state.organ.name.clone(),
     })
@@ -317,13 +396,13 @@ async fn get_organ_library() -> impl Responder {
     )
 )]
 async fn load_organ(body: web::Json<LoadOrganRequest>, data: web::Data<ApiData>) -> impl Responder {
+    let play = require_play!(data);
     let target_path_str = &body.path;
     let lib = match load_organ_library() {
         Ok(l) => l,
         Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
     };
 
-    // Verify the path exists in the library (security + validation)
     let found = lib
         .organs
         .iter()
@@ -332,25 +411,17 @@ async fn load_organ(body: web::Json<LoadOrganRequest>, data: web::Data<ApiData>)
     if let Some(profile) = found {
         log::info!("API: Requesting reload of organ: {}", profile.name);
 
-        // Tell every connected web client the server is about to restart
-        // BEFORE we start shutting things down. The WS tasks will forward
-        // this frame and then close their sessions, so the clients see
-        // the close event promptly and begin reconnecting. By the time
-        // they successfully reconnect, they'll be talking to the new
-        // server (with the new organ's state).
-        broadcast(&data, WsMessage::ServerRestarting);
-
-        // Give the async WS tasks a moment to flush the ServerRestarting
-        // frame and close their sessions before the main thread tears
-        // down. Without this, the tasks can be cancelled mid-send.
-        actix_web::rt::time::sleep(Duration::from_millis(100)).await;
+        // Now that the API server is long-lived (a single instance covers
+        // the entire program lifetime), reloading no longer involves a
+        // WebSocket close. The web UI shows the loading modal in response
+        // to LoadingProgress events broadcast by the loader thread.
 
         // Signal the main loop to reload
-        *data.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan {
+        *play.exit_action.lock().unwrap() = MainLoopAction::ReloadOrgan {
             file: profile.path.clone(),
         };
 
-        let _ = data.audio_tx.send(AppMessage::Quit);
+        let _ = play.audio_tx.send(AppMessage::Quit);
 
         HttpResponse::Ok().json(serde_json::json!({"status": "reloading", "organ": profile.name}))
     } else {
@@ -364,10 +435,10 @@ async fn load_organ(body: web::Json<LoadOrganRequest>, data: web::Data<ApiData>)
     responses((status = 200, description = "Panic executed"))
 )]
 async fn panic(data: web::Data<ApiData>) -> impl Responder {
-    let mut state = data.app_state.lock().unwrap();
+    let play = require_play!(data);
+    let mut state = play.app_state.lock().unwrap();
 
-    // Send the signal to the audio engine
-    let _ = data.audio_tx.send(AppMessage::AllNotesOff);
+    let _ = play.audio_tx.send(AppMessage::AllNotesOff);
 
     state.add_midi_log("API: Executed Panic (All Notes Off)".into());
     HttpResponse::Ok().json(serde_json::json!({"status": "success"}))
@@ -379,7 +450,8 @@ async fn panic(data: web::Data<ApiData>) -> impl Responder {
     responses((status = 200, body = Vec<StopStatusResponse>))
 )]
 async fn get_stops(data: web::Data<ApiData>) -> impl Responder {
-    let state = data.app_state.lock().unwrap();
+    let play = require_play!(data);
+    let state = play.app_state.lock().unwrap();
     let mut response_list = Vec::with_capacity(state.organ.stops.len());
 
     for (i, stop) in state.organ.stops.iter().enumerate() {
@@ -428,17 +500,18 @@ async fn update_stop_channel(
     body: web::Json<ChannelUpdateRequest>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
+    let play = require_play!(data);
     let (stop_index, channel_id) = path.into_inner();
     if channel_id > 15 {
         return HttpResponse::BadRequest().body("Channel ID > 15");
     }
 
-    let mut state = data.app_state.lock().unwrap();
+    let mut state = play.app_state.lock().unwrap();
     if stop_index >= state.organ.stops.len() {
         return HttpResponse::NotFound().finish();
     }
 
-    match state.set_stop_channel_state(stop_index, channel_id, body.active, &data.audio_tx) {
+    match state.set_stop_channel_state(stop_index, channel_id, body.active, &play.audio_tx) {
         Ok(_) => {
             let action = if body.active { "Enabled" } else { "Disabled" };
             state.add_midi_log(format!(
@@ -462,13 +535,14 @@ async fn update_stop_channel(
     responses((status = 200), (status = 404))
 )]
 async fn load_preset(path: web::Path<usize>, data: web::Data<ApiData>) -> impl Responder {
+    let play = require_play!(data);
     let slot_id = path.into_inner();
     if !(1..=12).contains(&slot_id) {
         return HttpResponse::BadRequest().body("Invalid slot");
     }
 
-    let mut state = data.app_state.lock().unwrap();
-    match state.recall_preset(slot_id - 1, &data.audio_tx) {
+    let mut state = play.app_state.lock().unwrap();
+    match state.recall_preset(slot_id - 1, &play.audio_tx) {
         Ok(_) => {
             if state.presets[slot_id - 1].is_some() {
                 state.add_midi_log(format!("API: Loaded Preset F{}", slot_id));
@@ -495,12 +569,13 @@ async fn save_preset(
     body: web::Json<PresetSaveRequest>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
+    let play = require_play!(data);
     let slot_id = path.into_inner();
     if !(1..=12).contains(&slot_id) {
         return HttpResponse::BadRequest().body("Invalid slot");
     }
 
-    let mut state = data.app_state.lock().unwrap();
+    let mut state = play.app_state.lock().unwrap();
     state.save_preset(slot_id - 1, body.name.clone());
     state.add_midi_log(format!("API: Saved Preset F{} as '{}'", slot_id, body.name));
     HttpResponse::Ok().json(serde_json::json!({ "status": "success" }))
@@ -514,7 +589,8 @@ async fn save_preset(
     responses((status = 200, body = AudioSettingsResponse))
 )]
 async fn get_audio_settings(data: web::Data<ApiData>) -> impl Responder {
-    let state = data.app_state.lock().unwrap();
+    let play = require_play!(data);
+    let state = play.app_state.lock().unwrap();
     let resp = AudioSettingsResponse {
         gain: state.gain,
         polyphony: state.polyphony,
@@ -533,10 +609,11 @@ async fn get_audio_settings(data: web::Data<ApiData>) -> impl Responder {
     responses((status = 200))
 )]
 async fn set_gain(body: web::Json<ValueRequest>, data: web::Data<ApiData>) -> impl Responder {
+    let play = require_play!(data);
     let gain = {
-        let mut state = data.app_state.lock().unwrap();
+        let mut state = play.app_state.lock().unwrap();
         state.gain = body.value.clamp(0.0, 2.0);
-        let _ = data.audio_tx.send(AppMessage::SetGain(state.gain));
+        let _ = play.audio_tx.send(AppMessage::SetGain(state.gain));
         state.persist_settings();
         state.gain
     };
@@ -551,10 +628,11 @@ async fn set_gain(body: web::Json<ValueRequest>, data: web::Data<ApiData>) -> im
     responses((status = 200))
 )]
 async fn set_polyphony(body: web::Json<ValueRequest>, data: web::Data<ApiData>) -> impl Responder {
+    let play = require_play!(data);
     let polyphony = {
-        let mut state = data.app_state.lock().unwrap();
+        let mut state = play.app_state.lock().unwrap();
         state.polyphony = (body.value as usize).max(1);
-        let _ = data
+        let _ = play
             .audio_tx
             .send(AppMessage::SetPolyphony(state.polyphony));
         state.persist_settings();
@@ -574,15 +652,16 @@ async fn start_stop_midi_recording(
     body: web::Json<ChannelUpdateRequest>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
+    let play = require_play!(data);
     let active = body.active;
     {
-        let mut state = data.app_state.lock().unwrap();
+        let mut state = play.app_state.lock().unwrap();
         state.is_recording_midi = active;
         if active {
-            let _ = data.audio_tx.send(AppMessage::StartMidiRecording);
+            let _ = play.audio_tx.send(AppMessage::StartMidiRecording);
             state.add_midi_log("API: Started MIDI Recording".into());
         } else {
-            let _ = data.audio_tx.send(AppMessage::StopMidiRecording);
+            let _ = play.audio_tx.send(AppMessage::StopMidiRecording);
             state.add_midi_log("API: Stopped MIDI Recording".into());
         }
     }
@@ -600,15 +679,16 @@ async fn start_stop_audio_recording(
     body: web::Json<ChannelUpdateRequest>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
+    let play = require_play!(data);
     let active = body.active;
     {
-        let mut state = data.app_state.lock().unwrap();
+        let mut state = play.app_state.lock().unwrap();
         state.is_recording_audio = active;
         if active {
-            let _ = data.audio_tx.send(AppMessage::StartAudioRecording);
+            let _ = play.audio_tx.send(AppMessage::StartAudioRecording);
             state.add_midi_log("API: Started Audio Recording".into());
         } else {
-            let _ = data.audio_tx.send(AppMessage::StopAudioRecording);
+            let _ = play.audio_tx.send(AppMessage::StopAudioRecording);
             state.add_midi_log("API: Stopped Audio Recording".into());
         }
     }
@@ -622,7 +702,8 @@ async fn start_stop_audio_recording(
     responses((status = 200, body = Vec<ReverbEntry>))
 )]
 async fn get_reverbs(data: web::Data<ApiData>) -> impl Responder {
-    let list: Vec<ReverbEntry> = data
+    let play = require_play!(data);
+    let list: Vec<ReverbEntry> = play
         .reverb_files
         .iter()
         .enumerate()
@@ -641,13 +722,14 @@ async fn get_reverbs(data: web::Data<ApiData>) -> impl Responder {
     responses((status = 200))
 )]
 async fn set_reverb(body: web::Json<ReverbRequest>, data: web::Data<ApiData>) -> impl Responder {
+    let play = require_play!(data);
     let idx = body.index;
 
     if idx < 0 {
         {
-            let mut state = data.app_state.lock().unwrap();
+            let mut state = play.app_state.lock().unwrap();
             state.selected_reverb_index = None;
-            let _ = data.audio_tx.send(AppMessage::SetReverbWetDry(0.0));
+            let _ = play.audio_tx.send(AppMessage::SetReverbWetDry(0.0));
             state.persist_settings();
         }
         broadcast(&data, WsMessage::AudioChanged);
@@ -655,16 +737,16 @@ async fn set_reverb(body: web::Json<ReverbRequest>, data: web::Data<ApiData>) ->
     }
 
     let u_idx = idx as usize;
-    if u_idx >= data.reverb_files.len() {
+    if u_idx >= play.reverb_files.len() {
         return HttpResponse::BadRequest().body("Invalid reverb index");
     }
 
-    let (name, path) = &data.reverb_files[u_idx];
+    let (name, path) = &play.reverb_files[u_idx];
     {
-        let mut state = data.app_state.lock().unwrap();
+        let mut state = play.app_state.lock().unwrap();
         state.selected_reverb_index = Some(u_idx);
-        let _ = data.audio_tx.send(AppMessage::SetReverbIr(path.clone()));
-        let _ = data
+        let _ = play.audio_tx.send(AppMessage::SetReverbIr(path.clone()));
+        let _ = play
             .audio_tx
             .send(AppMessage::SetReverbWetDry(state.reverb_mix));
         state.persist_settings();
@@ -685,10 +767,11 @@ async fn set_reverb_mix(
     body: web::Json<ReverbMixRequest>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
+    let play = require_play!(data);
     let mix = {
-        let mut state = data.app_state.lock().unwrap();
+        let mut state = play.app_state.lock().unwrap();
         state.reverb_mix = body.mix.clamp(0.0, 1.0);
-        let _ = data
+        let _ = play
             .audio_tx
             .send(AppMessage::SetReverbWetDry(state.reverb_mix));
         state.persist_settings();
@@ -704,7 +787,8 @@ async fn set_reverb_mix(
     responses((status = 200, body = Vec<TremulantResponse>))
 )]
 async fn get_tremulants(data: web::Data<ApiData>) -> impl Responder {
-    let state = data.app_state.lock().unwrap();
+    let play = require_play!(data);
+    let state = play.app_state.lock().unwrap();
     let mut list = Vec::new();
 
     let mut trem_ids: Vec<_> = state.organ.tremulants.keys().collect();
@@ -736,14 +820,15 @@ async fn set_tremulant(
     body: web::Json<TremulantSetRequest>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
+    let play = require_play!(data);
     let trem_id = path.into_inner();
-    let mut state = data.app_state.lock().unwrap();
+    let mut state = play.app_state.lock().unwrap();
 
     if !state.organ.tremulants.contains_key(&trem_id) {
         return HttpResponse::NotFound().body("Tremulant ID not found");
     }
 
-    state.set_tremulant_active(trem_id.clone(), body.active, &data.audio_tx);
+    state.set_tremulant_active(trem_id.clone(), body.active, &play.audio_tx);
 
     let action = if body.active { "Enabled" } else { "Disabled" };
     state.add_midi_log(format!("API: {} Tremulant '{}'", action, trem_id));
@@ -757,7 +842,8 @@ async fn set_tremulant(
     responses((status = 200, body = Vec<PresetSlotResponse>))
 )]
 async fn get_presets(data: web::Data<ApiData>) -> impl Responder {
-    let state = data.app_state.lock().unwrap();
+    let play = require_play!(data);
+    let state = play.app_state.lock().unwrap();
     let last_loaded = state.last_recalled_preset_slot;
     let mut list = Vec::with_capacity(state.presets.len());
     for (i, slot) in state.presets.iter().enumerate() {
@@ -804,7 +890,8 @@ async fn midi_learn_start(
     body: web::Json<MidiLearnStartRequest>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
-    let mut state = data.app_state.lock().unwrap();
+    let play = require_play!(data);
+    let mut state = play.app_state.lock().unwrap();
 
     let (target, target_name) = match body.target.as_str() {
         "stop" => {
@@ -968,8 +1055,9 @@ fn tick_learn_session(state: &mut AppState) -> Option<MidiLearnStatusResponse> {
     responses((status = 200, body = MidiLearnStatusResponse))
 )]
 async fn midi_learn_status(data: web::Data<ApiData>) -> impl Responder {
+    let play = require_play!(data);
     let resp = {
-        let mut state = data.app_state.lock().unwrap();
+        let mut state = play.app_state.lock().unwrap();
         if let Some(transitioned) = tick_learn_session(&mut state) {
             transitioned
         } else if let Some(s) = &state.web_learn_session {
@@ -1015,11 +1103,12 @@ async fn clear_stop_binding(
     path: web::Path<(usize, u8)>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
+    let play = require_play!(data);
     let (stop_index, channel) = path.into_inner();
     if channel > 15 {
         return HttpResponse::BadRequest().body("Channel ID > 15");
     }
-    let mut state = data.app_state.lock().unwrap();
+    let mut state = play.app_state.lock().unwrap();
     state.midi_control_map.clear_stop(stop_index, channel);
     let organ_name = state.organ.name.clone();
     let _ = state.midi_control_map.save(&organ_name);
@@ -1041,8 +1130,9 @@ async fn clear_tremulant_binding(
     path: web::Path<String>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
+    let play = require_play!(data);
     let trem_id = path.into_inner();
-    let mut state = data.app_state.lock().unwrap();
+    let mut state = play.app_state.lock().unwrap();
     state.midi_control_map.clear_tremulant(&trem_id);
     let organ_name = state.organ.name.clone();
     let _ = state.midi_control_map.save(&organ_name);
@@ -1060,11 +1150,12 @@ async fn clear_preset_binding(
     path: web::Path<usize>,
     data: web::Data<ApiData>,
 ) -> impl Responder {
+    let play = require_play!(data);
     let slot = path.into_inner();
     if !(1..=12).contains(&slot) {
         return HttpResponse::BadRequest().body("Invalid slot");
     }
-    let mut state = data.app_state.lock().unwrap();
+    let mut state = play.app_state.lock().unwrap();
     state.midi_control_map.clear_preset(slot - 1);
     let organ_name = state.organ.name.clone();
     let _ = state.midi_control_map.save(&organ_name);
@@ -1078,8 +1169,9 @@ async fn clear_preset_binding(
     responses((status = 200))
 )]
 async fn midi_learn_cancel(data: web::Data<ApiData>) -> impl Responder {
+    let play = require_play!(data);
     {
-        let mut state = data.app_state.lock().unwrap();
+        let mut state = play.app_state.lock().unwrap();
         state.web_learn_session = None;
     }
     broadcast(
@@ -1093,6 +1185,590 @@ async fn midi_learn_cancel(data: web::Data<ApiData>) -> impl Responder {
     HttpResponse::Ok().json(serde_json::json!({"status": "cancelled"}))
 }
 
+// =========================================================================
+// CONFIG-MODE HANDLERS
+// =========================================================================
+// These handlers are mirrors of the former api_config.rs endpoints. Each
+// requires the server to be in `Mode::Config(...)`; otherwise it returns
+// 503 Service Unavailable.
+
+// --- Config response/request models ---
+
+#[derive(Serialize)]
+struct ConfigStateResponse {
+    settings: crate::config::AppSettings,
+    midi_file: Option<String>,
+    available_audio_devices: Vec<String>,
+    selected_audio_device_name: Option<String>,
+    available_sample_rates: Vec<u32>,
+    available_ir_files: Vec<ConfigIrFileEntry>,
+    system_midi_ports: Vec<ConfigMidiPortEntry>,
+    organ_library: Vec<ConfigOrganLibraryEntry>,
+    last_used_organ: Option<String>,
+    error_msg: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ConfigIrFileEntry {
+    name: String,
+    path: String,
+}
+
+#[derive(Serialize)]
+struct ConfigMidiPortEntry {
+    name: String,
+}
+
+#[derive(Serialize)]
+struct ConfigOrganLibraryEntry {
+    name: String,
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct ConfigAudioDeviceRequest {
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ConfigSampleRateRequest {
+    rate: u32,
+}
+
+#[derive(Deserialize)]
+struct ConfigIrFileRequest {
+    path: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ConfigOrganRequest {
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct ConfigAudioSettingsRequest {
+    gain: Option<f32>,
+    polyphony: Option<usize>,
+    reverb_mix: Option<f32>,
+    audio_buffer_frames: Option<usize>,
+    max_ram_gb: Option<f32>,
+    precache: Option<bool>,
+    convert_to_16bit: Option<bool>,
+    original_tuning: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct ConfigMidiDeviceUpdateRequest {
+    name: String,
+    enabled: Option<bool>,
+    mapping_mode: Option<String>,
+    simple_target_channel: Option<u8>,
+    complex_mapping: Option<Vec<u8>>,
+}
+
+#[derive(Deserialize)]
+struct ConfigLocaleRequest {
+    locale: String,
+}
+
+#[derive(Deserialize)]
+struct BrowseQuery {
+    path: Option<String>,
+    exts: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BrowseEntry {
+    name: String,
+    path: String,
+    is_dir: bool,
+    size: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct BrowseResponse {
+    current_path: String,
+    parent_path: Option<String>,
+    entries: Vec<BrowseEntry>,
+}
+
+#[derive(Deserialize)]
+struct AddOrganRequest {
+    path: String,
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RemoveOrganRequest {
+    path: String,
+}
+
+// --- Config handlers ---
+
+async fn get_config_state(data: web::Data<ApiData>) -> impl Responder {
+    let cfg = require_config!(data);
+    let s = cfg.lock().unwrap();
+    let st = &s.state;
+
+    let library = load_organ_library().unwrap_or_default();
+    let organ_library: Vec<ConfigOrganLibraryEntry> = library
+        .organs
+        .iter()
+        .map(|p: &OrganProfile| ConfigOrganLibraryEntry {
+            name: p.name.clone(),
+            path: p.path.to_string_lossy().to_string(),
+        })
+        .collect();
+
+    let last_used_organ = st
+        .settings
+        .organ_file
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
+
+    let resp = ConfigStateResponse {
+        settings: st.settings.clone(),
+        midi_file: st.midi_file.as_ref().map(|p| p.to_string_lossy().to_string()),
+        available_audio_devices: st.available_audio_devices.clone(),
+        selected_audio_device_name: st.selected_audio_device_name.clone(),
+        available_sample_rates: st.available_sample_rates.clone(),
+        available_ir_files: st
+            .available_ir_files
+            .iter()
+            .map(|(name, path)| ConfigIrFileEntry {
+                name: name.clone(),
+                path: path.to_string_lossy().to_string(),
+            })
+            .collect(),
+        system_midi_ports: st
+            .system_midi_ports
+            .iter()
+            .map(|(_, name)| ConfigMidiPortEntry { name: name.clone() })
+            .collect(),
+        organ_library,
+        last_used_organ,
+        error_msg: st.error_msg.clone(),
+    };
+    HttpResponse::Ok().json(resp)
+}
+
+async fn config_set_audio_device(
+    body: web::Json<ConfigAudioDeviceRequest>,
+    data: web::Data<ApiData>,
+) -> impl Responder {
+    let cfg = require_config!(data);
+    let mut s = cfg.lock().unwrap();
+    let st = &mut s.state;
+
+    if let Some(name) = body.name.clone() {
+        if !st.available_audio_devices.contains(&name) {
+            return HttpResponse::BadRequest().body("Unknown audio device");
+        }
+        st.selected_audio_device_name = Some(name);
+    } else {
+        st.selected_audio_device_name = None;
+    }
+
+    if let Ok(rates) = get_supported_sample_rates(st.selected_audio_device_name.clone()) {
+        st.available_sample_rates = rates;
+        if !st.available_sample_rates.contains(&st.settings.sample_rate) {
+            if let Some(&first) = st.available_sample_rates.first() {
+                st.settings.sample_rate = first;
+            }
+        }
+    }
+    s.revision = s.revision.wrapping_add(1);
+    drop(s);
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
+async fn config_set_sample_rate(
+    body: web::Json<ConfigSampleRateRequest>,
+    data: web::Data<ApiData>,
+) -> impl Responder {
+    let cfg = require_config!(data);
+    let mut s = cfg.lock().unwrap();
+    if !s.state.available_sample_rates.contains(&body.rate) {
+        return HttpResponse::BadRequest().body("Unsupported sample rate for selected device");
+    }
+    s.state.settings.sample_rate = body.rate;
+    s.revision = s.revision.wrapping_add(1);
+    drop(s);
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
+async fn config_set_ir_file(
+    body: web::Json<ConfigIrFileRequest>,
+    data: web::Data<ApiData>,
+) -> impl Responder {
+    let cfg = require_config!(data);
+    let mut s = cfg.lock().unwrap();
+    let st = &mut s.state;
+    match &body.path {
+        None => st.settings.ir_file = None,
+        Some(p) => {
+            let matched = st
+                .available_ir_files
+                .iter()
+                .find(|(_, path)| path.to_string_lossy() == *p)
+                .cloned();
+            if let Some((_, path)) = matched {
+                st.settings.ir_file = Some(path);
+            } else {
+                let path = PathBuf::from(p);
+                if !path.exists() || !path.is_file() {
+                    return HttpResponse::BadRequest().body("File not found");
+                }
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase());
+                let ok = matches!(ext.as_deref(), Some("wav") | Some("flac") | Some("mp3"));
+                if !ok {
+                    return HttpResponse::BadRequest().body("Unsupported IR file extension");
+                }
+                let name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Custom")
+                    .to_string();
+                if !st.available_ir_files.iter().any(|(_, p2)| p2 == &path) {
+                    st.available_ir_files.push((name, path.clone()));
+                }
+                st.settings.ir_file = Some(path);
+            }
+        }
+    }
+    s.revision = s.revision.wrapping_add(1);
+    drop(s);
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
+async fn config_set_organ(
+    body: web::Json<ConfigOrganRequest>,
+    data: web::Data<ApiData>,
+) -> impl Responder {
+    let cfg = require_config!(data);
+    let library = match load_organ_library() {
+        Ok(l) => l,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+    let profile = library
+        .organs
+        .iter()
+        .find(|o| o.path.to_string_lossy() == body.path);
+    let profile = match profile {
+        Some(p) => p,
+        None => return HttpResponse::NotFound().body("Organ not in library"),
+    };
+
+    let mut s = cfg.lock().unwrap();
+    s.state.settings.organ_file = Some(profile.path.clone());
+    s.revision = s.revision.wrapping_add(1);
+    drop(s);
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
+async fn config_set_audio_settings(
+    body: web::Json<ConfigAudioSettingsRequest>,
+    data: web::Data<ApiData>,
+) -> impl Responder {
+    let cfg = require_config!(data);
+    let mut s = cfg.lock().unwrap();
+    let st = &mut s.state.settings;
+    if let Some(v) = body.gain {
+        st.gain = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = body.polyphony {
+        st.polyphony = v.max(1);
+    }
+    if let Some(v) = body.reverb_mix {
+        st.reverb_mix = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = body.audio_buffer_frames {
+        st.audio_buffer_frames = v.clamp(32, 4096);
+    }
+    if let Some(v) = body.max_ram_gb {
+        st.max_ram_gb = v.max(0.0);
+    }
+    if let Some(v) = body.precache {
+        st.precache = v;
+    }
+    if let Some(v) = body.convert_to_16bit {
+        st.convert_to_16bit = v;
+    }
+    if let Some(v) = body.original_tuning {
+        st.original_tuning = v;
+    }
+    s.revision = s.revision.wrapping_add(1);
+    drop(s);
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
+async fn config_update_midi_device(
+    body: web::Json<ConfigMidiDeviceUpdateRequest>,
+    data: web::Data<ApiData>,
+) -> impl Responder {
+    let cfg = require_config!(data);
+    let mut s = cfg.lock().unwrap();
+    let dev = s
+        .state
+        .settings
+        .midi_devices
+        .iter_mut()
+        .find(|d| d.name == body.name);
+    let dev = match dev {
+        Some(d) => d,
+        None => {
+            s.state.settings.midi_devices.push(MidiDeviceConfig {
+                name: body.name.clone(),
+                enabled: false,
+                ..Default::default()
+            });
+            s.state.settings.midi_devices.last_mut().unwrap()
+        }
+    };
+
+    if let Some(v) = body.enabled {
+        dev.enabled = v;
+    }
+    if let Some(mode) = body.mapping_mode.as_deref() {
+        match mode {
+            "Simple" => dev.mapping_mode = MidiMappingMode::Simple,
+            "Complex" => dev.mapping_mode = MidiMappingMode::Complex,
+            _ => return HttpResponse::BadRequest().body("mapping_mode must be Simple or Complex"),
+        }
+    }
+    if let Some(ch) = body.simple_target_channel {
+        if ch > 15 {
+            return HttpResponse::BadRequest().body("simple_target_channel must be 0..=15");
+        }
+        dev.simple_target_channel = ch;
+    }
+    if let Some(map) = &body.complex_mapping {
+        if map.len() != 16 || map.iter().any(|&c| c > 15) {
+            return HttpResponse::BadRequest()
+                .body("complex_mapping must be a length-16 array with values 0..=15");
+        }
+        let mut arr = [0u8; 16];
+        arr.copy_from_slice(map);
+        dev.complex_mapping = arr;
+    }
+    s.revision = s.revision.wrapping_add(1);
+    drop(s);
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
+async fn config_rescan_midi(data: web::Data<ApiData>) -> impl Responder {
+    let cfg = require_config!(data);
+    let mut s = cfg.lock().unwrap();
+    if let Err(e) = s.rescan_midi_ports() {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+    drop(s);
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
+async fn config_start(data: web::Data<ApiData>) -> impl Responder {
+    let cfg = require_config!(data);
+    let mut s = cfg.lock().unwrap();
+    if s.state.settings.organ_file.is_none() {
+        return HttpResponse::BadRequest().body("No organ selected");
+    }
+    let rc = build_runtime_config(&s.state);
+    s.web_start_request = Some(rc);
+    s.revision = s.revision.wrapping_add(1);
+    HttpResponse::Ok().json(serde_json::json!({"status": "starting"}))
+}
+
+async fn config_quit(data: web::Data<ApiData>) -> impl Responder {
+    let cfg = require_config!(data);
+    let mut s = cfg.lock().unwrap();
+    s.web_quit_request = true;
+    s.revision = s.revision.wrapping_add(1);
+    HttpResponse::Ok().json(serde_json::json!({"status": "quitting"}))
+}
+
+async fn config_set_locale(
+    body: web::Json<ConfigLocaleRequest>,
+    data: web::Data<ApiData>,
+) -> impl Responder {
+    // Locale is a global setting, allowed in either mode for symmetry with
+    // the play UI (which currently has no language picker but might later).
+    let valid = crate::i18n_web::SUPPORTED_LANGUAGES
+        .iter()
+        .any(|(code, _, _)| *code == body.locale);
+    if !valid {
+        return HttpResponse::BadRequest().body("Unsupported locale");
+    }
+    rust_i18n::set_locale(&body.locale);
+    log::info!("Locale switched to {}", body.locale);
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok", "locale": body.locale}))
+}
+
+async fn config_browse(query: web::Query<BrowseQuery>) -> impl Responder {
+    let raw = query
+        .path
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    let path: PathBuf = match raw {
+        Some(p) => PathBuf::from(p),
+        None => dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
+    };
+
+    let path = match path.canonicalize() {
+        Ok(p) => p,
+        Err(e) => {
+            return HttpResponse::BadRequest().body(format!("Invalid path: {}", e));
+        }
+    };
+
+    if !path.is_dir() {
+        return HttpResponse::BadRequest().body("Path is not a directory");
+    }
+
+    let exts: Option<Vec<String>> = query.exts.as_deref().map(|s| {
+        s.split(',')
+            .map(|e| e.trim().trim_start_matches('.').to_lowercase())
+            .filter(|e| !e.is_empty())
+            .collect()
+    });
+
+    let mut entries: Vec<BrowseEntry> = Vec::new();
+    let read = match std::fs::read_dir(&path) {
+        Ok(rd) => rd,
+        Err(e) => {
+            return HttpResponse::InternalServerError()
+                .body(format!("Failed to read directory: {}", e));
+        }
+    };
+
+    for entry in read.flatten() {
+        let entry_path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') {
+            continue;
+        }
+        let metadata = match entry.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let is_dir = metadata.is_dir();
+        if !is_dir {
+            if let Some(ref filter_exts) = exts {
+                let ext = entry_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_lowercase());
+                let matches = ext.as_ref().is_some_and(|e| filter_exts.contains(e));
+                if !matches {
+                    continue;
+                }
+            }
+        }
+        entries.push(BrowseEntry {
+            name,
+            path: entry_path.to_string_lossy().to_string(),
+            is_dir,
+            size: if is_dir { None } else { Some(metadata.len()) },
+        });
+    }
+
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+
+    let parent_path = path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty());
+
+    HttpResponse::Ok().json(BrowseResponse {
+        current_path: path.to_string_lossy().to_string(),
+        parent_path,
+        entries,
+    })
+}
+
+async fn config_add_organ(
+    body: web::Json<AddOrganRequest>,
+    data: web::Data<ApiData>,
+) -> impl Responder {
+    let path = PathBuf::from(&body.path);
+    if !path.exists() || !path.is_file() {
+        return HttpResponse::BadRequest().body("File not found");
+    }
+    let mut library = match load_organ_library() {
+        Ok(l) => l,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+    if library.organs.iter().any(|o| o.path == path) {
+        return HttpResponse::Conflict().body("Organ already in library");
+    }
+    let name = body
+        .name
+        .clone()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| path.to_string_lossy().to_string())
+        });
+    library.organs.push(OrganProfile {
+        name,
+        path,
+        activation_trigger: None,
+    });
+    if let Err(e) = config::save_organ_library(&library) {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
+async fn config_remove_organ(
+    body: web::Json<RemoveOrganRequest>,
+    data: web::Data<ApiData>,
+) -> impl Responder {
+    let path = PathBuf::from(&body.path);
+    let mut library = match load_organ_library() {
+        Ok(l) => l,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
+    let before = library.organs.len();
+    library.organs.retain(|o| o.path != path);
+    if library.organs.len() == before {
+        return HttpResponse::NotFound().body("Organ not found in library");
+    }
+    if let Err(e) = config::save_organ_library(&library) {
+        return HttpResponse::InternalServerError().body(e.to_string());
+    }
+    // If we're in config mode and the removed organ was the selection,
+    // clear it so the user has to make a fresh choice.
+    if let Some(cfg) = get_config(&data) {
+        let mut s = cfg.lock().unwrap();
+        if s.state.settings.organ_file.as_ref() == Some(&path) {
+            s.state.settings.organ_file = None;
+        }
+        s.revision = s.revision.wrapping_add(1);
+    }
+    broadcast(&data, WsMessage::Refetch);
+    HttpResponse::Ok().json(serde_json::json!({"status": "ok"}))
+}
+
 // --- WebSocket ---
 
 /// WebSocket endpoint that streams state-change hints to the connected
@@ -1104,17 +1780,35 @@ async fn ws_handler(
 ) -> Result<HttpResponse, actix_web::Error> {
     let (response, mut session, mut msg_stream) = actix_ws::handle(&req, stream)?;
     let mut rx = data.ws_tx.subscribe();
+    // If a load is in flight, capture a snapshot to send right after Refetch
+    // so the freshly-connected client sees the loading modal immediately.
+    let initial_loading = {
+        let ls = data.loading_state.lock().unwrap();
+        if ls.active {
+            Some(WsMessage::LoadingProgress {
+                percent: ls.percent,
+                message: ls.message.clone(),
+            })
+        } else {
+            None
+        }
+    };
 
     actix_web::rt::spawn(async move {
         // Immediately tell this client to reload everything. This is the
-        // authoritative signal: "you're talking to the current server, the
-        // data behind the REST endpoints is whatever this server has now."
-        // Critical after an organ switch — the new server broadcasts this
-        // to every client that reconnects to it, so the UI refreshes even
-        // if an old in-flight fetch races with the reconnect.
+        // authoritative signal: "the data behind the REST endpoints is
+        // whatever the server has now." Sent on every new connection so
+        // reconnect-after-mode-change refreshes the UI cleanly.
         if let Ok(json) = serde_json::to_string(&WsMessage::Refetch) {
             if session.text(json).await.is_err() {
                 return;
+            }
+        }
+        if let Some(msg) = initial_loading {
+            if let Ok(json) = serde_json::to_string(&msg) {
+                if session.text(json).await.is_err() {
+                    return;
+                }
             }
         }
 
@@ -1135,19 +1829,14 @@ async fn ws_handler(
                 },
                 bcast = rx.recv() => match bcast {
                     Ok(msg) => {
-                        let is_restart = matches!(msg, WsMessage::ServerRestarting);
+                        // Server lives across mode changes now, so we no
+                        // longer treat ServerRestarting specially — the
+                        // client just hides the loading modal on
+                        // LoadingComplete or on a Refetch.
                         if let Ok(json) = serde_json::to_string(&msg) {
                             if session.text(json).await.is_err() {
                                 break;
                             }
-                        }
-                        if is_restart {
-                            // Close the session ourselves so the client
-                            // sees the close event quickly and reconnects,
-                            // instead of waiting for a network timeout
-                            // when the process exits.
-                            let _ = session.close(None).await;
-                            break;
                         }
                     }
                     // If we lagged, just keep going — the client refetches state.
@@ -1228,22 +1917,24 @@ async fn web_ui_js() -> impl Responder {
 
 // --- Server Launcher ---
 
+/// Start the unified API server. The server lives for the entire program
+/// lifetime; mode transitions are made by the caller writing into the
+/// `mode` mutex (and broadcasting `Refetch` so connected web clients
+/// re-discover the new mode).
 pub fn start_api_server(
-    app_state: Arc<Mutex<AppState>>,
-    audio_tx: Sender<AppMessage>,
-    port: u16,
-    exit_action: Arc<Mutex<MainLoopAction>>,
+    mode: Arc<Mutex<Mode>>,
+    loading_state: Arc<Mutex<LoadingState>>,
     ws_tx: broadcast::Sender<WsMessage>,
+    port: u16,
 ) -> ApiServerHandle {
-    let reverb_files = Arc::new(config::get_available_ir_files());
-
     // Background ticker: detects MIDI-learn captures driven by external MIDI
-    // input and broadcasts the transition to web clients. Exits when
-    // ApiServerHandle is dropped (e.g. on organ reload), which prevents
-    // stale tickers from leaking Arc<Mutex<AppState>> across reloads.
+    // input and broadcasts the transition to web clients. With the unified
+    // long-lived server, the ticker also lives for the program lifetime —
+    // when the server isn't in play mode it simply finds no app_state and
+    // sleeps.
     let ticker_stop = Arc::new(AtomicBool::new(false));
     {
-        let ticker_state = app_state.clone();
+        let ticker_mode = Arc::clone(&mode);
         let ticker_ws = ws_tx.clone();
         let ticker_stop = ticker_stop.clone();
         std::thread::spawn(move || {
@@ -1252,8 +1943,19 @@ pub fn start_api_server(
                 if ticker_stop.load(Ordering::Acquire) {
                     break;
                 }
+                // Pull a clone of the current play app_state if any, then
+                // drop the mode guard before locking app_state so we don't
+                // hold both locks at once.
+                let app_state = {
+                    let mode = ticker_mode.lock().unwrap();
+                    match &*mode {
+                        Mode::Play(ctx) => Some(Arc::clone(&ctx.app_state)),
+                        _ => None,
+                    }
+                };
+                let Some(app_state) = app_state else { continue };
                 let resp_opt = {
-                    let mut state = ticker_state.lock().unwrap();
+                    let mut state = app_state.lock().unwrap();
                     if state.web_learn_session.is_some() {
                         tick_learn_session(&mut state)
                     } else {
@@ -1279,10 +1981,8 @@ pub fn start_api_server(
         let sys = actix_web::rt::System::new();
 
         let server_data = web::Data::new(ApiData {
-            app_state,
-            audio_tx,
-            exit_action,
-            reverb_files,
+            mode,
+            loading_state,
             ws_tx,
         });
 
@@ -1302,7 +2002,7 @@ pub fn start_api_server(
                 .route("/ui/app.css", web::get().to(web_ui_css))
                 .route("/ui/app.js", web::get().to(web_ui_js))
                 // Mode discovery
-                .route("/mode", web::get().to(mode))
+                .route("/mode", web::get().to(get_mode))
                 .route("/i18n", web::get().to(i18n))
                 // Live updates
                 .route("/ws", web::get().to(ws_handler))
@@ -1349,6 +2049,33 @@ pub fn start_api_server(
                 .route(
                     "/midi-bindings/preset/{slot}",
                     web::delete().to(clear_preset_binding),
+                )
+                // Config-mode routes (return 503 outside config mode)
+                .route("/config", web::get().to(get_config_state))
+                .route("/config/audio-device", web::post().to(config_set_audio_device))
+                .route("/config/sample-rate", web::post().to(config_set_sample_rate))
+                .route("/config/ir-file", web::post().to(config_set_ir_file))
+                .route("/config/organ", web::post().to(config_set_organ))
+                .route(
+                    "/config/audio-settings",
+                    web::post().to(config_set_audio_settings),
+                )
+                .route(
+                    "/config/midi-device",
+                    web::post().to(config_update_midi_device),
+                )
+                .route("/config/midi/rescan", web::post().to(config_rescan_midi))
+                .route("/config/start", web::post().to(config_start))
+                .route("/config/quit", web::post().to(config_quit))
+                .route("/config/locale", web::post().to(config_set_locale))
+                .route("/config/browse", web::get().to(config_browse))
+                .route(
+                    "/config/library/add-organ",
+                    web::post().to(config_add_organ),
+                )
+                .route(
+                    "/config/library/remove-organ",
+                    web::post().to(config_remove_organ),
                 )
         })
         .bind(("0.0.0.0", port));

@@ -644,7 +644,9 @@ body[data-mode="config"] .play-only {
   display: none !important;
 }
 body[data-mode="unknown"] .play-only,
-body[data-mode="unknown"] .config-only {
+body[data-mode="unknown"] .config-only,
+body[data-mode="idle"] .play-only,
+body[data-mode="idle"] .config-only {
   display: none !important;
 }
 
@@ -845,6 +847,39 @@ input[type="number"] {
 }
 .file-entry.dir .name {
   font-weight: 500;
+}
+
+/* Loading progress modal */
+.loading-bar {
+  width: 100%;
+  height: 16px;
+  margin: 0.6rem 0 0.4rem;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-radius: 8px;
+  background: var(--bg-elev-2);
+  overflow: hidden;
+}
+.loading-bar::-webkit-progress-bar {
+  background: var(--bg-elev-2);
+  border-radius: 8px;
+}
+.loading-bar::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 8px;
+  transition: width 120ms linear;
+}
+.loading-bar::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: 8px;
+}
+#loading-progress-message {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
 }
 
 /* Channel mapping modal */

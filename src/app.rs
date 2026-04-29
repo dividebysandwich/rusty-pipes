@@ -14,20 +14,39 @@ pub enum WsMessage {
     TremulantsChanged,
     AudioChanged,
     /// Instructs the web client to reload all state. Pushed by the server
-    /// to every newly-connected WebSocket so a client that joined mid-way
-    /// through an organ switch ends up with the new organ's data.
+    /// to every newly-connected WebSocket and on every mode change.
     Refetch,
-    /// Sent by the outgoing server right before it shuts down for an
-    /// organ switch. Clients should abort in-flight fetches and close
-    /// the WebSocket; the WS handler also closes the session from the
-    /// server side so the close event fires promptly. The client's
-    /// reconnect loop then hits the new server and receives Refetch.
-    ServerRestarting,
     MidiLearn {
         state: String,
         target_name: Option<String>,
         event_description: Option<String>,
     },
+    /// Periodic update from the organ-loading thread, mirroring the local
+    /// progress bar. Web clients connected to the (single, long-lived)
+    /// API server see this and open a loading modal.
+    LoadingProgress {
+        /// Progress in the 0.0..=1.0 range.
+        percent: f32,
+        /// Human-readable, already-localized status line (e.g. "Loading
+        /// samples into RAM"). The web UI displays this verbatim.
+        message: String,
+    },
+    /// Sent once at the end of an organ load. The web UI uses this as the
+    /// authoritative signal to close the loading modal — relying on a
+    /// final `LoadingProgress { percent: 1.0 }` is racy because the loader
+    /// doesn't guarantee a 100% event before exiting.
+    LoadingComplete,
+}
+
+/// Snapshot of the most recent organ-loading progress. Lives for the entire
+/// program lifetime; the API server's WebSocket handler reads it on every
+/// new connection so a freshly-connected client immediately learns whether
+/// a load is in flight (and at what percentage).
+#[derive(Debug, Clone, Default)]
+pub struct LoadingState {
+    pub active: bool,
+    pub percent: f32,
+    pub message: String,
 }
 
 /// Messages sent from the TUI and MIDI threads to the Audio thread.

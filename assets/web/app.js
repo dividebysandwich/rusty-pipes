@@ -217,9 +217,83 @@ async function detectMode() {
 }
 
 function setMode(mode) {
-  if (state.mode === mode) return;
+  const changed = state.mode !== mode;
   state.mode = mode;
+  // Always write the body attribute, even on no-op transitions. The CSS
+  // selectors that hide/show the play and config views key off
+  // `body[data-mode="…"]`, so any drift between `state.mode` and the
+  // attribute would leave the wrong view visible. With the long-lived
+  // server it's particularly important that a stale "config" attribute
+  // can't survive a transition into play mode.
   document.body.dataset.mode = mode;
+  if (changed) {
+    // Mode `play` is the authoritative end-of-load: hide the modal even
+    // if a final LoadingComplete didn't arrive. Mode `idle` is the
+    // transitional state between organs — show the modal eagerly so the
+    // user isn't staring at a blank page while the loader spins up.
+    if (mode === "play") hideLoadingModal();
+    else if (mode === "idle") showLoadingModalPlaceholder();
+  }
+}
+
+// ---------- Loading progress modal ----------
+let loadingModalActive = false;
+// On `LoadingComplete` we don't immediately hide the modal — we wait
+// briefly so the upcoming play-mode Refetch has a chance to materialize
+// the play view, avoiding a flash of blank page. If a new LoadingProgress
+// arrives in the meantime (rapid back-to-back reloads), the timer is
+// cleared so the modal stays open seamlessly.
+const LOADING_HIDE_GRACE_MS = 800;
+let loadingHideTimer = null;
+
+function clearLoadingHideTimer() {
+  if (loadingHideTimer) {
+    clearTimeout(loadingHideTimer);
+    loadingHideTimer = null;
+  }
+}
+
+function handleLoadingProgress(msg) {
+  clearLoadingHideTimer();
+  const bar = document.getElementById("loading-progress-bar");
+  const text = document.getElementById("loading-progress-message");
+  const percent = typeof msg.percent === "number" ? msg.percent : 0;
+  bar.value = Math.max(0, Math.min(1, percent));
+  text.textContent = msg.message || "";
+  if (!loadingModalActive) {
+    loadingModalActive = true;
+    openModal("modal-loading");
+  }
+}
+
+function showLoadingModalPlaceholder() {
+  // Open the modal with empty progress; the next LoadingProgress event
+  // will fill in real values.
+  if (loadingModalActive) return;
+  clearLoadingHideTimer();
+  const bar = document.getElementById("loading-progress-bar");
+  const text = document.getElementById("loading-progress-message");
+  if (bar) bar.value = 0;
+  if (text) text.textContent = "";
+  loadingModalActive = true;
+  openModal("modal-loading");
+}
+
+function scheduleLoadingHide() {
+  // Called on LoadingComplete — defer the hide so a subsequent mode flip
+  // to "play" can take over (which calls hideLoadingModal directly).
+  clearLoadingHideTimer();
+  loadingHideTimer = setTimeout(() => {
+    loadingHideTimer = null;
+    hideLoadingModal();
+  }, LOADING_HIDE_GRACE_MS);
+}
+
+function hideLoadingModal() {
+  clearLoadingHideTimer();
+  if (!loadingModalActive) return;
+  loadingModalActive = false;
+  closeModal("modal-loading");
 }
 
 // ---------- Tabs (play view) ----------
@@ -1734,17 +1808,19 @@ document.addEventListener("visibilitychange", () => {
 function handleWsMessage(msg) {
   switch (msg.type) {
     case "Refetch":
-      // Reload translations too — covers the case where another client
-      // changed the active locale and we need to pick up the new strings.
-      loadTranslations()
-        .catch(() => {})
-        .finally(() => {
-          if (state.mode === "play") {
-            refetchAllPlay();
-          } else if (state.mode === "config") {
-            refetchAllConfig();
-          }
-        });
+      // The server's mode may have changed (config → idle → play, or
+      // play → idle → play during organ reload), so re-detect it before
+      // deciding which refetch to run. Translations are reloaded too in
+      // case another client changed the active locale.
+      Promise.allSettled([loadTranslations(), detectMode()]).finally(() => {
+        if (state.mode === "play") {
+          refetchAllPlay();
+        } else if (state.mode === "config") {
+          refetchAllConfig();
+        }
+        // mode === "idle" / "unknown" → nothing to fetch yet; we wait for
+        // the next LoadingProgress / Refetch.
+      });
       break;
     case "StopsChanged":
       loadStops().catch(() => {});
@@ -1765,28 +1841,18 @@ function handleWsMessage(msg) {
         })
         .catch(() => {});
       break;
-    case "ServerRestarting":
-      // The server is shutting down. Could be:
-      // (1) Config server → play server (we clicked Start)
-      // (2) Play server → play server (organ reload)
-      // (3) Config server → exit (we clicked Quit)
-      // In all cases: abort fetches, set "unknown" mode until reconnect.
-      toast(t("toast_reloading"));
-      setMode("unknown");
-      if (wsCtrl.abortController) {
-        try {
-          wsCtrl.abortController.abort();
-        } catch (_) {}
-        wsCtrl.abortController = null;
-      }
-      if (wsCtrl.ws) {
-        try {
-          wsCtrl.ws.close();
-        } catch (_) {}
-      }
-      break;
+    // (No ServerRestarting case — the unified server lives across organ
+    // reloads, so the WebSocket no longer drops between modes.)
     case "MidiLearn":
       handleLearnUpdate(msg);
+      break;
+    case "LoadingProgress":
+      handleLoadingProgress(msg);
+      break;
+    case "LoadingComplete":
+      // Loading thread has exited. Schedule a deferred hide that yields
+      // to a subsequent mode=play transition (which hides immediately).
+      scheduleLoadingHide();
       break;
   }
 }

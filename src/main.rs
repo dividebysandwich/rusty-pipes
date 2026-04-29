@@ -14,7 +14,6 @@ use std::time::Duration;
 
 rust_i18n::i18n!("locales");
 
-mod api_config;
 mod api_rest;
 mod app;
 mod app_state;
@@ -152,10 +151,15 @@ impl Drop for LogicThreadHandle {
     fn drop(&mut self) {
         log::info!("Signaling MIDI Logic thread to stop...");
         self.stop_signal.store(true, Ordering::SeqCst);
-        // Optional: Wait for it to finish to ensure clean memory release before loading next organ
-        //if let Some(h) = self.handle.take() {
-        //    let _ = h.join();
-        //}
+        // Wait for the thread to actually exit. The thread polls the stop
+        // signal every 250ms (via recv_timeout), so this blocks at most
+        // that long. Without the join the thread keeps holding its
+        // Arc<Mutex<AppState>> clone — and through it the Arc<Organ> —
+        // for an unbounded amount of time, which causes both the old and
+        // new organ samples to coexist in RAM during an organ switch.
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
     }
 }
 
@@ -284,7 +288,32 @@ fn main() -> Result<()> {
         }
     }
 
-    // --- Run Configuration UI or Auto-Start ---
+    // --- Single, long-lived web context shared across the whole program ---
+    // The API server itself starts once below (when the configuration UI is
+    // not skipped) and lives until the program exits. It switches between
+    // Idle / Config / Play modes by writing to `web_mode`. The broadcaster
+    // and loading-state are likewise long-lived, so WebSocket connections
+    // persist across organ reloads and the loading modal updates in real
+    // time during play-mode reloads.
+    let web_mode: Arc<Mutex<api_rest::Mode>> = Arc::new(Mutex::new(api_rest::Mode::Idle));
+    let loading_state: Arc<Mutex<app::LoadingState>> =
+        Arc::new(Mutex::new(app::LoadingState::default()));
+    let (ws_broadcaster, _) = tokio::sync::broadcast::channel::<app::WsMessage>(256);
+
+    // Start the unified web server up-front, regardless of auto-start, so
+    // any web client connected before the first organ load can see the
+    // loading modal driven by LoadingProgress events. The server lives
+    // for the rest of the program; mode flips happen by writing to
+    // `web_mode`. Wrapped in Option so we can drop it explicitly at exit
+    // (and so an auto-start binding failure isn't fatal).
+    let api_server_handle: Option<api_rest::ApiServerHandle> =
+        Some(api_rest::start_api_server(
+            Arc::clone(&web_mode),
+            Arc::clone(&loading_state),
+            ws_broadcaster.clone(),
+            args.api_server_port,
+        ));
+
     let config_result = if args.auto_start {
         // Create a RuntimeConfig directly from the merged settings
         let mut active_midi_devices = Vec::new();
@@ -329,11 +358,7 @@ fn main() -> Result<()> {
             lcd_displays: settings.lcd_displays.clone(),
         }))
     } else {
-        // --- Initialize shared config state and start the config web server ---
-        // The web server runs alongside the local config UI so users can
-        // configure the application from a browser before any organ is loaded.
-        // It is shut down before play-mode starts (and a separate REST server
-        // takes over for the play UI).
+        // --- Initialize shared config state, start the unified API server ---
         let initial_state = match ConfigState::new(settings.clone(), &midi_input_arc) {
             Ok(s) => s,
             Err(e) => {
@@ -348,18 +373,10 @@ fn main() -> Result<()> {
             Arc::clone(&midi_input_arc),
         )));
 
-        let (config_ws_tx, _) = tokio::sync::broadcast::channel::<app::WsMessage>(64);
-        let _config_api_handle = match api_config::start_config_api_server(
-            Arc::clone(&config_shared),
-            args.api_server_port,
-            config_ws_tx,
-        ) {
-            Ok(h) => Some(h),
-            Err(e) => {
-                log::warn!("Failed to start config web server: {}", e);
-                None
-            }
-        };
+        // Server already running; flip it into Config mode so the web UI
+        // exposes the configuration routes.
+        *web_mode.lock().unwrap() = api_rest::Mode::Config(Arc::clone(&config_shared));
+        let _ = ws_broadcaster.send(app::WsMessage::Refetch);
 
         let result = if tui_mode {
             tui_config::run_config_ui(
@@ -382,11 +399,11 @@ fn main() -> Result<()> {
             Err(e) => Err(e),
         };
 
-        // Drop the config server before continuing — the play-mode server
-        // will bind the same port. Drop is async-spawned; give it a brief
-        // moment to release the socket.
-        drop(_config_api_handle);
-        thread::sleep(Duration::from_millis(150));
+        // Hand the server back to Idle while we load the first organ. Any
+        // connected web client will see the Refetch and switch into the
+        // "loading" branch (driven by upcoming LoadingProgress events).
+        *web_mode.lock().unwrap() = api_rest::Mode::Idle;
+        let _ = ws_broadcaster.send(app::WsMessage::Refetch);
 
         result
     };
@@ -463,8 +480,43 @@ fn main() -> Result<()> {
             // --- GUI Pre-caching with Progress Window ---
             log::info!("Starting GUI loading process...");
 
-            // Channels for progress
-            let (progress_tx, progress_rx) = mpsc::channel::<(f32, String)>();
+            // Two paired channels: `organ` is what Organ::load writes to,
+            // `ui` is what the loading window reads. A short tee thread
+            // copies each event from organ→ui and broadcasts it to web
+            // clients via the long-lived broadcaster, while also keeping
+            // the shared loading-state snapshot up to date so newly-
+            // connecting WebSocket clients can pick up the current
+            // progress immediately.
+            let (organ_progress_tx, organ_progress_rx) = mpsc::channel::<(f32, String)>();
+            let (ui_progress_tx, ui_progress_rx) = mpsc::channel::<(f32, String)>();
+            {
+                let ws_tx = ws_broadcaster.clone();
+                let loading_state = Arc::clone(&loading_state);
+                thread::spawn(move || {
+                    while let Ok((percent, message)) = organ_progress_rx.recv() {
+                        let _ = ui_progress_tx.send((percent, message.clone()));
+                        {
+                            let mut ls = loading_state.lock().unwrap();
+                            ls.active = true;
+                            ls.percent = percent;
+                            ls.message = message.clone();
+                        }
+                        let _ = ws_tx.send(app::WsMessage::LoadingProgress {
+                            percent,
+                            message,
+                        });
+                    }
+                    // Loading finished — clear the snapshot and fire one
+                    // explicit completion event so the modal closes.
+                    {
+                        let mut ls = loading_state.lock().unwrap();
+                        ls.active = false;
+                        ls.percent = 1.0;
+                    }
+                    let _ = ws_tx.send(app::WsMessage::LoadingComplete);
+                });
+            }
+
             let is_finished = Arc::new(AtomicBool::new(false));
 
             // We need to move the config and is_finished Arc into the loading thread
@@ -486,7 +538,7 @@ fn main() -> Result<()> {
                     load_config.precache,
                     load_config.original_tuning,
                     load_config.sample_rate,
-                    Some(progress_tx),
+                    Some(organ_progress_tx),
                     (load_config.max_ram_gb * 1024.0) as usize,
                 );
 
@@ -502,7 +554,7 @@ fn main() -> Result<()> {
             // --- Run the Loading UI on the Main Thread ---
             // This will block until the loading thread sets `is_finished` to true
             // and the eframe window closes itself.
-            if let Err(e) = loading_ui::run_loading_ui(progress_rx, is_finished) {
+            if let Err(e) = loading_ui::run_loading_ui(ui_progress_rx, is_finished) {
                 log::error!("Failed to run loading UI: {}", e);
                 // We might still be able to recover, but it's safer to exit
                 return Err(anyhow::anyhow!(t!("errors.loading_ui_fail", err = e)));
@@ -520,7 +572,35 @@ fn main() -> Result<()> {
             // --- TUI Loading ---
             log::info!("Starting TUI loading process...");
 
+            // Same tee pattern as the GUI branch — see comments above.
+            let (organ_progress_tx, organ_progress_rx) = mpsc::channel::<(f32, String)>();
             let (tui_progress_tx, tui_progress_rx) = mpsc::channel::<(f32, String)>();
+            {
+                let ws_tx = ws_broadcaster.clone();
+                let loading_state = Arc::clone(&loading_state);
+                thread::spawn(move || {
+                    while let Ok((percent, message)) = organ_progress_rx.recv() {
+                        let _ = tui_progress_tx.send((percent, message.clone()));
+                        {
+                            let mut ls = loading_state.lock().unwrap();
+                            ls.active = true;
+                            ls.percent = percent;
+                            ls.message = message.clone();
+                        }
+                        let _ = ws_tx.send(app::WsMessage::LoadingProgress {
+                            percent,
+                            message,
+                        });
+                    }
+                    {
+                        let mut ls = loading_state.lock().unwrap();
+                        ls.active = false;
+                        ls.percent = 1.0;
+                    }
+                    let _ = ws_tx.send(app::WsMessage::LoadingComplete);
+                });
+            }
+
             let load_config = config.clone();
 
             // Result container for the background thread
@@ -535,7 +615,7 @@ fn main() -> Result<()> {
                     load_config.precache,
                     load_config.original_tuning,
                     load_config.sample_rate,
-                    Some(tui_progress_tx),
+                    Some(organ_progress_tx),
                     (load_config.max_ram_gb * 1024.0) as usize,
                 );
                 *organ_result_clone.lock().unwrap() = Some(load_result);
@@ -623,10 +703,9 @@ fn main() -> Result<()> {
             active_layout,
         )?));
 
-        // Broadcast channel for pushing state-change hints to web clients.
-        // The capacity is generous since each message is tiny and the audio
-        // thread should never block on a slow subscriber.
-        let (ws_broadcaster, _) = tokio::sync::broadcast::channel::<app::WsMessage>(256);
+        // The broadcaster is the long-lived one created at the top of main;
+        // hand a clone to AppState so it can push state-change hints (stops,
+        // presets, tremulants, audio) to connected web clients.
         app_state.lock().unwrap().ws_broadcaster = Some(ws_broadcaster.clone());
 
         // --- Initialize MIDI Output & LCDs ---
@@ -653,14 +732,19 @@ fn main() -> Result<()> {
 
         let exit_action = Arc::new(Mutex::new(app::MainLoopAction::Exit));
 
-        // --- REST API SERVER ---
-        let _api_server_handle = api_rest::start_api_server(
-            app_state.clone(),
-            audio_tx.clone(),
-            args.api_server_port,
-            exit_action.clone(),
-            ws_broadcaster,
-        );
+        // --- Switch the server into play mode ---
+        // Refresh reverb files (the user may have added some via the file
+        // browser) and publish a fresh PlayContext to the web layer. The
+        // long-lived server then exposes the play-mode routes and any
+        // connected client refetches via the broadcast Refetch.
+        let reverb_files_for_play = Arc::new(config::get_available_ir_files());
+        *web_mode.lock().unwrap() = api_rest::Mode::Play(api_rest::PlayContext {
+            app_state: app_state.clone(),
+            audio_tx: audio_tx.clone(),
+            exit_action: exit_action.clone(),
+            reverb_files: reverb_files_for_play,
+        });
+        let _ = ws_broadcaster.send(app::WsMessage::Refetch);
 
         // --- Spawn the dedicated MIDI logic thread ---
         let logic_app_state = Arc::clone(&app_state);
@@ -839,19 +923,32 @@ fn main() -> Result<()> {
             app::MainLoopAction::ReloadOrgan { file } => {
                 log::info!("Reloading organ: {:?}", file);
                 config.organ_file = file;
+                // Move the server back to Idle while we tear down the play
+                // context and load the next organ. The server itself stays
+                // bound to the port; web clients keep their WebSocket open
+                // and will see LoadingProgress events from the tee thread
+                // in the next iteration.
+                *web_mode.lock().unwrap() = api_rest::Mode::Idle;
+                let _ = ws_broadcaster.send(app::WsMessage::Refetch);
                 // Threads (audio, logic) and channels will be dropped here and recreated in next iteration
                 drop(_logic_thread_handle);
-                drop(_api_server_handle);
                 drop(_audio_handle);
             }
             app::MainLoopAction::Exit => {
+                *web_mode.lock().unwrap() = api_rest::Mode::Idle;
                 break;
             }
             app::MainLoopAction::Continue => {
                 // Just restart same organ
+                *web_mode.lock().unwrap() = api_rest::Mode::Idle;
+                let _ = ws_broadcaster.send(app::WsMessage::Refetch);
+                drop(_logic_thread_handle);
+                drop(_audio_handle);
             }
         }
     }
+    // Drop the server explicitly at shutdown.
+    drop(api_server_handle);
 
     // --- Shutdown ---
     if tui_mode {
