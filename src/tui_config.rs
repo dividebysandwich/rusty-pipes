@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use crate::app::LOGO;
 use crate::audio::get_supported_sample_rates;
-use crate::config::{AppSettings, ConfigState, RuntimeConfig};
+use crate::config::{AppSettings, ConfigShared, ConfigState, RuntimeConfig};
 use crate::tui::{cleanup_terminal, setup_terminal};
 use crate::tui_filepicker;
 use crate::tui_lcd;
@@ -176,44 +176,65 @@ fn path_to_str(path: Option<&std::path::Path>) -> String {
 pub fn run_config_ui(
     settings: AppSettings,
     midi_input_arc: Arc<Mutex<Option<MidiInput>>>,
+    shared: Arc<Mutex<ConfigShared>>,
 ) -> Result<Option<RuntimeConfig>> {
     let mut terminal = setup_terminal()?;
 
-    let config_state = ConfigState::new(settings, &midi_input_arc)?;
+    // Populate shared state from settings if it hasn't been already.
+    {
+        let mut s = shared.lock().unwrap();
+        if s.state.available_audio_devices.is_empty()
+            && s.state.system_midi_ports.is_empty()
+            && s.state.available_ir_files.is_empty()
+        {
+            s.state = ConfigState::new(settings, &midi_input_arc)?;
+            s.revision = s.revision.wrapping_add(1);
+        }
+    }
 
-    let initial_audio_index = config_state
-        .selected_audio_device_name
-        .as_ref()
-        .and_then(|selected_name| {
-            config_state
-                .available_audio_devices
-                .iter()
-                .position(|name| name == selected_name)
-        })
-        .map_or(0, |i| i + 1); // 0 is "[ Default ]"
+    // Set up initial list-state selections from current shared state.
+    let (initial_audio_index, initial_ir_index) = {
+        let s = shared.lock().unwrap();
+        let audio_idx = s
+            .state
+            .selected_audio_device_name
+            .as_ref()
+            .and_then(|selected_name| {
+                s.state
+                    .available_audio_devices
+                    .iter()
+                    .position(|name| name == selected_name)
+            })
+            .map_or(0, |i| i + 1);
+        let ir_idx = s
+            .state
+            .settings
+            .ir_file
+            .as_ref()
+            .and_then(|current_path| {
+                s.state
+                    .available_ir_files
+                    .iter()
+                    .position(|(_, path)| path == current_path)
+            })
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        (audio_idx, ir_idx)
+    };
 
     let mut audio_list_state = ListState::default();
     audio_list_state.select(Some(initial_audio_index));
 
-    // Setup Reverb IR list state
-    let initial_ir_index = config_state
-        .settings
-        .ir_file
-        .as_ref()
-        .and_then(|current_path| {
-            config_state
-                .available_ir_files
-                .iter()
-                .position(|(_, path)| path == current_path)
-        })
-        .map(|i| i + 1) // +1 because 0 is "None"
-        .unwrap_or(0);
-
     let mut ir_list_state = ListState::default();
     ir_list_state.select(Some(initial_ir_index));
 
+    // Local TuiConfigState — the config_state field is a *snapshot* that we
+    // refresh from the shared mutex at the start of every poll iteration.
+    // Existing draw/event code reads/writes this snapshot; we propagate its
+    // mutations back to shared state at the end of each iteration.
+    let snapshot = shared.lock().unwrap().state.clone_snapshot();
     let mut state = TuiConfigState {
-        config_state,
+        config_state: snapshot,
         list_state: ListState::default(),
         audio_list_state,
         midi_dev_list_state: ListState::default(),
@@ -227,8 +248,33 @@ pub fn run_config_ui(
     state.midi_dev_list_state.select(Some(0));
 
     let mut final_config: Option<RuntimeConfig> = None;
+    let mut last_seen_revision: u64 = shared.lock().unwrap().revision;
 
     'config_loop: loop {
+        // --- Sync local <-> shared at the top of each iteration ---
+        {
+            let mut s = shared.lock().unwrap();
+            if let Some(rc) = s.web_start_request.take() {
+                final_config = Some(rc);
+                break 'config_loop;
+            }
+            if s.web_quit_request {
+                s.web_quit_request = false;
+                break 'config_loop;
+            }
+            if s.revision == last_seen_revision {
+                // No external mutation: push our local snapshot.
+                s.state = state.config_state.clone_snapshot();
+                s.revision = s.revision.wrapping_add(1);
+                last_seen_revision = s.revision;
+            } else {
+                // Web mutated: adopt their view (our latest event-driven
+                // mutation, if any, is discarded — last writer wins).
+                state.config_state = s.state.clone_snapshot();
+                last_seen_revision = s.revision;
+            }
+        }
+
         terminal.draw(|f| draw_config_ui(f, &mut state))?;
 
         if !event::poll(Duration::from_millis(50))? {

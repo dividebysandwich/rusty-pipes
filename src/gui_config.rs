@@ -1,6 +1,6 @@
 use crate::app::{LOGO, PIPES};
 use crate::audio::get_supported_sample_rates;
-use crate::config::{AppSettings, ConfigState, RuntimeConfig};
+use crate::config::{AppSettings, ConfigShared, ConfigState, RuntimeConfig};
 use crate::gui_filepicker;
 use crate::gui_midi::MidiMappingWindow;
 use anyhow::Result;
@@ -8,31 +8,66 @@ use eframe::{App, Frame, egui};
 use midir::MidiInput;
 use rust_i18n::t;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 #[allow(dead_code)]
 struct ConfigApp {
-    state: ConfigState,
-    midi_input_arc: Arc<Mutex<Option<MidiInput>>>,
+    shared: Arc<Mutex<ConfigShared>>,
     output: Arc<Mutex<Option<RuntimeConfig>>>,
     is_finished: Arc<Mutex<bool>>,
+    /// Index into `available_audio_devices` for the current selection (None = system default).
     selected_audio_device_index: Option<usize>,
+    /// Index into `available_ir_files` for the current selection (None = no reverb).
     selected_ir_index: Option<usize>,
+    /// Last shared revision we synced from. When the web UI mutates shared
+    /// state, we re-derive the combo indices on the next frame.
+    last_seen_revision: u64,
     midi_mapping_window: MidiMappingWindow,
     show_lcd_config: bool,
 }
 
 impl ConfigApp {
     fn new(
-        settings: AppSettings,
-        midi_input_arc: Arc<Mutex<Option<MidiInput>>>,
+        shared: Arc<Mutex<ConfigShared>>,
         output: Arc<Mutex<Option<RuntimeConfig>>>,
         is_finished: Arc<Mutex<bool>>,
     ) -> Self {
-        let state =
-            ConfigState::new(settings, &midi_input_arc).expect("Failed to create ConfigState");
+        let (selected_audio_device_index, selected_ir_index, revision) = {
+            let s = shared.lock().unwrap();
+            let audio_idx = s
+                .state
+                .selected_audio_device_name
+                .as_ref()
+                .and_then(|selected_name| {
+                    s.state
+                        .available_audio_devices
+                        .iter()
+                        .position(|name| name == selected_name)
+                });
+            let ir_idx = s
+                .state
+                .settings
+                .ir_file
+                .as_ref()
+                .and_then(|path| s.state.available_ir_files.iter().position(|(_, p)| p == path));
+            (audio_idx, ir_idx, s.revision)
+        };
 
-        // Find the index of the pre-selected audio device, if any
-        let selected_audio_device_index =
+        Self {
+            shared,
+            output,
+            is_finished,
+            selected_audio_device_index,
+            selected_ir_index,
+            last_seen_revision: revision,
+            midi_mapping_window: MidiMappingWindow::new(),
+            show_lcd_config: false,
+        }
+    }
+
+    /// Re-derive combo indices when the web UI mutates shared state.
+    fn sync_from_shared(&mut self, state: &ConfigState) {
+        self.selected_audio_device_index =
             state
                 .selected_audio_device_name
                 .as_ref()
@@ -42,49 +77,33 @@ impl ConfigApp {
                         .iter()
                         .position(|name| name == selected_name)
                 });
-
-        // Find pre-selected IR index
-        let selected_ir_index = state
+        self.selected_ir_index = state
             .settings
             .ir_file
             .as_ref()
             .and_then(|path| state.available_ir_files.iter().position(|(_, p)| p == path));
-
-        Self {
-            state,
-            midi_input_arc,
-            output,
-            is_finished,
-            selected_audio_device_index,
-            selected_ir_index,
-            midi_mapping_window: MidiMappingWindow::new(),
-            show_lcd_config: false,
-        }
     }
 
-    // Helper to refresh rates when device changes
-    fn refresh_sample_rates(&mut self) {
+    fn refresh_sample_rates(&mut self, state: &mut ConfigState) {
         let device_name = self
             .selected_audio_device_index
-            .and_then(|idx| self.state.available_audio_devices.get(idx))
+            .and_then(|idx| state.available_audio_devices.get(idx))
             .cloned();
 
         if let Ok(rates) = get_supported_sample_rates(device_name) {
-            self.state.available_sample_rates = rates;
-            // Ensure selected rate is valid, else reset to first available
-            if !self
-                .state
+            state.available_sample_rates = rates;
+            if !state
                 .available_sample_rates
-                .contains(&self.state.settings.sample_rate)
+                .contains(&state.settings.sample_rate)
             {
-                if let Some(&first) = self.state.available_sample_rates.first() {
-                    self.state.settings.sample_rate = first;
+                if let Some(&first) = state.available_sample_rates.first() {
+                    state.settings.sample_rate = first;
                 }
             }
         }
     }
 
-    fn draw_lcd_config_modal(&mut self, ctx: &egui::Context) {
+    fn draw_lcd_config_modal(&mut self, ctx: &egui::Context, state: &mut ConfigState) {
         let mut open = self.show_lcd_config;
         egui::Window::new(t!("config.lcd_title"))
             .open(&mut open)
@@ -92,9 +111,9 @@ impl ConfigApp {
                 let mut to_remove = None;
 
                 if ui.button(t!("config.lcd_add")).clicked() {
-                    let next_id = self.state.settings.lcd_displays.len() as u8 + 1;
+                    let next_id = state.settings.lcd_displays.len() as u8 + 1;
                     use crate::config::{LcdColor, LcdDisplayConfig, LcdLineType};
-                    self.state.settings.lcd_displays.push(LcdDisplayConfig {
+                    state.settings.lcd_displays.push(LcdDisplayConfig {
                         id: next_id,
                         line1: LcdLineType::OrganName,
                         line2: LcdLineType::SystemStatus,
@@ -107,8 +126,7 @@ impl ConfigApp {
                 egui::ScrollArea::vertical()
                     .max_height(400.0)
                     .show(ui, |ui| {
-                        for (i, display) in self.state.settings.lcd_displays.iter_mut().enumerate()
-                        {
+                        for (i, display) in state.settings.lcd_displays.iter_mut().enumerate() {
                             ui.group(|ui| {
                                 ui.horizontal(|ui| {
                                     ui.label(t!("config.lcd_display_label", num = i + 1));
@@ -229,7 +247,7 @@ impl ConfigApp {
                     });
 
                 if let Some(idx) = to_remove {
-                    self.state.settings.lcd_displays.remove(idx);
+                    state.settings.lcd_displays.remove(idx);
                 }
             });
         self.show_lcd_config = open;
@@ -238,14 +256,51 @@ impl ConfigApp {
 
 impl App for ConfigApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut Frame) {
+        // Wake up periodically so we can detect web-driven start/quit
+        // requests and incoming shared-state mutations even when the user
+        // isn't interacting with the GUI.
+        ctx.request_repaint_after(Duration::from_millis(100));
+
+        // --- Lock shared state for this frame ---
+        // Clone the Arc so the guard's lifetime ties to a local, freeing
+        // `self` for other field accesses inside this method.
+        let shared = self.shared.clone();
+        let mut shared_guard = shared.lock().unwrap();
+
+        // --- Handle web-driven Start/Quit ---
+        if let Some(rc) = shared_guard.web_start_request.take() {
+            *self.output.lock().unwrap() = Some(rc);
+            *self.is_finished.lock().unwrap() = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+        if shared_guard.web_quit_request {
+            shared_guard.web_quit_request = false;
+            *self.is_finished.lock().unwrap() = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
+        }
+
+        // --- Detect external mutations and sync mirrored indices ---
+        if shared_guard.revision != self.last_seen_revision {
+            self.sync_from_shared(&shared_guard.state);
+            self.last_seen_revision = shared_guard.revision;
+        }
+
+        let revision_at_start = shared_guard.revision;
+        let state = &mut shared_guard.state;
+
         // Modal MIDI Mapping Window
         self.midi_mapping_window
-            .show(ctx, &mut self.state.settings.midi_devices);
+            .show(ctx, &mut state.settings.midi_devices);
 
         // Modal LCD Configuration Window
         if self.show_lcd_config {
-            self.draw_lcd_config_modal(ctx);
+            self.draw_lcd_config_modal(ctx, state);
         }
+
+        let mut start_clicked = false;
+        let mut quit_clicked = false;
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical()
@@ -291,8 +346,8 @@ impl App for ConfigApp {
 
                     egui::Grid::new("config_grid")
                         .num_columns(2)
-                        .spacing([40.0, 15.0]) // [col_spacing, row_spacing]
-                        .min_col_width(180.0) // Minimum width for labels
+                        .spacing([40.0, 15.0])
+                        .min_col_width(180.0)
                         .show(ui, |ui| {
                             ui.style_mut().spacing.slider_width = 300.0;
 
@@ -300,11 +355,10 @@ impl App for ConfigApp {
                             ui.label(t!("config.group_organ_file"))
                                 .on_hover_text(t!("config.tooltip_organ"));
                             ui.horizontal(|ui| {
-                                let organ_text = path_to_str_truncated(
-                                    self.state.settings.organ_file.as_deref(),
-                                );
+                                let organ_text =
+                                    path_to_str_truncated(state.settings.organ_file.as_deref());
                                 let full_path =
-                                    path_to_str_full(self.state.settings.organ_file.as_deref());
+                                    path_to_str_full(state.settings.organ_file.as_deref());
                                 ui.label(organ_text).on_hover_text(full_path);
 
                                 if ui.button(t!("config.btn_browse")).clicked() {
@@ -315,7 +369,7 @@ impl App for ConfigApp {
                                             &["organ", "orgue", "Organ_Hauptwerk_xml", "xml"],
                                         )],
                                     ) {
-                                        self.state.settings.organ_file = Some(path);
+                                        state.settings.organ_file = Some(path);
                                     }
                                 }
                             });
@@ -326,7 +380,7 @@ impl App for ConfigApp {
                                 .on_hover_text(t!("config.tooltip_audio_device"));
                             let selected_audio_text = self
                                 .selected_audio_device_index
-                                .and_then(|idx| self.state.available_audio_devices.get(idx))
+                                .and_then(|idx| state.available_audio_devices.get(idx))
                                 .map_or(t!("config.status_default"), |name| {
                                     std::borrow::Cow::Borrowed(name.as_str())
                                 });
@@ -335,7 +389,6 @@ impl App for ConfigApp {
                             egui::ComboBox::from_id_salt("audio_device_combo")
                                 .selected_text(selected_audio_text)
                                 .show_ui(ui, |ui| {
-                                    // Track the user's intended action
                                     let mut selected_default = false;
                                     let mut selected_index = None;
 
@@ -349,9 +402,7 @@ impl App for ConfigApp {
                                         selected_default = true;
                                     }
 
-                                    // Iterate list (Immutable borrow of self happens here)
-                                    for (i, name) in
-                                        self.state.available_audio_devices.iter().enumerate()
+                                    for (i, name) in state.available_audio_devices.iter().enumerate()
                                     {
                                         if ui
                                             .selectable_label(
@@ -364,13 +415,15 @@ impl App for ConfigApp {
                                         }
                                     }
 
-                                    // Apply changes (Immutable borrow is dropped, so we can now mutate self)
                                     if selected_default {
                                         self.selected_audio_device_index = None;
-                                        self.refresh_sample_rates();
+                                        state.selected_audio_device_name = None;
+                                        self.refresh_sample_rates(state);
                                     } else if let Some(i) = selected_index {
                                         self.selected_audio_device_index = Some(i);
-                                        self.refresh_sample_rates();
+                                        state.selected_audio_device_name =
+                                            state.available_audio_devices.get(i).cloned();
+                                        self.refresh_sample_rates(state);
                                     }
                                 });
                             ui.end_row();
@@ -379,17 +432,17 @@ impl App for ConfigApp {
                             ui.label(t!("config.group_sample_rate"))
                                 .on_hover_text(t!("config.tooltip_sample_rate"));
                             egui::ComboBox::from_id_salt("sample_rate_combo")
-                                .selected_text(format!("{} Hz", self.state.settings.sample_rate))
+                                .selected_text(format!("{} Hz", state.settings.sample_rate))
                                 .show_ui(ui, |ui| {
-                                    for &rate in &self.state.available_sample_rates {
+                                    for &rate in &state.available_sample_rates {
                                         if ui
                                             .selectable_label(
-                                                self.state.settings.sample_rate == rate,
+                                                state.settings.sample_rate == rate,
                                                 format!("{}", rate),
                                             )
                                             .clicked()
                                         {
-                                            self.state.settings.sample_rate = rate;
+                                            state.settings.sample_rate = rate;
                                         }
                                     }
                                 });
@@ -399,32 +452,30 @@ impl App for ConfigApp {
                             ui.label(t!("config.group_midi_inputs"))
                                 .on_hover_text(t!("config.tooltip_midi_inputs"));
                             ui.vertical(|ui| {
-                                if self.state.system_midi_ports.is_empty() {
+                                if state.system_midi_ports.is_empty() {
                                     ui.label(
                                         egui::RichText::new(t!("config.status_no_devices")).weak(),
                                     );
                                 } else {
-                                    for (_port, name) in &self.state.system_midi_ports {
+                                    let port_names: Vec<String> = state
+                                        .system_midi_ports
+                                        .iter()
+                                        .map(|(_, n)| n.clone())
+                                        .collect();
+                                    for name in &port_names {
                                         ui.horizontal(|ui| {
-                                            // Find corresponding config entry
-                                            if let Some(cfg_idx) = self
-                                                .state
+                                            if let Some(cfg_idx) = state
                                                 .settings
                                                 .midi_devices
                                                 .iter()
                                                 .position(|d| d.name == *name)
                                             {
-                                                // Checkbox for Enable/Disable
                                                 ui.checkbox(
-                                                    &mut self.state.settings.midi_devices[cfg_idx]
+                                                    &mut state.settings.midi_devices[cfg_idx]
                                                         .enabled,
                                                     "",
                                                 );
-
-                                                // Name Label
                                                 ui.label(name);
-
-                                                // Mapping Button
                                                 if ui.button(t!("config.btn_map")).clicked() {
                                                     self.midi_mapping_window.device_index = cfg_idx;
                                                     self.midi_mapping_window.visible = true;
@@ -442,7 +493,7 @@ impl App for ConfigApp {
 
                             let current_ir_name = self
                                 .selected_ir_index
-                                .and_then(|idx| self.state.available_ir_files.get(idx))
+                                .and_then(|idx| state.available_ir_files.get(idx))
                                 .map(|(name, _)| std::borrow::Cow::Borrowed(name.as_str()))
                                 .unwrap_or(t!("config.status_no_reverb"));
 
@@ -458,11 +509,11 @@ impl App for ConfigApp {
                                         .clicked()
                                     {
                                         self.selected_ir_index = None;
-                                        self.state.settings.ir_file = None;
+                                        state.settings.ir_file = None;
                                     }
 
                                     for (i, (name, path)) in
-                                        self.state.available_ir_files.iter().enumerate()
+                                        state.available_ir_files.iter().enumerate()
                                     {
                                         if ui
                                             .selectable_label(
@@ -472,7 +523,7 @@ impl App for ConfigApp {
                                             .clicked()
                                         {
                                             self.selected_ir_index = Some(i);
-                                            self.state.settings.ir_file = Some(path.clone());
+                                            state.settings.ir_file = Some(path.clone());
                                         }
                                     }
                                 });
@@ -492,7 +543,7 @@ impl App for ConfigApp {
                             ui.label(t!("config.group_reverb_mix"))
                                 .on_hover_text(t!("config.tooltip_reverb_mix"));
                             ui.add(
-                                egui::Slider::new(&mut self.state.settings.reverb_mix, 0.0..=1.0)
+                                egui::Slider::new(&mut state.settings.reverb_mix, 0.0..=1.0)
                                     .show_value(true)
                                     .min_decimals(2)
                                     .text(""),
@@ -503,7 +554,7 @@ impl App for ConfigApp {
                             ui.label(t!("config.group_gain"))
                                 .on_hover_text(t!("config.tooltip_gain"));
                             ui.add(
-                                egui::Slider::new(&mut self.state.settings.gain, 0.0..=1.0)
+                                egui::Slider::new(&mut state.settings.gain, 0.0..=1.0)
                                     .show_value(true)
                                     .min_decimals(2)
                                     .text(""),
@@ -514,14 +565,11 @@ impl App for ConfigApp {
                             ui.label(t!("config.group_polyphony"))
                                 .on_hover_text(t!("config.tooltip_polyphony"));
                             ui.add(
-                                egui::Slider::new(
-                                    &mut self.state.settings.polyphony,
-                                    1..=1024 * 16,
-                                )
-                                .show_value(true)
-                                .min_decimals(0)
-                                .logarithmic(true)
-                                .text(""),
+                                egui::Slider::new(&mut state.settings.polyphony, 1..=1024 * 16)
+                                    .show_value(true)
+                                    .min_decimals(0)
+                                    .logarithmic(true)
+                                    .text(""),
                             );
                             ui.end_row();
 
@@ -529,7 +577,7 @@ impl App for ConfigApp {
                             ui.label(t!("config.group_buffer"))
                                 .on_hover_text(t!("config.tooltip_buffer"));
                             ui.add(
-                                egui::DragValue::new(&mut self.state.settings.audio_buffer_frames)
+                                egui::DragValue::new(&mut state.settings.audio_buffer_frames)
                                     .speed(32.0)
                                     .range(32..=4096),
                             );
@@ -539,8 +587,8 @@ impl App for ConfigApp {
                             ui.label(t!("config.group_preload"))
                                 .on_hover_text(t!("config.tooltip_preload"));
                             ui.add_enabled(
-                                !self.state.settings.precache,
-                                egui::Slider::new(&mut self.state.settings.max_ram_gb, 0.0..=256.0)
+                                !state.settings.precache,
+                                egui::Slider::new(&mut state.settings.max_ram_gb, 0.0..=256.0)
                                     .show_value(true)
                                     .min_decimals(1)
                                     .step_by(0.1)
@@ -552,17 +600,17 @@ impl App for ConfigApp {
                             ui.label(t!("config.group_options"));
                             ui.vertical(|ui| {
                                 ui.checkbox(
-                                    &mut self.state.settings.precache,
+                                    &mut state.settings.precache,
                                     t!("config.chk_precache"),
                                 )
                                 .on_hover_text(t!("config.tooltip_precache"));
                                 ui.checkbox(
-                                    &mut self.state.settings.convert_to_16bit,
+                                    &mut state.settings.convert_to_16bit,
                                     t!("config.chk_convert"),
                                 )
                                 .on_hover_text(t!("config.tooltip_convert"));
                                 ui.checkbox(
-                                    &mut self.state.settings.original_tuning,
+                                    &mut state.settings.original_tuning,
                                     t!("config.chk_tuning"),
                                 )
                                 .on_hover_text(t!("config.tooltip_tuning"));
@@ -576,14 +624,13 @@ impl App for ConfigApp {
                             }
                             ui.end_row();
                         });
-                    // --- END GRID LAYOUT ---
 
                     ui.add_space(10.0);
                     ui.separator();
                     ui.add_space(10.0);
 
                     // --- Error Message ---
-                    if let Some(err) = &self.state.error_msg {
+                    if let Some(err) = &state.error_msg {
                         ui.label(egui::RichText::new(err).color(egui::Color32::RED));
                     }
 
@@ -593,75 +640,27 @@ impl App for ConfigApp {
                             .text_style(egui::TextStyle::Heading);
 
                         let quit_button = ui.add_enabled(
-                            self.state.settings.organ_file.is_some(),
+                            state.settings.organ_file.is_some(),
                             egui::Button::new(quit_button_text),
                         );
 
                         if quit_button.clicked() {
-                            *self.is_finished.lock().unwrap() = true;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            quit_clicked = true;
                         }
 
                         let start_button_text = egui::RichText::new(t!("config.btn_start"))
                             .text_style(egui::TextStyle::Heading);
 
                         let start_button = ui.add_enabled(
-                            self.state.settings.organ_file.is_some(),
+                            state.settings.organ_file.is_some(),
                             egui::Button::new(start_button_text),
                         );
 
                         if start_button.clicked() {
-                            // Collect enabled MIDI devices + ports
-                            let mut active_devices = Vec::new();
-                            for (port, name) in &self.state.system_midi_ports {
-                                if let Some(cfg) = self
-                                    .state
-                                    .settings
-                                    .midi_devices
-                                    .iter()
-                                    .find(|d| d.name == *name)
-                                {
-                                    if cfg.enabled {
-                                        active_devices.push((port.clone(), cfg.clone()));
-                                    }
-                                }
-                            }
-                            let audio_device_name = self
-                                .selected_audio_device_index
-                                .and_then(|idx| self.state.available_audio_devices.get(idx))
-                                .cloned();
-
-                            let runtime_config = RuntimeConfig {
-                                organ_file: self.state.settings.organ_file.clone().unwrap(),
-                                ir_file: self.state.settings.ir_file.clone(),
-                                reverb_mix: self.state.settings.reverb_mix,
-                                audio_buffer_frames: self.state.settings.audio_buffer_frames,
-                                max_ram_gb: self.state.settings.max_ram_gb,
-                                precache: self.state.settings.precache,
-                                convert_to_16bit: self.state.settings.convert_to_16bit,
-                                original_tuning: self.state.settings.original_tuning,
-                                midi_file: self.state.midi_file.clone(),
-                                active_midi_devices: active_devices,
-                                gain: self.state.settings.gain,
-                                polyphony: self.state.settings.polyphony,
-                                max_new_voices_per_block: self
-                                    .state
-                                    .settings
-                                    .max_new_voices_per_block,
-                                audio_device_name,
-                                sample_rate: self.state.settings.sample_rate,
-                                lcd_displays: self.state.settings.lcd_displays.clone(),
-                            };
-
-                            // Save config back to settings
-                            // (midi_output_device is removed)
-
-                            *self.output.lock().unwrap() = Some(runtime_config);
-                            *self.is_finished.lock().unwrap() = true;
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                            start_clicked = true;
                         }
 
-                        if self.state.settings.organ_file.is_none() {
+                        if state.settings.organ_file.is_none() {
                             ui.label(
                                 egui::RichText::new(t!("config.warn_select_organ"))
                                     .color(egui::Color32::YELLOW),
@@ -670,10 +669,63 @@ impl App for ConfigApp {
                     });
                 });
         });
+
+        // --- Resolve button clicks ---
+        // We do this after the central panel closure so we can move the
+        // shared state into a RuntimeConfig without borrow conflicts.
+        if quit_clicked {
+            *self.is_finished.lock().unwrap() = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
+        if start_clicked {
+            let runtime_config = build_runtime_config(state);
+            *self.output.lock().unwrap() = Some(runtime_config);
+            *self.is_finished.lock().unwrap() = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
+        // Bump revision so the web UI sees fresh state. We unconditionally
+        // bump on every frame the user interacted; cheap to do always.
+        if shared_guard.revision == revision_at_start {
+            shared_guard.revision = shared_guard.revision.wrapping_add(1);
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
         *self.is_finished.lock().unwrap() = true;
+    }
+}
+
+/// Construct a RuntimeConfig from the current shared state. Used by both
+/// the local Start button and the web /config/start endpoint (via main.rs).
+pub fn build_runtime_config(state: &ConfigState) -> RuntimeConfig {
+    let mut active_devices = Vec::new();
+    for (port, name) in &state.system_midi_ports {
+        if let Some(cfg) = state.settings.midi_devices.iter().find(|d| d.name == *name) {
+            if cfg.enabled {
+                active_devices.push((port.clone(), cfg.clone()));
+            }
+        }
+    }
+
+    RuntimeConfig {
+        organ_file: state.settings.organ_file.clone().unwrap_or_default(),
+        ir_file: state.settings.ir_file.clone(),
+        reverb_mix: state.settings.reverb_mix,
+        audio_buffer_frames: state.settings.audio_buffer_frames,
+        max_ram_gb: state.settings.max_ram_gb,
+        precache: state.settings.precache,
+        convert_to_16bit: state.settings.convert_to_16bit,
+        original_tuning: state.settings.original_tuning,
+        midi_file: state.midi_file.clone(),
+        active_midi_devices: active_devices,
+        gain: state.settings.gain,
+        polyphony: state.settings.polyphony,
+        max_new_voices_per_block: state.settings.max_new_voices_per_block,
+        audio_device_name: state.selected_audio_device_name.clone(),
+        sample_rate: state.settings.sample_rate,
+        lcd_displays: state.settings.lcd_displays.clone(),
     }
 }
 
@@ -696,7 +748,22 @@ fn path_to_str_truncated(path: Option<&std::path::Path>) -> String {
 pub fn run_config_ui(
     settings: AppSettings,
     midi_input_arc: Arc<Mutex<Option<MidiInput>>>,
+    shared: Arc<Mutex<ConfigShared>>,
 ) -> Result<Option<RuntimeConfig>> {
+    // Initialize ConfigState into shared if it hasn't been already (the
+    // server may have populated it earlier; if not, do it now).
+    {
+        let mut s = shared.lock().unwrap();
+        if s.state.available_audio_devices.is_empty()
+            && s.state.system_midi_ports.is_empty()
+            && s.state.available_ir_files.is_empty()
+        {
+            // Empty placeholder — populate now.
+            s.state = ConfigState::new(settings, &midi_input_arc)?;
+            s.revision = s.revision.wrapping_add(1);
+        }
+    }
+
     let output = Arc::new(Mutex::new(None));
     let is_finished = Arc::new(Mutex::new(false));
 
@@ -708,8 +775,7 @@ pub fn run_config_ui(
     };
 
     let app = ConfigApp::new(
-        settings,
-        Arc::clone(&midi_input_arc),
+        Arc::clone(&shared),
         Arc::clone(&output),
         Arc::clone(&is_finished),
     );

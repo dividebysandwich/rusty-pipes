@@ -625,3 +625,173 @@ select {
     grid-template-columns: 1fr;
   }
 }
+
+/* MODE-BASED VISIBILITY */
+body[data-mode="play"] .config-only {
+  display: none !important;
+}
+body[data-mode="config"] .play-only {
+  display: none !important;
+}
+body[data-mode="unknown"] .play-only,
+body[data-mode="unknown"] .config-only {
+  display: none !important;
+}
+
+/* CONFIG VIEW */
+.config-panel {
+  display: none;
+}
+.config-panel.active {
+  display: block;
+}
+
+.config-tab {
+  background: transparent;
+  border: 0;
+  padding: 0 0.85rem;
+  height: var(--tab-h);
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.config-tab:hover {
+  background: var(--bg-elev-2);
+  color: var(--text);
+}
+.config-tab[aria-selected="true"] {
+  background: var(--bg-elev-2);
+  color: var(--accent);
+}
+
+.config-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.primary {
+  background: var(--accent);
+  border: 0;
+  color: #1c1c1c;
+  padding: 0.55rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.primary:hover {
+  filter: brightness(1.05);
+}
+.primary:disabled {
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  cursor: not-allowed;
+  filter: none;
+}
+.primary.big {
+  padding: 0.85rem 1.4rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+}
+
+.ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.55rem 0.9rem;
+  border-radius: 6px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ghost:hover {
+  background: var(--bg-elev-2);
+}
+.ghost.small {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.grow {
+  flex: 1;
+}
+
+.card label {
+  display: block;
+  margin: 0.3rem 0;
+  cursor: pointer;
+}
+.card label input[type="checkbox"] {
+  margin-right: 0.4rem;
+}
+
+input[type="number"] {
+  background: var(--bg-elev-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+  width: 8rem;
+}
+
+/* MIDI device list (config) */
+.config-midi-device {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.6rem;
+}
+.config-midi-device .header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.config-midi-device .name {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.config-midi-device .summary {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+.config-midi-device.disabled {
+  opacity: 0.6;
+}
+
+/* Channel mapping modal */
+.modal-card.wide {
+  max-width: 560px;
+}
+.midi-mapping-section {
+  margin: 0.8rem 0;
+}
+.midi-mapping-section.hidden {
+  display: none;
+}
+#midi-mapping-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem 0.8rem;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+#midi-mapping-grid .row {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+#midi-mapping-grid label {
+  white-space: nowrap;
+  color: var(--text-dim);
+  min-width: 4.5rem;
+}
+

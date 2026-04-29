@@ -26,6 +26,9 @@ const api = {
     const ct = resp.headers.get("content-type") || "";
     return ct.includes("json") ? resp.json() : resp.text();
   },
+  // Mode discovery (works in both config and play servers)
+  mode: () => api.json("GET", "/mode"),
+  // Play-mode endpoints
   organ: () => api.json("GET", "/organ"),
   stops: () => api.json("GET", "/stops"),
   setStopChannel: (stopId, ch, active) =>
@@ -57,6 +60,21 @@ const api = {
     api.json("DELETE", `/midi-bindings/preset/${slot}`),
   organs: () => api.json("GET", "/organs"),
   loadOrgan: (path) => api.json("POST", "/organs/load", { path }),
+  // Config-mode endpoints
+  configState: () => api.json("GET", "/config"),
+  cfgSetAudioDevice: (name) =>
+    api.json("POST", "/config/audio-device", { name }),
+  cfgSetSampleRate: (rate) =>
+    api.json("POST", "/config/sample-rate", { rate }),
+  cfgSetIrFile: (path) => api.json("POST", "/config/ir-file", { path }),
+  cfgSetOrgan: (path) => api.json("POST", "/config/organ", { path }),
+  cfgSetAudioSettings: (body) =>
+    api.json("POST", "/config/audio-settings", body),
+  cfgUpdateMidiDevice: (body) =>
+    api.json("POST", "/config/midi-device", body),
+  cfgRescanMidi: () => api.json("POST", "/config/midi/rescan"),
+  cfgStart: () => api.json("POST", "/config/start"),
+  cfgQuit: () => api.json("POST", "/config/quit"),
 };
 
 // ---------- Toasts ----------
@@ -71,37 +89,55 @@ function toast(msg, opts = {}) {
 
 // ---------- State ----------
 const state = {
-  channel: 0, // virtual MIDI channel (0-15) targeted by stop toggles
+  mode: "unknown", // "config" | "play"
+  channel: 0,
   stops: [],
   presets: [],
   tremulants: [],
   reverbs: [],
   audio: null,
+  config: null, // ConfigStateResponse from /config
 };
 
-// WebSocket lifecycle. Kept in its own object so retry timers and the
-// active socket can be inspected together.
 const wsCtrl = {
   ws: null,
   reconnectTimer: null,
   reconnectDelay: 500,
   openedAt: 0,
-  // AbortController shared by every fetch while a WS connection is open.
-  // When the server signals a restart (or the socket closes), we abort it
-  // so any in-flight request can't land late with stale data from the
-  // outgoing server.
   abortController: null,
+  modeProbeTimer: null,
 };
 const WS_DELAY_MAX = 3000;
 const WS_DELAY_MIN = 500;
-// A connection that stays open at least this long is considered "stable",
-// which makes the next disconnect restart the backoff from the minimum.
 const WS_STABLE_MS = 3000;
 
-// ---------- Tabs ----------
+// ---------- Mode handling ----------
+// Mode discovery deliberately bypasses the shared abort controller. After a
+// WS reconnect we *must* learn whether we landed on the config or play
+// server before doing anything else; if a stale abort signal cancelled this
+// fetch, the page would stay frozen in "unknown" mode and never recover.
+async function detectMode() {
+  try {
+    const resp = await fetch("/mode", { cache: "no-store" });
+    if (!resp.ok) return "unknown";
+    const m = await resp.json();
+    setMode(m.mode);
+    return m.mode;
+  } catch (_) {
+    return "unknown";
+  }
+}
+
+function setMode(mode) {
+  if (state.mode === mode) return;
+  state.mode = mode;
+  document.body.dataset.mode = mode;
+}
+
+// ---------- Tabs (play view) ----------
 function setupTabs() {
-  const tabs = document.querySelectorAll(".tab");
-  const panels = document.querySelectorAll(".tab-panel");
+  const tabs = document.querySelectorAll(".tab[data-tab]");
+  const panels = document.querySelectorAll("#play-view .tab-panel");
   tabs.forEach((tab) => {
     tab.addEventListener("click", () => {
       const target = tab.dataset.tab;
@@ -109,8 +145,22 @@ function setupTabs() {
       panels.forEach((p) =>
         p.classList.toggle("active", p.id === `tab-${target}`)
       );
-      // Refresh tabs whose data could have changed since last view.
       if (target === "organs") loadOrgans().catch(() => {});
+    });
+  });
+}
+
+// ---------- Tabs (config view) ----------
+function setupConfigTabs() {
+  const tabs = document.querySelectorAll(".config-tab[data-config-tab]");
+  const panels = document.querySelectorAll("#config-view .config-panel");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const target = tab.dataset.configTab;
+      tabs.forEach((t) => t.setAttribute("aria-selected", t === tab));
+      panels.forEach((p) =>
+        p.classList.toggle("active", p.id === `config-tab-${target}`)
+      );
     });
   });
 }
@@ -191,14 +241,12 @@ document.querySelectorAll("[data-modal-close]").forEach((btn) => {
   });
 });
 
-// ---------- Organ info ----------
+// ---------- Organ info (play mode) ----------
 async function refreshOrgan() {
   try {
     const o = await api.organ();
     document.getElementById("organ-name").textContent = o.name || "Rusty Pipes";
-  } catch (_) {
-    // Connection state is owned by the WebSocket layer; nothing to do here.
-  }
+  } catch (_) {}
 }
 
 // ---------- Stops ----------
@@ -207,9 +255,6 @@ async function loadStops() {
   renderStops();
 }
 
-// Human-friendly labels for the division/register IDs produced by the
-// organ loaders (see organ_hauptwerk.rs::get_division_prefix and
-// organ_grandorgue.rs::infer_division_from_name).
 const DIVISION_LABELS = {
   HW: "Hauptwerk",
   SW: "Swell",
@@ -231,10 +276,6 @@ function divisionLabel(id) {
   return friendly ? `${friendly} (${id})` : id;
 }
 
-// When stops are grouped under a division header, the division prefix
-// embedded in the stop name (e.g. "P  Subbasso 16'") is redundant. Strip
-// it for the visible label only — the canonical name is preserved in
-// stop.name and the tooltip.
 function stopDisplayName(stop) {
   const div = stop.division;
   const name = stop.name || "";
@@ -244,8 +285,6 @@ function stopDisplayName(stop) {
     const rest = trimmed.slice(div.length);
     if (rest.length === 0) return name;
     const sep = rest.charCodeAt(0);
-    // Only strip when the prefix is followed by whitespace or punctuation,
-    // to avoid mangling names like "Pos Trompete" vs "Posaune".
     if (sep === 32 || sep === 9 || rest[0] === "." || rest[0] === ":") {
       return rest.replace(/^[\s.:]+/, "");
     }
@@ -256,7 +295,6 @@ function stopDisplayName(stop) {
 function renderStops() {
   const container = document.getElementById("stops-container");
   container.innerHTML = "";
-  // Group by division (preserving stop order)
   const groups = new Map();
   state.stops.forEach((s) => {
     const key = s.division || "";
@@ -298,7 +336,6 @@ function renderStops() {
 async function toggleStop(stop, active) {
   try {
     await api.setStopChannel(stop.index, state.channel, active);
-    // Optimistic local update
     const set = new Set(stop.active_channels);
     if (active) set.add(state.channel);
     else set.delete(state.channel);
@@ -311,9 +348,8 @@ async function toggleStop(stop, active) {
 
 function openStopActions(stop) {
   document.getElementById("stop-actions-title").textContent = stop.name;
-  document.getElementById(
-    "stop-actions-subtitle"
-  ).textContent = `Channel ${state.channel + 1}`;
+  document.getElementById("stop-actions-subtitle").textContent =
+    `Channel ${state.channel + 1}`;
   const enableBtn = document.getElementById("stop-action-learn-enable");
   const disableBtn = document.getElementById("stop-action-learn-disable");
   const clearBtn = document.getElementById("stop-action-clear");
@@ -394,11 +430,8 @@ async function recallPreset(preset) {
 }
 
 function openPresetActions(preset) {
-  document.getElementById(
-    "preset-actions-title"
-  ).textContent = `Preset F${preset.slot}${
-    preset.name ? ` — ${preset.name}` : ""
-  }`;
+  document.getElementById("preset-actions-title").textContent =
+    `Preset F${preset.slot}${preset.name ? ` — ${preset.name}` : ""}`;
   const loadBtn = document.getElementById("preset-action-load");
   const saveBtn = document.getElementById("preset-action-save");
   const learnBtn = document.getElementById("preset-action-learn");
@@ -519,7 +552,7 @@ function openTremulantActions(trem) {
   openModal("modal-tremulant-actions");
 }
 
-// ---------- Organs library ----------
+// ---------- Organs library (play mode) ----------
 async function loadOrgans() {
   const list = await api.organs();
   renderOrgans(list);
@@ -585,7 +618,7 @@ async function requestLoadOrgan(entry) {
   }
 }
 
-// ---------- Audio settings ----------
+// ---------- Audio settings (play mode) ----------
 async function loadAudio() {
   state.audio = await api.audioSettings();
   state.reverbs = await api.reverbs();
@@ -687,28 +720,32 @@ function renderRecording() {
 }
 
 function setupRecordingControls() {
-  document.getElementById("record-midi-btn").addEventListener("click", async () => {
-    const newState = !(state.audio?.is_recording_midi);
-    try {
-      await api.recordMidi(newState);
-      state.audio.is_recording_midi = newState;
-      renderRecording();
-      toast(newState ? "MIDI recording started" : "MIDI recording saved");
-    } catch (e) {
-      toast(`Recording failed: ${e.message}`, { error: true });
-    }
-  });
-  document.getElementById("record-audio-btn").addEventListener("click", async () => {
-    const newState = !(state.audio?.is_recording_audio);
-    try {
-      await api.recordAudio(newState);
-      state.audio.is_recording_audio = newState;
-      renderRecording();
-      toast(newState ? "Audio recording started" : "Audio recording saved");
-    } catch (e) {
-      toast(`Recording failed: ${e.message}`, { error: true });
-    }
-  });
+  document
+    .getElementById("record-midi-btn")
+    .addEventListener("click", async () => {
+      const newState = !state.audio?.is_recording_midi;
+      try {
+        await api.recordMidi(newState);
+        state.audio.is_recording_midi = newState;
+        renderRecording();
+        toast(newState ? "MIDI recording started" : "MIDI recording saved");
+      } catch (e) {
+        toast(`Recording failed: ${e.message}`, { error: true });
+      }
+    });
+  document
+    .getElementById("record-audio-btn")
+    .addEventListener("click", async () => {
+      const newState = !state.audio?.is_recording_audio;
+      try {
+        await api.recordAudio(newState);
+        state.audio.is_recording_audio = newState;
+        renderRecording();
+        toast(newState ? "Audio recording started" : "Audio recording saved");
+      } catch (e) {
+        toast(`Recording failed: ${e.message}`, { error: true });
+      }
+    });
 }
 
 // ---------- Panic ----------
@@ -722,8 +759,6 @@ document.getElementById("panic-btn").addEventListener("click", async () => {
 });
 
 // ---------- MIDI Learn ----------
-// State transitions arrive over the WebSocket; this module just opens the
-// modal on start and closes it when the server announces a transition.
 let learnAutoCloseHandle = null;
 let learnActive = false;
 
@@ -778,9 +813,506 @@ document.getElementById("learn-cancel").addEventListener("click", async () => {
   closeModal("modal-learn");
 });
 
-// ---------- WebSocket ----------
-// State -> CSS class on the topbar status dot. The visible label is moved
-// to the title attribute so hover/long-press still surfaces details.
+// =============================================================================
+// CONFIG VIEW
+// =============================================================================
+
+async function loadConfigState() {
+  state.config = await api.configState();
+  renderConfig();
+}
+
+function renderConfig() {
+  if (!state.config) return;
+  const c = state.config;
+
+  // --- Topbar title: always "Configuration" while in config mode ---
+  document.getElementById("organ-name").textContent = "Configuration";
+
+  // --- Organ list ---
+  renderConfigOrgans();
+
+  // --- Audio device combo ---
+  const adev = document.getElementById("config-audio-device");
+  adev.innerHTML = "";
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = "[ System Default ]";
+  adev.appendChild(defaultOpt);
+  c.available_audio_devices.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    adev.appendChild(opt);
+  });
+  adev.value = c.selected_audio_device_name || "";
+
+  // --- Sample rate combo ---
+  const sr = document.getElementById("config-sample-rate");
+  sr.innerHTML = "";
+  c.available_sample_rates.forEach((rate) => {
+    const opt = document.createElement("option");
+    opt.value = String(rate);
+    opt.textContent = `${rate} Hz`;
+    sr.appendChild(opt);
+  });
+  sr.value = String(c.settings.sample_rate);
+
+  // --- IR file combo ---
+  const ir = document.getElementById("config-ir-file");
+  ir.innerHTML = "";
+  const noneOpt = document.createElement("option");
+  noneOpt.value = "";
+  noneOpt.textContent = "(no reverb)";
+  ir.appendChild(noneOpt);
+  c.available_ir_files.forEach((entry) => {
+    const opt = document.createElement("option");
+    opt.value = entry.path;
+    opt.textContent = entry.name;
+    ir.appendChild(opt);
+  });
+  ir.value = c.settings.ir_file || "";
+
+  // --- Sliders / toggles ---
+  setSliderValue("config-gain", "config-gain-value", c.settings.gain, 2);
+  const polySlider = document.getElementById("config-polyphony");
+  if (c.settings.polyphony > Number(polySlider.max)) {
+    polySlider.max = String(c.settings.polyphony);
+  }
+  polySlider.value = c.settings.polyphony;
+  document.getElementById("config-polyphony-value").textContent = String(
+    c.settings.polyphony,
+  );
+  setSliderValue(
+    "config-reverb-mix",
+    "config-reverb-mix-value",
+    c.settings.reverb_mix,
+    2,
+  );
+
+  document.getElementById("config-buffer").value =
+    c.settings.audio_buffer_frames;
+  setSliderValue(
+    "config-max-ram",
+    "config-max-ram-value",
+    c.settings.max_ram_gb,
+    1,
+  );
+  document.getElementById("config-max-ram").disabled = c.settings.precache;
+
+  document.getElementById("config-precache").checked = c.settings.precache;
+  document.getElementById("config-convert-16bit").checked =
+    c.settings.convert_to_16bit;
+  document.getElementById("config-original-tuning").checked =
+    c.settings.original_tuning;
+
+  // --- MIDI device list ---
+  renderConfigMidiList();
+
+  // --- Start button ---
+  const startBtn = document.getElementById("config-start-btn");
+  const warning = document.getElementById("config-start-warning");
+  const hasOrgan = !!c.settings.organ_file;
+  startBtn.disabled = !hasOrgan;
+  warning.style.display = hasOrgan ? "none" : "";
+}
+
+function setSliderValue(sliderId, valueId, value, decimals) {
+  const slider = document.getElementById(sliderId);
+  const label = document.getElementById(valueId);
+  slider.value = value;
+  if (label) label.textContent = Number(value).toFixed(decimals);
+}
+
+function renderConfigOrgans() {
+  const c = state.config;
+  const container = document.getElementById("config-organ-list");
+  container.innerHTML = "";
+  if (!c.organ_library || c.organ_library.length === 0) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent =
+      "No organs in the library yet. Use the desktop application to add organs.";
+    container.appendChild(p);
+    return;
+  }
+  c.organ_library.forEach((entry) => {
+    const item = document.createElement("div");
+    item.className = "organ-item";
+    const isCurrent = entry.path === c.settings.organ_file;
+    if (isCurrent) item.classList.add("current");
+
+    const meta = document.createElement("div");
+    meta.className = "organ-meta";
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = entry.name;
+    const path = document.createElement("div");
+    path.className = "path";
+    path.textContent = entry.path;
+    meta.appendChild(name);
+    meta.appendChild(path);
+    item.appendChild(meta);
+
+    if (isCurrent) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "Selected";
+      item.appendChild(badge);
+    }
+
+    item.addEventListener("click", async () => {
+      try {
+        await api.cfgSetOrgan(entry.path);
+        // Optimistic local update so the "Selected" badge moves
+        // immediately, without waiting for the WS Refetch round-trip.
+        if (state.config) {
+          state.config.settings.organ_file = entry.path;
+          renderConfig();
+        }
+        toast(`Selected ${entry.name}`);
+      } catch (e) {
+        toast(`Selection failed: ${e.message}`, { error: true });
+      }
+    });
+    container.appendChild(item);
+  });
+}
+
+function renderConfigMidiList() {
+  const c = state.config;
+  const container = document.getElementById("config-midi-list");
+  container.innerHTML = "";
+  if (!c.system_midi_ports || c.system_midi_ports.length === 0) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent =
+      "No MIDI input devices detected. Plug in a device and click Rescan.";
+    container.appendChild(p);
+    return;
+  }
+  c.system_midi_ports.forEach((port) => {
+    const cfg = c.settings.midi_devices.find((d) => d.name === port.name) || {
+      name: port.name,
+      enabled: false,
+      mapping_mode: "Simple",
+      simple_target_channel: 0,
+      complex_mapping: Array.from({ length: 16 }, (_, i) => i),
+    };
+
+    const wrap = document.createElement("div");
+    wrap.className = "config-midi-device";
+    if (!cfg.enabled) wrap.classList.add("disabled");
+
+    const header = document.createElement("div");
+    header.className = "header";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!cfg.enabled;
+    cb.addEventListener("change", async () => {
+      try {
+        await api.cfgUpdateMidiDevice({
+          name: port.name,
+          enabled: cb.checked,
+        });
+      } catch (e) {
+        toast(`Update failed: ${e.message}`, { error: true });
+      }
+    });
+    header.appendChild(cb);
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "name";
+    nameEl.textContent = port.name;
+    header.appendChild(nameEl);
+
+    const mapBtn = document.createElement("button");
+    mapBtn.className = "ghost small";
+    mapBtn.textContent = "Channel mapping…";
+    mapBtn.addEventListener("click", () => openMidiMappingModal(port.name));
+    header.appendChild(mapBtn);
+
+    wrap.appendChild(header);
+
+    const summary = document.createElement("div");
+    summary.className = "summary";
+    summary.textContent = midiMappingSummary(cfg);
+    wrap.appendChild(summary);
+
+    container.appendChild(wrap);
+  });
+}
+
+function midiMappingSummary(cfg) {
+  if (cfg.mapping_mode === "Simple") {
+    return `Simple mapping → all input channels → channel ${cfg.simple_target_channel + 1}`;
+  }
+  // Show non-default mappings
+  const notes = [];
+  cfg.complex_mapping.forEach((target, i) => {
+    if (target !== i) notes.push(`${i + 1}→${target + 1}`);
+  });
+  if (notes.length === 0) return "Complex mapping (1:1, default)";
+  return `Complex mapping: ${notes.join(", ")}`;
+}
+
+function openMidiMappingModal(deviceName) {
+  const c = state.config;
+  const cfg = c.settings.midi_devices.find((d) => d.name === deviceName);
+  if (!cfg) return;
+  document.getElementById("midi-mapping-title").textContent =
+    `Channel Mapping — ${deviceName}`;
+
+  const radios = document.querySelectorAll(
+    "input[name='midi-mapping-mode']",
+  );
+  radios.forEach((r) => {
+    r.checked = r.value === cfg.mapping_mode;
+    r.onchange = async () => {
+      if (r.checked) {
+        try {
+          await api.cfgUpdateMidiDevice({
+            name: deviceName,
+            mapping_mode: r.value,
+          });
+          // Refresh the modal contents from updated config
+          await loadConfigState();
+          openMidiMappingModal(deviceName);
+        } catch (e) {
+          toast(`Update failed: ${e.message}`, { error: true });
+        }
+      }
+    };
+  });
+
+  const simpleSection = document.getElementById("midi-mapping-simple");
+  const complexSection = document.getElementById("midi-mapping-complex");
+  if (cfg.mapping_mode === "Simple") {
+    simpleSection.classList.remove("hidden");
+    complexSection.classList.add("hidden");
+    const sel = document.getElementById("midi-mapping-simple-channel");
+    sel.innerHTML = "";
+    for (let i = 0; i < 16; i++) {
+      const opt = document.createElement("option");
+      opt.value = String(i);
+      opt.textContent = `Channel ${i + 1}`;
+      sel.appendChild(opt);
+    }
+    sel.value = String(cfg.simple_target_channel);
+    sel.onchange = async () => {
+      try {
+        await api.cfgUpdateMidiDevice({
+          name: deviceName,
+          simple_target_channel: Number(sel.value),
+        });
+      } catch (e) {
+        toast(`Update failed: ${e.message}`, { error: true });
+      }
+    };
+  } else {
+    simpleSection.classList.add("hidden");
+    complexSection.classList.remove("hidden");
+    const grid = document.getElementById("midi-mapping-grid");
+    grid.innerHTML = "";
+    cfg.complex_mapping.forEach((target, i) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      const label = document.createElement("label");
+      label.textContent = `In ${i + 1}`;
+      const sel = document.createElement("select");
+      for (let t = 0; t < 16; t++) {
+        const opt = document.createElement("option");
+        opt.value = String(t);
+        opt.textContent = String(t + 1);
+        sel.appendChild(opt);
+      }
+      sel.value = String(target);
+      sel.addEventListener("change", async () => {
+        const newMap = cfg.complex_mapping.slice();
+        newMap[i] = Number(sel.value);
+        try {
+          await api.cfgUpdateMidiDevice({
+            name: deviceName,
+            complex_mapping: newMap,
+          });
+        } catch (e) {
+          toast(`Update failed: ${e.message}`, { error: true });
+        }
+      });
+      row.appendChild(label);
+      row.appendChild(sel);
+      grid.appendChild(row);
+    });
+  }
+
+  openModal("modal-midi-mapping");
+}
+
+function setupConfigControls() {
+  // --- Audio device ---
+  document
+    .getElementById("config-audio-device")
+    .addEventListener("change", async (e) => {
+      const name = e.target.value || null;
+      try {
+        await api.cfgSetAudioDevice(name);
+      } catch (err) {
+        toast(`Audio device failed: ${err.message}`, { error: true });
+      }
+    });
+
+  // --- Sample rate ---
+  document
+    .getElementById("config-sample-rate")
+    .addEventListener("change", async (e) => {
+      try {
+        await api.cfgSetSampleRate(Number(e.target.value));
+      } catch (err) {
+        toast(`Sample rate failed: ${err.message}`, { error: true });
+      }
+    });
+
+  // --- IR file ---
+  document
+    .getElementById("config-ir-file")
+    .addEventListener("change", async (e) => {
+      try {
+        await api.cfgSetIrFile(e.target.value || null);
+      } catch (err) {
+        toast(`IR file failed: ${err.message}`, { error: true });
+      }
+    });
+
+  // --- Reverb mix slider ---
+  const mix = document.getElementById("config-reverb-mix");
+  const mixVal = document.getElementById("config-reverb-mix-value");
+  mix.addEventListener("input", () => {
+    mixVal.textContent = Number(mix.value).toFixed(2);
+  });
+  mix.addEventListener("change", async () => {
+    try {
+      await api.cfgSetAudioSettings({ reverb_mix: Number(mix.value) });
+    } catch (e) {
+      toast(`Mix failed: ${e.message}`, { error: true });
+    }
+  });
+
+  // --- Gain slider ---
+  const gain = document.getElementById("config-gain");
+  const gainVal = document.getElementById("config-gain-value");
+  gain.addEventListener("input", () => {
+    gainVal.textContent = Number(gain.value).toFixed(2);
+  });
+  gain.addEventListener("change", async () => {
+    try {
+      await api.cfgSetAudioSettings({ gain: Number(gain.value) });
+    } catch (e) {
+      toast(`Gain failed: ${e.message}`, { error: true });
+    }
+  });
+
+  // --- Polyphony slider ---
+  const poly = document.getElementById("config-polyphony");
+  const polyVal = document.getElementById("config-polyphony-value");
+  poly.addEventListener("input", () => {
+    polyVal.textContent = String(poly.value);
+  });
+  poly.addEventListener("change", async () => {
+    try {
+      await api.cfgSetAudioSettings({ polyphony: Number(poly.value) });
+    } catch (e) {
+      toast(`Polyphony failed: ${e.message}`, { error: true });
+    }
+  });
+
+  // --- Buffer ---
+  document.getElementById("config-buffer").addEventListener("change", async (e) => {
+    try {
+      await api.cfgSetAudioSettings({
+        audio_buffer_frames: Number(e.target.value),
+      });
+    } catch (err) {
+      toast(`Buffer failed: ${err.message}`, { error: true });
+    }
+  });
+
+  // --- Max RAM slider ---
+  const ram = document.getElementById("config-max-ram");
+  const ramVal = document.getElementById("config-max-ram-value");
+  ram.addEventListener("input", () => {
+    ramVal.textContent = Number(ram.value).toFixed(1);
+  });
+  ram.addEventListener("change", async () => {
+    try {
+      await api.cfgSetAudioSettings({ max_ram_gb: Number(ram.value) });
+    } catch (e) {
+      toast(`RAM failed: ${e.message}`, { error: true });
+    }
+  });
+
+  // --- Boolean options ---
+  const boolMap = {
+    "config-precache": "precache",
+    "config-convert-16bit": "convert_to_16bit",
+    "config-original-tuning": "original_tuning",
+  };
+  Object.entries(boolMap).forEach(([elId, field]) => {
+    document.getElementById(elId).addEventListener("change", async (e) => {
+      try {
+        await api.cfgSetAudioSettings({ [field]: e.target.checked });
+      } catch (err) {
+        toast(`Update failed: ${err.message}`, { error: true });
+      }
+    });
+  });
+
+  // --- Rescan MIDI ---
+  document
+    .getElementById("config-rescan-midi")
+    .addEventListener("click", async () => {
+      try {
+        await api.cfgRescanMidi();
+        toast("MIDI ports rescanned");
+      } catch (e) {
+        toast(`Rescan failed: ${e.message}`, { error: true });
+      }
+    });
+
+  // --- Start ---
+  document
+    .getElementById("config-start-btn")
+    .addEventListener("click", async () => {
+      // Toast first, before issuing the request. The WS will close shortly
+      // (when the config server is dropped); if our fetch happens to be
+      // aborted by the resulting reconnect logic, AbortError is expected
+      // and not user-visible.
+      toast("Loading organ…");
+      try {
+        await api.cfgStart();
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        toast(`Start failed: ${e.message}`, { error: true });
+      }
+    });
+
+  // --- Quit ---
+  document
+    .getElementById("config-quit-btn")
+    .addEventListener("click", async () => {
+      if (!confirm("Quit Rusty Pipes?")) return;
+      try {
+        await api.cfgQuit();
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        toast(`Quit failed: ${e.message}`, { error: true });
+      }
+    });
+}
+
+// =============================================================================
+// WebSocket
+// =============================================================================
 function setStatus(state, label) {
   const el = document.getElementById("status-dot");
   if (!el) return;
@@ -790,21 +1322,18 @@ function setStatus(state, label) {
 }
 
 function scheduleReconnect() {
-  if (wsCtrl.reconnectTimer) return; // single-flight
+  if (wsCtrl.reconnectTimer) return;
   const secs = Math.ceil(wsCtrl.reconnectDelay / 1000);
   setStatus("reconnecting", `Reconnecting in ${secs}s…`);
   wsCtrl.reconnectTimer = setTimeout(() => {
     wsCtrl.reconnectTimer = null;
     connectWebSocket();
   }, wsCtrl.reconnectDelay);
-  wsCtrl.reconnectDelay = Math.min(
-    wsCtrl.reconnectDelay * 2,
-    WS_DELAY_MAX,
-  );
+  wsCtrl.reconnectDelay = Math.min(wsCtrl.reconnectDelay * 2, WS_DELAY_MAX);
+  startModeProbe();
 }
 
 function reconnectNow() {
-  // Used by online / visibilitychange / manual prompts to skip the backoff.
   if (wsCtrl.reconnectTimer) {
     clearTimeout(wsCtrl.reconnectTimer);
     wsCtrl.reconnectTimer = null;
@@ -814,12 +1343,53 @@ function reconnectNow() {
   connectWebSocket();
 }
 
+// While disconnected, periodically probe /mode. When the play server
+// finishes loading the organ and starts up on the same port, /mode begins
+// responding — at which point we trigger an immediate WS reconnect (skipping
+// the exponential-backoff wait) and update the page mode. This is the
+// fallback path that recovers the UI even if the WS reconnect stalls.
+const MODE_PROBE_INTERVAL_MS = 1500;
+function startModeProbe() {
+  if (wsCtrl.modeProbeTimer) return;
+  wsCtrl.modeProbeTimer = setInterval(async () => {
+    if (wsCtrl.ws && wsCtrl.ws.readyState === WebSocket.OPEN) {
+      stopModeProbe();
+      return;
+    }
+    try {
+      const resp = await fetch("/mode", { cache: "no-store" });
+      if (!resp.ok) return;
+      const m = await resp.json();
+      const newMode = m.mode;
+      if (state.mode !== newMode) {
+        setMode(newMode);
+        // The HTTP server is up; force the WS to attempt reconnection now
+        // and load the right view.
+        if (newMode === "play") refetchAllPlay();
+        else if (newMode === "config") refetchAllConfig();
+      }
+      // Server is reachable — try WS reconnect immediately.
+      reconnectNow();
+    } catch (_) {
+      // Server still down; keep probing.
+    }
+  }, MODE_PROBE_INTERVAL_MS);
+}
+function stopModeProbe() {
+  if (wsCtrl.modeProbeTimer) {
+    clearInterval(wsCtrl.modeProbeTimer);
+    wsCtrl.modeProbeTimer = null;
+  }
+}
+
 function connectWebSocket() {
-  // Tear down any existing socket — important when reconnectNow() races with
-  // an in-flight CONNECTING socket from a previous attempt.
   if (wsCtrl.ws) {
     try {
-      wsCtrl.ws.onopen = wsCtrl.ws.onmessage = wsCtrl.ws.onerror = wsCtrl.ws.onclose = null;
+      wsCtrl.ws.onopen =
+        wsCtrl.ws.onmessage =
+        wsCtrl.ws.onerror =
+        wsCtrl.ws.onclose =
+          null;
       wsCtrl.ws.close();
     } catch (_) {}
     wsCtrl.ws = null;
@@ -830,7 +1400,6 @@ function connectWebSocket() {
     const proto = location.protocol === "https:" ? "wss:" : "ws:";
     ws = new WebSocket(`${proto}//${location.host}/ws`);
   } catch (_) {
-    // Synchronous failure (rare — e.g. CSP violation, page unloading).
     scheduleReconnect();
     return;
   }
@@ -838,15 +1407,21 @@ function connectWebSocket() {
   setStatus("connecting", "Connecting…");
 
   ws.addEventListener("open", () => {
-    if (ws !== wsCtrl.ws) return; // event from a stale socket
+    if (ws !== wsCtrl.ws) return;
     wsCtrl.openedAt = Date.now();
     wsCtrl.reconnectDelay = WS_DELAY_MIN;
     wsCtrl.abortController = new AbortController();
+    stopModeProbe();
     setStatus("connected", "Connected");
-    // No refetch here: the server sends a "Refetch" message as its first
-    // frame to every new connection, which the message handler uses to
-    // reload all state. Keeping this logic server-driven means the new
-    // server is the one that decides when the client's view is fresh.
+    // The mode might have changed since we last connected (config →
+    // play after Start). Re-detect and reload the appropriate state.
+    detectMode().then((m) => {
+      if (m === "play") {
+        refetchAllPlay();
+      } else if (m === "config") {
+        refetchAllConfig();
+      }
+    });
   });
 
   ws.addEventListener("message", (ev) => {
@@ -863,16 +1438,12 @@ function connectWebSocket() {
   ws.addEventListener("close", () => {
     if (ws !== wsCtrl.ws) return;
     wsCtrl.ws = null;
-    // Abort any fetches still in flight from the outgoing connection so
-    // their responses can't land after the new socket opens.
     if (wsCtrl.abortController) {
       try {
         wsCtrl.abortController.abort();
       } catch (_) {}
       wsCtrl.abortController = null;
     }
-    // If we were stably connected for a while, reset backoff so the next
-    // outage doesn't carry over a long delay from the original failure.
     if (wsCtrl.openedAt && Date.now() - wsCtrl.openedAt > WS_STABLE_MS) {
       wsCtrl.reconnectDelay = WS_DELAY_MIN;
     }
@@ -880,14 +1451,9 @@ function connectWebSocket() {
     scheduleReconnect();
   });
 
-  ws.addEventListener("error", () => {
-    // No-op: the close event always follows and is the single place that
-    // schedules a reconnect. Calling close() here can race with the browser
-    // and double-fire close in some implementations.
-  });
+  ws.addEventListener("error", () => {});
 }
 
-// Recover quickly when the browser tells us network/page came back.
 window.addEventListener("online", reconnectNow);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") reconnectNow();
@@ -896,7 +1462,11 @@ document.addEventListener("visibilitychange", () => {
 function handleWsMessage(msg) {
   switch (msg.type) {
     case "Refetch":
-      refetchAll();
+      if (state.mode === "play") {
+        refetchAllPlay();
+      } else if (state.mode === "config") {
+        refetchAllConfig();
+      }
       break;
     case "StopsChanged":
       loadStops().catch(() => {});
@@ -918,12 +1488,13 @@ function handleWsMessage(msg) {
         .catch(() => {});
       break;
     case "ServerRestarting":
-      // Outgoing server warned us it's about to shut down. Abort any
-      // pending fetches so none of their responses can land after we
-      // reconnect to the new server, then close our socket proactively.
-      // The existing reconnect loop takes over from there; the new
-      // server's Refetch message will drive the state reload.
-      toast("Loading organ…");
+      // The server is shutting down. Could be:
+      // (1) Config server → play server (we clicked Start)
+      // (2) Play server → play server (organ reload)
+      // (3) Config server → exit (we clicked Quit)
+      // In all cases: abort fetches, set "unknown" mode until reconnect.
+      toast("Reloading…");
+      setMode("unknown");
       if (wsCtrl.abortController) {
         try {
           wsCtrl.abortController.abort();
@@ -942,7 +1513,7 @@ function handleWsMessage(msg) {
   }
 }
 
-function refetchAll() {
+function refetchAllPlay() {
   Promise.allSettled([
     refreshOrgan().then(() => loadOrgans().catch(() => {})),
     loadStops(),
@@ -952,21 +1523,38 @@ function refetchAll() {
   ]);
 }
 
-// ---------- Init ----------
+function refetchAllConfig() {
+  loadConfigState().catch(() => {});
+}
+
+// =============================================================================
+// Init
+// =============================================================================
 async function init() {
   setupTabs();
+  setupConfigTabs();
   setupChannelSelect();
   setupAudioControls();
   setupRecordingControls();
+  setupConfigControls();
 
-  await refreshOrgan();
-  // Best-effort initial loads — failures show up in the connection indicator.
-  await Promise.allSettled([
-    loadStops(),
-    loadPresets(),
-    loadTremulants(),
-    loadAudio(),
-  ]);
+  // Mark initial config-tab as active for visibility logic
+  document
+    .querySelector(".config-tab[data-config-tab='organ']")
+    ?.setAttribute("aria-selected", "true");
+
+  const mode = await detectMode();
+  if (mode === "play") {
+    await refreshOrgan();
+    await Promise.allSettled([
+      loadStops(),
+      loadPresets(),
+      loadTremulants(),
+      loadAudio(),
+    ]);
+  } else if (mode === "config") {
+    await loadConfigState().catch(() => {});
+  }
   connectWebSocket();
 }
 

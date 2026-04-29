@@ -258,6 +258,12 @@ async fn index() -> impl Responder {
         .finish()
 }
 
+/// Returns the server's current operating mode. The web UI uses this to
+/// decide whether to render the configuration view or the play view.
+async fn mode() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({"mode": "play"}))
+}
+
 /// Returns information about the currently loaded organ.
 #[utoipa::path(
     get, path = "/organ", tag = "General",
@@ -1289,6 +1295,8 @@ pub fn start_api_server(
                 .route("/ui/", web::get().to(web_ui_index))
                 .route("/ui/app.css", web::get().to(web_ui_css))
                 .route("/ui/app.js", web::get().to(web_ui_js))
+                // Mode discovery
+                .route("/mode", web::get().to(mode))
                 // Live updates
                 .route("/ws", web::get().to(ws_handler))
                 // General

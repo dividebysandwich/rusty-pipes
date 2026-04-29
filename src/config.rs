@@ -350,7 +350,86 @@ pub struct ConfigState {
     pub available_ir_files: Vec<(String, PathBuf)>,
 }
 
+/// State shared between the local configuration UI (GUI/TUI) and the web
+/// configuration server. Both read from and write to the same instance, so
+/// changes made in either UI become visible in the other.
+pub struct ConfigShared {
+    pub state: ConfigState,
+    /// MIDI input handle used for rescanning system ports on demand.
+    pub midi_input_arc: Arc<Mutex<Option<MidiInput>>>,
+    /// Set to Some by the web UI when the user clicks "Start". The local UI
+    /// polls this; when set, it closes itself and main.rs uses the runtime
+    /// config it contains.
+    pub web_start_request: Option<RuntimeConfig>,
+    /// Set to true when the web UI sends "Quit". The local UI polls this and
+    /// closes when set.
+    pub web_quit_request: bool,
+    /// Bumped whenever shared state is mutated externally. The local UI uses
+    /// this to decide whether to refresh internal mirror fields (e.g. the
+    /// audio device combo's selected index).
+    pub revision: u64,
+}
+
+impl ConfigShared {
+    pub fn new(state: ConfigState, midi_input_arc: Arc<Mutex<Option<MidiInput>>>) -> Self {
+        Self {
+            state,
+            midi_input_arc,
+            web_start_request: None,
+            web_quit_request: false,
+            revision: 0,
+        }
+    }
+
+    /// Re-enumerates connected MIDI ports and updates the shared state. New
+    /// devices appear disabled by default; existing entries keep their
+    /// enabled/mapping configuration. Devices that disappear stay in the
+    /// settings list (so unplugging a device doesn't lose its mapping) but
+    /// will not appear in `system_midi_ports`.
+    pub fn rescan_midi_ports(&mut self) -> Result<()> {
+        let mut new_ports = Vec::new();
+        if let Some(midi_in) = self.midi_input_arc.lock().unwrap().as_ref() {
+            for port in midi_in.ports() {
+                if let Ok(name) = midi_in.port_name(&port) {
+                    new_ports.push((port, name.clone()));
+                    if !self
+                        .state
+                        .settings
+                        .midi_devices
+                        .iter()
+                        .any(|d| d.name == name)
+                    {
+                        self.state.settings.midi_devices.push(MidiDeviceConfig {
+                            name,
+                            enabled: false,
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+        }
+        self.state.system_midi_ports = new_ports;
+        self.revision = self.revision.wrapping_add(1);
+        Ok(())
+    }
+}
+
 impl ConfigState {
+    /// Create a deep copy of the state. Used to share state between the
+    /// local UI's working snapshot and the shared `ConfigShared`.
+    pub fn clone_snapshot(&self) -> Self {
+        Self {
+            settings: self.settings.clone(),
+            midi_file: self.midi_file.clone(),
+            system_midi_ports: self.system_midi_ports.clone(),
+            error_msg: self.error_msg.clone(),
+            available_audio_devices: self.available_audio_devices.clone(),
+            selected_audio_device_name: self.selected_audio_device_name.clone(),
+            available_sample_rates: self.available_sample_rates.clone(),
+            available_ir_files: self.available_ir_files.clone(),
+        }
+    }
+
     pub fn new(
         mut settings: AppSettings,
         midi_input_arc: &Arc<Mutex<Option<MidiInput>>>,

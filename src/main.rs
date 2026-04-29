@@ -14,6 +14,7 @@ use std::time::Duration;
 
 rust_i18n::i18n!("locales");
 
+mod api_config;
 mod api_rest;
 mod app;
 mod app_state;
@@ -51,7 +52,7 @@ mod wav_converter;
 
 use app::{AppMessage, TuiMessage};
 use app_state::{AppState, connect_to_midi};
-use config::{AppSettings, MidiDeviceConfig, RuntimeConfig};
+use config::{AppSettings, ConfigShared, ConfigState, MidiDeviceConfig, RuntimeConfig};
 use input::KeyboardLayout;
 use organ::Organ;
 
@@ -326,10 +327,67 @@ fn main() -> Result<()> {
             midi_file: args.midi_file.clone(),
             lcd_displays: settings.lcd_displays.clone(),
         }))
-    } else if tui_mode {
-        tui_config::run_config_ui(settings.clone(), Arc::clone(&midi_input_arc))
     } else {
-        gui_config::run_config_ui(settings.clone(), Arc::clone(&midi_input_arc))
+        // --- Initialize shared config state and start the config web server ---
+        // The web server runs alongside the local config UI so users can
+        // configure the application from a browser before any organ is loaded.
+        // It is shut down before play-mode starts (and a separate REST server
+        // takes over for the play UI).
+        let initial_state = match ConfigState::new(settings.clone(), &midi_input_arc) {
+            Ok(s) => s,
+            Err(e) => {
+                if tui_mode {
+                    let _ = tui::cleanup_terminal();
+                }
+                return Err(e);
+            }
+        };
+        let config_shared = Arc::new(Mutex::new(ConfigShared::new(
+            initial_state,
+            Arc::clone(&midi_input_arc),
+        )));
+
+        let (config_ws_tx, _) = tokio::sync::broadcast::channel::<app::WsMessage>(64);
+        let _config_api_handle = match api_config::start_config_api_server(
+            Arc::clone(&config_shared),
+            args.api_server_port,
+            config_ws_tx,
+        ) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                log::warn!("Failed to start config web server: {}", e);
+                None
+            }
+        };
+
+        let result = if tui_mode {
+            tui_config::run_config_ui(
+                settings.clone(),
+                Arc::clone(&midi_input_arc),
+                Arc::clone(&config_shared),
+            )
+        } else {
+            gui_config::run_config_ui(
+                settings.clone(),
+                Arc::clone(&midi_input_arc),
+                Arc::clone(&config_shared),
+            )
+        };
+
+        // If the local UI returned None, see whether the web triggered Start.
+        let result = match result {
+            Ok(Some(rc)) => Ok(Some(rc)),
+            Ok(None) => Ok(config_shared.lock().unwrap().web_start_request.take()),
+            Err(e) => Err(e),
+        };
+
+        // Drop the config server before continuing — the play-mode server
+        // will bind the same port. Drop is async-spawned; give it a brief
+        // moment to release the socket.
+        drop(_config_api_handle);
+        thread::sleep(Duration::from_millis(150));
+
+        result
     };
 
     // `config` is the final, user-approved configuration

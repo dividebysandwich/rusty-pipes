@@ -7,13 +7,13 @@
     <title>Rusty Pipes</title>
     <link rel="stylesheet" href="/ui/app.css" />
   </head>
-  <body>
+  <body data-mode="unknown">
     <header class="topbar">
       <div class="topbar-left">
         <span id="status-dot" class="status-dot connecting" title="Connecting…"></span>
         <h1 id="organ-name">Rusty Pipes</h1>
       </div>
-      <nav class="tabs" role="tablist">
+      <nav class="tabs play-only" role="tablist">
         <button class="tab" data-tab="presets" role="tab" aria-selected="true">Presets</button>
         <button class="tab" data-tab="stops" role="tab">Stops</button>
         <button class="tab" data-tab="tremulants" role="tab">Tremulants</button>
@@ -21,98 +21,213 @@
         <button class="tab" data-tab="recording" role="tab">Recording</button>
         <button class="tab" data-tab="organs" role="tab">Organs</button>
       </nav>
+      <nav class="tabs config-only" role="tablist">
+        <button class="config-tab" data-config-tab="organ" aria-selected="true">Organ</button>
+        <button class="config-tab" data-config-tab="audio">Audio</button>
+        <button class="config-tab" data-config-tab="midi">MIDI</button>
+        <button class="config-tab" data-config-tab="advanced">Advanced</button>
+      </nav>
       <div class="topbar-right">
-        <button id="panic-btn" class="danger" title="All Notes Off">PANIC</button>
+        <button id="panic-btn" class="danger play-only" title="All Notes Off">PANIC</button>
       </div>
     </header>
 
     <main class="content">
-      <!-- PRESETS -->
-      <section id="tab-presets" class="tab-panel active">
-        <div class="panel-header">
-          <h2>Presets</h2>
-          <p class="muted">Tap a preset to load. Long-press (or right-click) to save or learn a MIDI trigger.</p>
-        </div>
-        <div id="preset-grid" class="preset-grid"></div>
-      </section>
-
-      <!-- STOPS -->
-      <section id="tab-stops" class="tab-panel">
-        <div class="panel-header">
-          <h2>Stops</h2>
-          <div class="row">
-            <label for="stop-channel-select">Channel:</label>
-            <select id="stop-channel-select"></select>
-            <span class="muted small">All toggle actions affect this channel.</span>
+      <!-- ============================================================== -->
+      <!-- PLAY VIEW                                                       -->
+      <!-- ============================================================== -->
+      <div id="play-view" class="play-only">
+        <!-- PRESETS -->
+        <section id="tab-presets" class="tab-panel active">
+          <div class="panel-header">
+            <h2>Presets</h2>
+            <p class="muted">Tap a preset to load. Long-press (or right-click) to save or learn a MIDI trigger.</p>
           </div>
-        </div>
-        <div id="stops-container" class="stops-container"></div>
-      </section>
+          <div id="preset-grid" class="preset-grid"></div>
+        </section>
 
-      <!-- TREMULANTS -->
-      <section id="tab-tremulants" class="tab-panel">
-        <div class="panel-header">
-          <h2>Tremulants</h2>
-          <p class="muted">Tap to toggle. Long-press to learn an enable/disable trigger.</p>
-        </div>
-        <div id="tremulant-grid" class="tile-grid"></div>
-      </section>
-
-      <!-- AUDIO -->
-      <section id="tab-audio" class="tab-panel">
-        <div class="panel-header"><h2>Audio</h2></div>
-
-        <div class="card">
-          <h3>Master Gain</h3>
-          <div class="slider-row">
-            <input type="range" id="gain-slider" min="0" max="2" step="0.01" value="0" />
-            <span id="gain-value" class="slider-value">0.00</span>
+        <!-- STOPS -->
+        <section id="tab-stops" class="tab-panel">
+          <div class="panel-header">
+            <h2>Stops</h2>
+            <div class="row">
+              <label for="stop-channel-select">Channel:</label>
+              <select id="stop-channel-select"></select>
+              <span class="muted small">All toggle actions affect this channel.</span>
+            </div>
           </div>
-        </div>
+          <div id="stops-container" class="stops-container"></div>
+        </section>
 
-        <div class="card">
-          <h3>Polyphony</h3>
-          <div class="slider-row">
-            <input type="range" id="polyphony-slider" min="16" max="512" step="16" value="128" />
-            <span id="polyphony-value" class="slider-value">128</span>
+        <!-- TREMULANTS -->
+        <section id="tab-tremulants" class="tab-panel">
+          <div class="panel-header">
+            <h2>Tremulants</h2>
+            <p class="muted">Tap to toggle. Long-press to learn an enable/disable trigger.</p>
           </div>
-        </div>
+          <div id="tremulant-grid" class="tile-grid"></div>
+        </section>
 
-        <div class="card">
-          <h3>Reverb</h3>
-          <div class="row">
-            <label for="reverb-select">Impulse Response:</label>
-            <select id="reverb-select"></select>
+        <!-- AUDIO -->
+        <section id="tab-audio" class="tab-panel">
+          <div class="panel-header"><h2>Audio</h2></div>
+
+          <div class="card">
+            <h3>Master Gain</h3>
+            <div class="slider-row">
+              <input type="range" id="gain-slider" min="0" max="2" step="0.01" value="0" />
+              <span id="gain-value" class="slider-value">0.00</span>
+            </div>
           </div>
-          <div class="slider-row">
-            <label for="reverb-mix-slider">Mix:</label>
-            <input type="range" id="reverb-mix-slider" min="0" max="1" step="0.01" value="0" />
-            <span id="reverb-mix-value" class="slider-value">0.00</span>
+
+          <div class="card">
+            <h3>Polyphony</h3>
+            <div class="slider-row">
+              <input type="range" id="polyphony-slider" min="16" max="512" step="16" value="128" />
+              <span id="polyphony-value" class="slider-value">128</span>
+            </div>
           </div>
-        </div>
-      </section>
 
-      <!-- ORGANS -->
-      <section id="tab-organs" class="tab-panel">
-        <div class="panel-header">
-          <h2>Organs</h2>
-          <p class="muted">Tap an organ to load it. The application will reload, briefly disconnecting the web UI.</p>
-        </div>
-        <div id="organ-list" class="organ-list"></div>
-      </section>
+          <div class="card">
+            <h3>Reverb</h3>
+            <div class="row">
+              <label for="reverb-select">Impulse Response:</label>
+              <select id="reverb-select"></select>
+            </div>
+            <div class="slider-row">
+              <label for="reverb-mix-slider">Mix:</label>
+              <input type="range" id="reverb-mix-slider" min="0" max="1" step="0.01" value="0" />
+              <span id="reverb-mix-value" class="slider-value">0.00</span>
+            </div>
+          </div>
+        </section>
 
-      <!-- RECORDING -->
-      <section id="tab-recording" class="tab-panel">
-        <div class="panel-header"><h2>Recording</h2></div>
-        <div class="card">
-          <button id="record-midi-btn" class="big-toggle">● Start MIDI Recording</button>
-          <p class="muted small">Saves a .mid file alongside settings on stop.</p>
-        </div>
-        <div class="card">
-          <button id="record-audio-btn" class="big-toggle">● Start Audio Recording</button>
-          <p class="muted small">Saves a stereo .wav file on stop.</p>
-        </div>
-      </section>
+        <!-- ORGANS -->
+        <section id="tab-organs" class="tab-panel">
+          <div class="panel-header">
+            <h2>Organs</h2>
+            <p class="muted">Tap an organ to load it. The application will reload, briefly disconnecting the web UI.</p>
+          </div>
+          <div id="organ-list" class="organ-list"></div>
+        </section>
+
+        <!-- RECORDING -->
+        <section id="tab-recording" class="tab-panel">
+          <div class="panel-header"><h2>Recording</h2></div>
+          <div class="card">
+            <button id="record-midi-btn" class="big-toggle">● Start MIDI Recording</button>
+            <p class="muted small">Saves a .mid file alongside settings on stop.</p>
+          </div>
+          <div class="card">
+            <button id="record-audio-btn" class="big-toggle">● Start Audio Recording</button>
+            <p class="muted small">Saves a stereo .wav file on stop.</p>
+          </div>
+        </section>
+      </div>
+
+      <!-- ============================================================== -->
+      <!-- CONFIG VIEW                                                     -->
+      <!-- ============================================================== -->
+      <div id="config-view" class="config-only">
+        <!-- ORGAN -->
+        <section id="config-tab-organ" class="config-panel active">
+          <div class="panel-header">
+            <h2>Select Organ</h2>
+            <p class="muted">Pick an organ from the library, then click Start to load it.</p>
+          </div>
+          <div id="config-organ-list" class="organ-list"></div>
+
+          <div class="card config-actions">
+            <button id="config-start-btn" class="primary big" disabled>▶ Start</button>
+            <button id="config-quit-btn" class="ghost">Quit</button>
+            <p id="config-start-warning" class="muted small">Select an organ first.</p>
+          </div>
+        </section>
+
+        <!-- AUDIO -->
+        <section id="config-tab-audio" class="config-panel">
+          <div class="panel-header"><h2>Audio</h2></div>
+
+          <div class="card">
+            <h3>Output Device</h3>
+            <div class="row">
+              <select id="config-audio-device" class="grow"></select>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Sample Rate</h3>
+            <div class="row">
+              <select id="config-sample-rate"></select>
+              <span class="muted small">Available rates depend on the selected device.</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Reverb (Impulse Response)</h3>
+            <div class="row">
+              <select id="config-ir-file" class="grow"></select>
+            </div>
+            <div class="slider-row">
+              <label for="config-reverb-mix">Mix:</label>
+              <input type="range" id="config-reverb-mix" min="0" max="1" step="0.01" value="0" />
+              <span id="config-reverb-mix-value" class="slider-value">0.00</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Master Gain</h3>
+            <div class="slider-row">
+              <input type="range" id="config-gain" min="0" max="1" step="0.01" value="0" />
+              <span id="config-gain-value" class="slider-value">0.00</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Polyphony</h3>
+            <div class="slider-row">
+              <input type="range" id="config-polyphony" min="1" max="2048" step="1" value="128" />
+              <span id="config-polyphony-value" class="slider-value">128</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- MIDI -->
+        <section id="config-tab-midi" class="config-panel">
+          <div class="panel-header">
+            <h2>MIDI Inputs</h2>
+            <p class="muted">Enable devices and configure how their channels map to internal channels.</p>
+            <button id="config-rescan-midi" class="ghost small">↻ Rescan</button>
+          </div>
+          <div id="config-midi-list"></div>
+        </section>
+
+        <!-- ADVANCED -->
+        <section id="config-tab-advanced" class="config-panel">
+          <div class="panel-header"><h2>Advanced</h2></div>
+          <div class="card">
+            <h3>Audio Buffer Size (frames)</h3>
+            <div class="slider-row">
+              <input type="number" id="config-buffer" min="32" max="4096" step="32" value="256" />
+              <span class="muted small">Lower values reduce latency but may cause glitches.</span>
+            </div>
+          </div>
+          <div class="card">
+            <h3>Maximum RAM (GB)</h3>
+            <div class="slider-row">
+              <input type="range" id="config-max-ram" min="0.1" max="64" step="0.1" value="8" />
+              <span id="config-max-ram-value" class="slider-value">8.0</span>
+            </div>
+            <p class="muted small">RAM budget for sample preloading. Disabled when "Pre-cache all" is on.</p>
+          </div>
+          <div class="card">
+            <h3>Loading Options</h3>
+            <label><input type="checkbox" id="config-precache" /> Pre-cache all samples on startup</label>
+            <label><input type="checkbox" id="config-convert-16bit" /> Convert all samples to 16-bit PCM</label>
+            <label><input type="checkbox" id="config-original-tuning" /> Preserve original sample (de)tuning</label>
+          </div>
+        </section>
+      </div>
     </main>
 
     <!-- Toasts -->
@@ -184,6 +299,29 @@
         <p id="learn-result" class="muted small"></p>
         <div class="modal-actions">
           <button id="learn-cancel" class="ghost">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MIDI Channel Mapping Modal -->
+    <div id="modal-midi-mapping" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card wide">
+        <h3 id="midi-mapping-title">Channel Mapping</h3>
+        <div class="row">
+          <label><input type="radio" name="midi-mapping-mode" value="Simple" /> Simple (all → one channel)</label>
+          <label><input type="radio" name="midi-mapping-mode" value="Complex" /> Complex (per-channel)</label>
+        </div>
+        <div id="midi-mapping-simple" class="midi-mapping-section">
+          <label>Target channel:
+            <select id="midi-mapping-simple-channel"></select>
+          </label>
+        </div>
+        <div id="midi-mapping-complex" class="midi-mapping-section hidden">
+          <p class="muted small">Map each input channel to an internal channel.</p>
+          <div id="midi-mapping-grid"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="primary" data-modal-close>Done</button>
         </div>
       </div>
     </div>
