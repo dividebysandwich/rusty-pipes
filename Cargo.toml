@@ -37,7 +37,7 @@ confy = "2.0"
 dirs = "6.0"
 hotpath = { version = "0.14.0", optional = true }
 rayon = "1.11"
-symphonia = { version = "0.5", features = ["wav"] }
+symphonia = { git = "https://github.com/bonninr/Symphonia.git", branch = "feature/wavpack", default-features = false, features = ["wav", "exp-format-wavpack", "pcm", "all-meta"] }
 sys-locale = "0.3.2"
 open = "5.3.3"
 chrono = "0.4.44"
