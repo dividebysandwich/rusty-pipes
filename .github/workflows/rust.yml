@@ -264,7 +264,15 @@ jobs:
 
   build-deb:
     needs: test
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ARCH: amd64
+            OS: ubuntu-latest
+          - ARCH: arm64
+            OS: ubuntu-24.04-arm
+    runs-on: ${{ matrix.OS }}
     steps:
       - uses: actions/checkout@v4
 
@@ -277,8 +285,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ./target
-          key: deb-cargo-registry-${{ hashFiles('Cargo.lock') }}
-      
+          key: deb-cargo-registry-${{ matrix.ARCH }}-${{ hashFiles('Cargo.lock') }}
+
       - name: Install cargo-deb
         run: cargo install cargo-deb
 
@@ -291,7 +299,7 @@ jobs:
       - name: Archive Debian package
         uses: actions/upload-artifact@v4
         with:
-          name: result-deb
+          name: result-deb-${{ matrix.ARCH }}
           path: target/debian/*.deb
 
   deploy:
